@@ -1,9 +1,9 @@
-use async_openai::{
-    types::embeddings::{CreateEmbeddingRequestArgs, EmbeddingInput},
-    config::OpenAIConfig,
-    Client,
-};
 use crate::error::AppError;
+use async_openai::{
+    Client,
+    config::OpenAIConfig,
+    types::embeddings::{CreateEmbeddingRequestArgs, EmbeddingInput},
+};
 
 #[derive(Clone)]
 pub struct OpenAIClient {
@@ -18,7 +18,7 @@ impl OpenAIClient {
     }
 
     /// Create embeddings for the given input text.
-    pub async fn get_embeddings(&self,text: &str) -> Result<Vec<f32>, AppError> {
+    pub async fn get_embeddings(&self, text: &str) -> Result<Vec<f32>, AppError> {
         // OpenAI reccomends replacing newlines with spaces for better results
         let sanitized_text = text.replace("\n", " ");
 
@@ -28,13 +28,11 @@ impl OpenAIClient {
             .build()
             .map_err(|e| AppError::Generic(format!("Failed to build embedding request: {}", e)))?;
 
-        let response = self
-            .client
-            .embeddings()
-            .create(request)
-            .await?;
-        
-        let embedding = response.data.first()
+        let response = self.client.embeddings().create(request).await?;
+
+        let embedding = response
+            .data
+            .first()
             .ok_or_else(|| AppError::Generic("No embedding data returned".to_string()))?
             .embedding
             .clone();

@@ -51,22 +51,27 @@ impl CkanClient {
 
     /// Gets the list of all dataset IDs (package_list)
     pub async fn list_package_ids(&self) -> Result<Vec<String>, AppError> {
-        let url = self.base_url.join("api/3/action/package_list")
+        let url = self
+            .base_url
+            .join("api/3/action/package_list")
             .map_err(|e| AppError::Generic(e.to_string()))?;
 
-        let resp = self.client.get(url)
-            .send()
-            .await?;
+        let resp = self.client.get(url).send().await?;
 
         // Check HTTP status
         if !resp.status().is_success() {
-            return Err(AppError::Generic(format!("CKAN API error: HTTP {}", resp.status())));
+            return Err(AppError::Generic(format!(
+                "CKAN API error: HTTP {}",
+                resp.status()
+            )));
         }
 
         let ckan_resp: CkanResponse<Vec<String>> = resp.json().await?;
 
         if !ckan_resp.success {
-            return Err(AppError::Generic("CKAN API returned success: false".to_string()));
+            return Err(AppError::Generic(
+                "CKAN API returned success: false".to_string(),
+            ));
         }
 
         Ok(ckan_resp.result)
@@ -74,7 +79,9 @@ impl CkanClient {
 
     /// Gets the full details of a single dataset (package_show)
     pub async fn show_package(&self, id: &str) -> Result<CkanDataset, AppError> {
-        let mut url = self.base_url.join("api/3/action/package_show")
+        let mut url = self
+            .base_url
+            .join("api/3/action/package_show")
             .map_err(|e| AppError::Generic(e.to_string()))?;
 
         // Add the id parameter to the query string
@@ -83,13 +90,20 @@ impl CkanClient {
         let resp = self.client.get(url).send().await?;
 
         if !resp.status().is_success() {
-            return Err(AppError::Generic(format!("CKAN API error fetching {}: HTTP {}", id, resp.status())));
+            return Err(AppError::Generic(format!(
+                "CKAN API error fetching {}: HTTP {}",
+                id,
+                resp.status()
+            )));
         }
 
         let ckan_resp: CkanResponse<CkanDataset> = resp.json().await?;
 
         if !ckan_resp.success {
-            return Err(AppError::Generic(format!("CKAN failed to show package {}", id)));
+            return Err(AppError::Generic(format!(
+                "CKAN failed to show package {}",
+                id
+            )));
         }
 
         Ok(ckan_resp.result)
@@ -100,7 +114,11 @@ impl CkanClient {
     pub fn into_new_dataset(dataset: CkanDataset, portal_url: &str) -> NewDataset {
         // Build the public URL of the dataset (not the API URL)
         // Usually it's: BASE_URL/dataset/NAME
-        let landing_page = format!("{}/dataset/{}", portal_url.trim_end_matches('/'), dataset.name);
+        let landing_page = format!(
+            "{}/dataset/{}",
+            portal_url.trim_end_matches('/'),
+            dataset.name
+        );
 
         // Prepare the raw metadata
         let metadata_json = serde_json::Value::Object(dataset.extras.clone());

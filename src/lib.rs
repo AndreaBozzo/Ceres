@@ -1,7 +1,7 @@
 // src/lib.rs
 pub mod clients {
-    pub mod openai;
     pub mod ckan;
+    pub mod openai;
 }
 pub mod config;
 pub mod error;
