@@ -327,7 +327,10 @@ mod tests {
         assert_eq!(new_dataset.source_portal, "https://dati.gov.it");
         assert_eq!(new_dataset.url, "https://dati.gov.it/dataset/my-dataset");
         assert_eq!(new_dataset.title, "My Dataset");
-        assert_eq!(new_dataset.description, Some("This is a test dataset".to_string()));
+        assert_eq!(
+            new_dataset.description,
+            Some("This is a test dataset".to_string())
+        );
         assert!(new_dataset.embedding.is_none());
     }
 
@@ -345,14 +348,20 @@ mod tests {
         let new_dataset = CkanClient::into_new_dataset(ckan_dataset, portal_url);
 
         // Should handle trailing slash correctly
-        assert_eq!(new_dataset.url, "https://dati.gov.it/dataset/another-dataset");
+        assert_eq!(
+            new_dataset.url,
+            "https://dati.gov.it/dataset/another-dataset"
+        );
         assert_eq!(new_dataset.description, None);
     }
 
     #[test]
     fn test_into_new_dataset_preserves_extras() {
         let mut extras = serde_json::Map::new();
-        extras.insert("organization".to_string(), serde_json::json!({"name": "test-org"}));
+        extras.insert(
+            "organization".to_string(),
+            serde_json::json!({"name": "test-org"}),
+        );
         extras.insert("tags".to_string(), serde_json::json!(["tag1", "tag2"]));
 
         let ckan_dataset = CkanDataset {
@@ -427,4 +436,3 @@ mod tests {
         assert!(dataset.extras.is_empty());
     }
 }
-

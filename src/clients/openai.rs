@@ -116,17 +116,15 @@ mod tests {
 
     #[test]
     fn test_new_client() {
-        let client = OpenAIClient::new("test-api-key");
+        let _client = OpenAIClient::new("test-api-key");
         // Just verify we can create a client without panicking
-        assert!(true);
     }
 
     #[test]
     fn test_new_client_with_empty_key() {
-        let client = OpenAIClient::new("");
+        let _client = OpenAIClient::new("");
         // Client creation should succeed even with empty key
         // The API call will fail later if the key is invalid
-        assert!(true);
     }
 
     #[test]
@@ -151,4 +149,3 @@ mod tests {
     // 3. Handling of API rate limits and costs
     // These should be in separate integration tests with proper test fixtures
 }
-
