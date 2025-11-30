@@ -9,7 +9,7 @@ Ceres harvests metadata from government open data portals (CKAN, Socrata, DCAT) 
 
 > *Named after the Roman goddess of harvest and agriculture.*
 
-## Ceres?
+## General Overview
 
 Open data portals are everywhere, but finding the right dataset is still painful:
 
