@@ -35,7 +35,7 @@ $ ceres search "air quality monitoring stations"
 - [x] Repository pattern for datasets
 - [x] CKAN
 - [x] OpenAI embeddings integration
-- [ ] CLI interface
+- [ ] CLI interface, separated from Business Logic
 - [ ] REST API
 - [ ] Harvest command implementation
 
