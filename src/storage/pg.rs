@@ -243,8 +243,7 @@ impl DatasetRepository {
         query_vector: Vector,
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
-        let results = sqlx::query_as!(
-            SearchResultRow,
+        let results = sqlx::query_as::<_, SearchResultRow>(
             r#"
             SELECT
                 id,
@@ -253,19 +252,19 @@ impl DatasetRepository {
                 url,
                 title,
                 description,
-                embedding as "embedding: _",
-                metadata as "metadata!: _",
+                embedding,
+                metadata,
                 first_seen_at,
                 last_updated_at,
-                1 - (embedding <=> $1) as "similarity_score!: f32"
+                1 - (embedding <=> $1) as similarity_score
             FROM datasets
             WHERE embedding IS NOT NULL
             ORDER BY embedding <=> $1
             LIMIT $2
             "#,
-            query_vector,
-            limit as i64
         )
+        .bind(query_vector)
+        .bind(limit as i64)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::DatabaseError)?;
