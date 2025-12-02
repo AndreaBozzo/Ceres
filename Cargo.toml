@@ -13,7 +13,7 @@ edition = "2021"
 authors = ["Andrea Bozzo"]
 license = "Apache-2.0"
 rust-version = "1.85"
-repository = "https://github.com/yourusername/ceres"
+repository = "https://github.com/AndreaBozzo/Ceres"
 
 [profile.release]
 lto = true

@@ -58,8 +58,8 @@ $ ceres search "air quality monitoring stations"
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ceres.git
-cd ceres
+git clone https://github.com/AndreaBozzo/Ceres.git
+cd Ceres
 
 # Start PostgreSQL with pgvector
 docker-compose up -d
