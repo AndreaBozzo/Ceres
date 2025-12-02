@@ -130,8 +130,12 @@ impl AppError {
                 }
             }
             AppError::OpenAiError(msg) => {
-                if msg.contains("401") || msg.contains("Unauthorized") || msg.contains("invalid_api_key") {
-                    "❌ Invalid OpenAI API key.\n   Check your OPENAI_API_KEY environment variable.".to_string()
+                if msg.contains("401")
+                    || msg.contains("Unauthorized")
+                    || msg.contains("invalid_api_key")
+                {
+                    "❌ Invalid OpenAI API key.\n   Check your OPENAI_API_KEY environment variable."
+                        .to_string()
                 } else if msg.contains("429") || msg.contains("rate") {
                     "❌ OpenAI rate limit reached.\n   Wait a moment and try again, or reduce concurrency.".to_string()
                 } else if msg.contains("insufficient_quota") {
@@ -141,10 +145,16 @@ impl AppError {
                 }
             }
             AppError::InvalidPortalUrl(url) => {
-                format!("❌ Invalid portal URL: {}\n   Example: https://dati.comune.milano.it", url)
+                format!(
+                    "❌ Invalid portal URL: {}\n   Example: https://dati.comune.milano.it",
+                    url
+                )
             }
             AppError::NetworkError(msg) => {
-                format!("❌ Network error: {}\n   Check your internet connection.", msg)
+                format!(
+                    "❌ Network error: {}\n   Check your internet connection.",
+                    msg
+                )
             }
             AppError::Timeout(secs) => {
                 format!("❌ Request timed out after {} seconds.\n   The server may be overloaded. Try again later.", secs)
@@ -153,7 +163,8 @@ impl AppError {
                 "❌ Too many requests. Please wait a moment and try again.".to_string()
             }
             AppError::EmptyResponse => {
-                "❌ The API returned no data. The portal may be temporarily unavailable.".to_string()
+                "❌ The API returned no data. The portal may be temporarily unavailable."
+                    .to_string()
             }
             _ => format!("❌ {}", self),
         }

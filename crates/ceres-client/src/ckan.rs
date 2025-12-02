@@ -195,7 +195,8 @@ impl CkanClient {
                     if status == StatusCode::TOO_MANY_REQUESTS {
                         last_error = AppError::RateLimitExceeded;
                         if attempt < MAX_RETRIES {
-                            let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * 2_u64.pow(attempt));
+                            let delay =
+                                Duration::from_millis(RETRY_BASE_DELAY_MS * 2_u64.pow(attempt));
                             sleep(delay).await;
                             continue;
                         }
