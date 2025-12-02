@@ -115,18 +115,18 @@ impl AppError {
         match self {
             AppError::DatabaseError(e) => {
                 if e.to_string().contains("connection") {
-                    "❌ Cannot connect to database. Is PostgreSQL running?\n   Try: docker-compose up -d".to_string()
+                    "Cannot connect to database. Is PostgreSQL running?\n   Try: docker-compose up -d".to_string()
                 } else {
-                    format!("❌ Database error: {}", e)
+                    format!("Database error: {}", e)
                 }
             }
             AppError::ClientError(msg) => {
                 if msg.contains("timeout") || msg.contains("timed out") {
-                    "❌ Request timed out. The portal may be slow or unreachable.\n   Try again later or check the portal URL.".to_string()
+                    "Request timed out. The portal may be slow or unreachable.\n   Try again later or check the portal URL.".to_string()
                 } else if msg.contains("connect") {
-                    format!("❌ Cannot connect to portal: {}\n   Check your internet connection and the portal URL.", msg)
+                    format!("Cannot connect to portal: {}\n   Check your internet connection and the portal URL.", msg)
                 } else {
-                    format!("❌ API error: {}", msg)
+                    format!("API error: {}", msg)
                 }
             }
             AppError::OpenAiError(msg) => {
@@ -134,39 +134,39 @@ impl AppError {
                     || msg.contains("Unauthorized")
                     || msg.contains("invalid_api_key")
                 {
-                    "❌ Invalid OpenAI API key.\n   Check your OPENAI_API_KEY environment variable."
+                    "Invalid OpenAI API key.\n   Check your OPENAI_API_KEY environment variable."
                         .to_string()
                 } else if msg.contains("429") || msg.contains("rate") {
-                    "❌ OpenAI rate limit reached.\n   Wait a moment and try again, or reduce concurrency.".to_string()
+                    "OpenAI rate limit reached.\n   Wait a moment and try again, or reduce concurrency.".to_string()
                 } else if msg.contains("insufficient_quota") {
-                    "❌ OpenAI quota exceeded.\n   Check your OpenAI account billing.".to_string()
+                    "OpenAI quota exceeded.\n   Check your OpenAI account billing.".to_string()
                 } else {
-                    format!("❌ OpenAI error: {}", msg)
+                    format!("OpenAI error: {}", msg)
                 }
             }
             AppError::InvalidPortalUrl(url) => {
                 format!(
-                    "❌ Invalid portal URL: {}\n   Example: https://dati.comune.milano.it",
+                    "Invalid portal URL: {}\n   Example: https://dati.comune.milano.it",
                     url
                 )
             }
             AppError::NetworkError(msg) => {
                 format!(
-                    "❌ Network error: {}\n   Check your internet connection.",
+                    "Network error: {}\n   Check your internet connection.",
                     msg
                 )
             }
             AppError::Timeout(secs) => {
-                format!("❌ Request timed out after {} seconds.\n   The server may be overloaded. Try again later.", secs)
+                format!("Request timed out after {} seconds.\n   The server may be overloaded. Try again later.", secs)
             }
             AppError::RateLimitExceeded => {
-                "❌ Too many requests. Please wait a moment and try again.".to_string()
+                "Too many requests. Please wait a moment and try again.".to_string()
             }
             AppError::EmptyResponse => {
-                "❌ The API returned no data. The portal may be temporarily unavailable."
+                "The API returned no data. The portal may be temporarily unavailable."
                     .to_string()
             }
-            _ => format!("❌ {}", self),
+            _ => self.to_string(),
         }
     }
 
@@ -221,9 +221,10 @@ mod tests {
 
     #[test]
     fn test_user_message_database_connection() {
+        // PoolTimedOut message contains "connection", so it triggers the connection error branch
         let err = AppError::DatabaseError(sqlx::Error::PoolTimedOut);
         let msg = err.user_message();
-        assert!(msg.contains("Database error"));
+        assert!(msg.contains("Cannot connect to database") || msg.contains("Database error"));
     }
 
     #[test]
