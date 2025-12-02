@@ -33,6 +33,25 @@ struct CkanResponse<T> {
 ///
 /// This structure represents the core fields returned by the CKAN `package_show` API.
 /// Additional fields returned by CKAN are captured in the `extras` map.
+///
+/// # Examples
+///
+/// ```
+/// use ceres_client::ckan::CkanDataset;
+///
+/// let json = r#"{
+///     "id": "dataset-123",
+///     "name": "my-dataset",
+///     "title": "My Dataset",
+///     "notes": "Description of the dataset",
+///     "organization": {"name": "test-org"}
+/// }"#;
+///
+/// let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+/// assert_eq!(dataset.id, "dataset-123");
+/// assert_eq!(dataset.title, "My Dataset");
+/// assert!(dataset.extras.contains_key("organization"));
+/// ```
 #[derive(Deserialize, Debug, Clone)]
 pub struct CkanDataset {
     /// Unique identifier for the dataset
@@ -257,6 +276,30 @@ impl CkanClient {
     /// # Returns
     ///
     /// A `NewDataset` ready to be inserted into the database.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ceres_client::CkanClient;
+    /// use ceres_client::ckan::CkanDataset;
+    ///
+    /// let ckan_dataset = CkanDataset {
+    ///     id: "abc-123".to_string(),
+    ///     name: "air-quality-data".to_string(),
+    ///     title: "Air Quality Monitoring".to_string(),
+    ///     notes: Some("Data from air quality sensors".to_string()),
+    ///     extras: serde_json::Map::new(),
+    /// };
+    ///
+    /// let new_dataset = CkanClient::into_new_dataset(
+    ///     ckan_dataset,
+    ///     "https://dati.gov.it"
+    /// );
+    ///
+    /// assert_eq!(new_dataset.original_id, "abc-123");
+    /// assert_eq!(new_dataset.url, "https://dati.gov.it/dataset/air-quality-data");
+    /// assert_eq!(new_dataset.title, "Air Quality Monitoring");
+    /// ```
     pub fn into_new_dataset(dataset: CkanDataset, portal_url: &str) -> NewDataset {
         let landing_page = format!(
             "{}/dataset/{}",

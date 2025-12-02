@@ -56,6 +56,26 @@ pub struct Dataset {
 /// Unlike `Dataset`, it doesn't include database-generated fields like `id` or
 /// timestamps. The embedding field uses pgvector's `Vector` for database storage.
 ///
+/// # Examples
+///
+/// ```
+/// use ceres_core::NewDataset;
+/// use serde_json::json;
+///
+/// let dataset = NewDataset {
+///     original_id: "dataset-123".to_string(),
+///     source_portal: "https://dati.gov.it".to_string(),
+///     url: "https://dati.gov.it/dataset/my-data".to_string(),
+///     title: "My Dataset".to_string(),
+///     description: Some("Description here".to_string()),
+///     embedding: None,
+///     metadata: json!({"tags": ["open-data", "italy"]}),
+/// };
+///
+/// assert_eq!(dataset.title, "My Dataset");
+/// assert!(dataset.embedding.is_none());
+/// ```
+///
 /// # Fields
 ///
 /// * `original_id` - Original identifier from the source portal
@@ -63,7 +83,7 @@ pub struct Dataset {
 /// * `url` - Public landing page URL for the dataset
 /// * `title` - Human-readable dataset title
 /// * `description` - Optional detailed description
-/// * `embedding` - Optional vector of 1536 floats (pgvector)
+/// * `embedding` - Optional vector of 768 floats (pgvector)
 /// * `metadata` - Additional metadata as JSON
 #[derive(Debug, Serialize, Clone)]
 pub struct NewDataset {
@@ -89,6 +109,20 @@ pub struct NewDataset {
 /// alla query di ricerca. Lo score rappresenta la cosine similarity tra l'embedding
 /// del dataset e l'embedding della query, con valori tra 0.0 (nessuna similarità)
 /// e 1.0 (identici).
+///
+/// # Examples
+///
+/// ```
+/// use ceres_core::SearchResult;
+///
+/// // SearchResult viene creato dal repository durante le ricerche
+/// // Il similarity_score indica quanto il dataset è rilevante per la query
+/// // Valori tipici:
+/// // - 0.9+ : Match molto rilevante
+/// // - 0.7-0.9 : Match buono
+/// // - 0.5-0.7 : Match parziale
+/// // - <0.5 : Match debole
+/// ```
 #[derive(Debug, Serialize, Clone)]
 pub struct SearchResult {
     /// Il dataset trovato
@@ -117,6 +151,24 @@ pub struct DatabaseStats {
 ///
 /// Rappresenta un portale open data configurato per l'harvesting.
 /// Supporta diversi tipi di portali (CKAN, Socrata, DCAT).
+///
+/// # Examples
+///
+/// ```
+/// use ceres_core::Portal;
+///
+/// let json = r#"{
+///     "name": "Dati.gov.it",
+///     "url": "https://dati.gov.it",
+///     "type": "ckan",
+///     "description": "Italian national open data portal"
+/// }"#;
+///
+/// let portal: Portal = serde_json::from_str(json).unwrap();
+/// assert_eq!(portal.name, "Dati.gov.it");
+/// assert_eq!(portal.portal_type, "ckan");
+/// assert!(portal.enabled); // Default is true
+/// ```
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Portal {
     /// Nome del portale (human-readable)

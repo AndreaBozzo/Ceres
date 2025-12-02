@@ -167,6 +167,24 @@ impl AppError {
     }
 
     /// Returns true if this error is retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ceres_core::error::AppError;
+    ///
+    /// // Network errors are retryable
+    /// let err = AppError::NetworkError("connection reset".to_string());
+    /// assert!(err.is_retryable());
+    ///
+    /// // Rate limits are retryable (after a delay)
+    /// let err = AppError::RateLimitExceeded;
+    /// assert!(err.is_retryable());
+    ///
+    /// // Dataset not found is NOT retryable
+    /// let err = AppError::DatasetNotFound("test".to_string());
+    /// assert!(!err.is_retryable());
+    /// ```
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
