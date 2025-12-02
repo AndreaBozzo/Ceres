@@ -18,12 +18,11 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```no_run
-/// use ceres::error::AppError;
+/// use ceres_core::error::AppError;
 ///
 /// fn example() -> Result<(), AppError> {
 ///     // Errors automatically convert
-///     let url = reqwest::Url::parse("invalid")?;
-///     Ok(())
+///     Err(AppError::Generic("Something went wrong".to_string()))
 /// }
 /// ```
 #[derive(Error, Debug)]
@@ -37,17 +36,17 @@ pub enum AppError {
 
     /// HTTP client request failed.
     ///
-    /// This error wraps all errors from the `reqwest` HTTP client, including
-    /// network failures, timeout errors, and HTTP status errors.
+    /// This error occurs when HTTP requests fail due to network issues,
+    /// timeouts, or server errors.
     #[error("API Client error: {0}")]
-    ClientError(#[from] reqwest::Error),
+    ClientError(String),
 
     /// OpenAI API call failed.
     ///
-    /// This error wraps all errors from the OpenAI client, including
+    /// This error occurs when OpenAI API calls fail, including
     /// authentication failures, rate limiting, and API errors.
     #[error("OpenAI error: {0}")]
-    OpenAiError(#[from] async_openai::error::OpenAIError),
+    OpenAiError(String),
 
     /// JSON serialization or deserialization failed.
     ///
@@ -61,7 +60,7 @@ pub enum AppError {
     /// This error occurs when attempting to parse an invalid URL string,
     /// typically when constructing API endpoints or validating portal URLs.
     #[error("Invalid URL: {0}")]
-    InvalidUrl(#[from] url::ParseError),
+    InvalidUrl(String),
 
     /// Dataset not found in the database.
     ///
@@ -117,13 +116,6 @@ mod tests {
     fn test_invalid_portal_url() {
         let err = AppError::InvalidPortalUrl("not a url".to_string());
         assert!(err.to_string().contains("Invalid CKAN portal URL"));
-    }
-
-    #[test]
-    fn test_error_from_url_parse() {
-        let parse_err = url::Url::parse("not a valid url").unwrap_err();
-        let app_err: AppError = parse_err.into();
-        assert!(matches!(app_err, AppError::InvalidUrl(_)));
     }
 
     #[test]

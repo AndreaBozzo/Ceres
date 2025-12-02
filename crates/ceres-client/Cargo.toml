@@ -1,0 +1,29 @@
+[package]
+name = "ceres-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP clients for CKAN portals and OpenAI API"
+
+[dependencies]
+# Internal
+ceres-core.workspace = true
+
+# HTTP client
+reqwest.workspace = true
+
+# OpenAI
+async-openai.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Domain types
+url.workspace = true
+pgvector.workspace = true
+
+# Async
+tokio.workspace = true

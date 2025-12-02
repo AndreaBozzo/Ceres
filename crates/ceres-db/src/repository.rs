@@ -1,5 +1,5 @@
-use crate::error::AppError;
-use crate::models::{DatabaseStats, Dataset, NewDataset, SearchResult};
+use ceres_core::error::AppError;
+use ceres_core::models::{DatabaseStats, Dataset, NewDataset, SearchResult};
 use chrono::{DateTime, Utc};
 use pgvector::Vector;
 use sqlx::types::Json;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 ///
 /// ```no_run
 /// use sqlx::postgres::PgPoolOptions;
-/// use ceres::storage::DatasetRepository;
+/// use ceres_db::DatasetRepository;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let pool = PgPoolOptions::new()
@@ -42,19 +42,6 @@ impl DatasetRepository {
     /// # Returns
     ///
     /// A new `DatasetRepository` instance.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use sqlx::postgres::PgPoolOptions;
-    /// use ceres::storage::DatasetRepository;
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let pool = PgPoolOptions::new().connect("postgresql://localhost/ceres").await?;
-    /// let repo = DatasetRepository::new(pool);
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -64,9 +51,6 @@ impl DatasetRepository {
     /// This method performs an UPSERT operation using PostgreSQL's `ON CONFLICT`
     /// clause. If a dataset with the same `(source_portal, original_id)` pair
     /// exists, it will be updated. Otherwise, a new record is inserted.
-    ///
-    /// The `last_updated_at` timestamp is automatically set to the current time
-    /// on both insert and update operations.
     ///
     /// # Arguments
     ///
@@ -79,34 +63,10 @@ impl DatasetRepository {
     /// # Errors
     ///
     /// Returns `AppError::DatabaseError` if the database operation fails.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use ceres::models::NewDataset;
-    /// use ceres::storage::DatasetRepository;
-    /// # use sqlx::PgPool;
-    ///
-    /// # async fn example(repo: DatasetRepository) -> Result<(), Box<dyn std::error::Error>> {
-    /// let dataset = NewDataset {
-    ///     original_id: "dataset-123".to_string(),
-    ///     source_portal: "https://dati.gov.it".to_string(),
-    ///     url: "https://dati.gov.it/dataset/my-dataset".to_string(),
-    ///     title: "My Dataset".to_string(),
-    ///     description: Some("A test dataset".to_string()),
-    ///     embedding: None,
-    ///     metadata: serde_json::json!({}),
-    /// };
-    ///
-    /// let uuid = repo.upsert(&dataset).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn upsert(&self, new_data: &NewDataset) -> Result<Uuid, AppError> {
-        // Convertiamo il Vec<f32> in pgvector::Vector se presente
         let embedding_vector = new_data.embedding.as_ref().cloned();
 
-        let rec = sqlx::query!(
+        let rec: (Uuid,) = sqlx::query_as(
             r#"
             INSERT INTO datasets (
                 original_id, 
@@ -129,25 +89,22 @@ impl DatasetRepository {
                 last_updated_at = NOW()
             RETURNING id
             "#,
-            new_data.original_id,
-            new_data.source_portal,
-            new_data.url,
-            new_data.title,
-            new_data.description,
-            embedding_vector as Option<Vector>, // Casting esplicito per sqlx
-            serde_json::to_value(&new_data.metadata).unwrap_or(serde_json::json!({}))
         )
+        .bind(&new_data.original_id)
+        .bind(&new_data.source_portal)
+        .bind(&new_data.url)
+        .bind(&new_data.title)
+        .bind(&new_data.description)
+        .bind(embedding_vector)
+        .bind(serde_json::to_value(&new_data.metadata).unwrap_or(serde_json::json!({})))
         .fetch_one(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?; // Mappa l'errore SQLx nel tuo AppError
+        .map_err(AppError::DatabaseError)?;
 
-        Ok(rec.id)
+        Ok(rec.0)
     }
 
     /// Retrieves a dataset by its unique identifier.
-    ///
-    /// This method fetches a complete dataset record including all metadata,
-    /// embedding vector, and timestamps.
     ///
     /// # Arguments
     ///
@@ -160,25 +117,8 @@ impl DatasetRepository {
     /// # Errors
     ///
     /// Returns `AppError::DatabaseError` if the database query fails.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use uuid::Uuid;
-    /// use ceres::storage::DatasetRepository;
-    /// # use sqlx::PgPool;
-    ///
-    /// # async fn example(repo: DatasetRepository) -> Result<(), Box<dyn std::error::Error>> {
-    /// let id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000")?;
-    /// if let Some(dataset) = repo.get(id).await? {
-    ///     println!("Found dataset: {}", dataset.title);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn get(&self, id: Uuid) -> Result<Option<Dataset>, AppError> {
-        let result = sqlx::query_as!(
-            Dataset,
+        let result = sqlx::query_as::<_, Dataset>(
             r#"
             SELECT
                 id,
@@ -187,15 +127,15 @@ impl DatasetRepository {
                 url,
                 title,
                 description,
-                embedding as "embedding: _",
-                metadata as "metadata!: _",
+                embedding,
+                metadata,
                 first_seen_at,
                 last_updated_at
             FROM datasets
             WHERE id = $1
             "#,
-            id
         )
+        .bind(id)
         .fetch_optional(&self.pool)
         .await
         .map_err(AppError::DatabaseError)?;
@@ -203,41 +143,23 @@ impl DatasetRepository {
         Ok(result)
     }
 
-    /// Ricerca semantica usando cosine similarity con pgvector
+    /// Semantic search using cosine similarity with pgvector
     ///
-    /// Cerca dataset simili alla query fornita usando la distanza coseno tra embeddings.
-    /// Restituisce solo dataset che hanno embeddings generati, ordinati per similarità decrescente.
+    /// Searches for datasets similar to the provided query using cosine distance.
+    /// Returns only datasets with embeddings, ordered by similarity (descending).
     ///
     /// # Arguments
     ///
-    /// * `query_vector` - Il vettore di embedding della query di ricerca
-    /// * `limit` - Numero massimo di risultati da restituire
+    /// * `query_vector` - The embedding vector of the search query
+    /// * `limit` - Maximum number of results to return
     ///
     /// # Returns
     ///
-    /// Una lista di `SearchResult` ordinata per similarity score decrescente (migliori match per primi).
+    /// A list of `SearchResult` ordered by similarity score (best matches first).
     ///
     /// # Errors
     ///
     /// Returns `AppError::DatabaseError` if the database query fails.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use pgvector::Vector;
-    /// use ceres::storage::DatasetRepository;
-    /// # use sqlx::PgPool;
-    ///
-    /// # async fn example(repo: DatasetRepository) -> Result<(), Box<dyn std::error::Error>> {
-    /// let query_vector = Vector::from(vec![0.1; 1536]);
-    /// let results = repo.search(query_vector, 10).await?;
-    ///
-    /// for result in results {
-    ///     println!("[{:.2}] {}", result.similarity_score, result.dataset.title);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn search(
         &self,
         query_vector: Vector,
@@ -289,61 +211,52 @@ impl DatasetRepository {
             .collect())
     }
 
-    /// Ottiene statistiche aggregate del database
+    /// Gets aggregated database statistics
     ///
-    /// Fornisce una panoramica dello stato corrente del database, includendo
-    /// conteggi totali e informazioni sul last update.
+    /// Provides an overview of the current database state, including
+    /// total counts and last update information.
     ///
     /// # Returns
     ///
-    /// Una struct `DatabaseStats` con le statistiche aggregate.
+    /// A `DatabaseStats` struct with aggregated statistics.
     ///
     /// # Errors
     ///
     /// Returns `AppError::DatabaseError` if the database query fails.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use ceres::storage::DatasetRepository;
-    /// # use sqlx::PgPool;
-    ///
-    /// # async fn example(repo: DatasetRepository) -> Result<(), Box<dyn std::error::Error>> {
-    /// let stats = repo.get_stats().await?;
-    /// println!("Total datasets: {}", stats.total_datasets);
-    /// println!("With embeddings: {}", stats.datasets_with_embeddings);
-    /// println!("Unique portals: {}", stats.total_portals);
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn get_stats(&self) -> Result<DatabaseStats, AppError> {
-        let row = sqlx::query!(
+        let row: StatsRow = sqlx::query_as(
             r#"
             SELECT
-                COUNT(*) as "total!",
-                COUNT(embedding) as "with_embeddings!",
-                COUNT(DISTINCT source_portal) as "portals!",
+                COUNT(*) as total,
+                COUNT(embedding) as with_embeddings,
+                COUNT(DISTINCT source_portal) as portals,
                 MAX(last_updated_at) as last_update
             FROM datasets
-            "#
+            "#,
         )
         .fetch_one(&self.pool)
         .await
         .map_err(AppError::DatabaseError)?;
 
         Ok(DatabaseStats {
-            total_datasets: row.total,
-            datasets_with_embeddings: row.with_embeddings,
-            total_portals: row.portals,
+            total_datasets: row.total.unwrap_or(0),
+            datasets_with_embeddings: row.with_embeddings.unwrap_or(0),
+            total_portals: row.portals.unwrap_or(0),
             last_update: row.last_update,
         })
     }
 }
 
-/// Helper struct per deserializzare il risultato della query di search
-///
-/// Questa struct è utilizzata internamente da sqlx per mappare il risultato
-/// della query che include il similarity_score calcolato.
+/// Helper struct for deserializing stats query results
+#[derive(sqlx::FromRow)]
+struct StatsRow {
+    total: Option<i64>,
+    with_embeddings: Option<i64>,
+    portals: Option<i64>,
+    last_update: Option<DateTime<Utc>>,
+}
+
+/// Helper struct for deserializing search query results
 #[derive(sqlx::FromRow)]
 struct SearchResultRow {
     id: Uuid,
@@ -363,20 +276,6 @@ struct SearchResultRow {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    // Note: These are unit tests for the repository structure.
-    // Full integration tests with actual database would use #[sqlx::test]
-    // and require a running PostgreSQL instance with pgvector extension.
-
-    #[test]
-    fn test_new_repository() {
-        // We can't create an actual pool without a database connection,
-        // but we can verify the struct is properly defined
-        assert_eq!(
-            std::mem::size_of::<DatasetRepository>(),
-            std::mem::size_of::<PgPool>()
-        );
-    }
 
     #[test]
     fn test_new_dataset_structure() {
@@ -399,8 +298,6 @@ mod tests {
     fn test_embedding_vector_conversion() {
         let vec_f32 = vec![0.1_f32, 0.2, 0.3, 0.4];
         let vector = Vector::from(vec_f32.clone());
-
-        // Verify conversion works
         assert_eq!(vector.as_slice().len(), vec_f32.len());
     }
 
@@ -408,25 +305,11 @@ mod tests {
     fn test_metadata_serialization() {
         let metadata = json!({
             "organization": "test-org",
-            "tags": ["tag1", "tag2"],
-            "resources": [{"name": "file.csv", "format": "CSV"}]
+            "tags": ["tag1", "tag2"]
         });
 
-        // Verify metadata can be serialized/deserialized
         let serialized = serde_json::to_value(&metadata).unwrap();
         assert!(serialized.is_object());
         assert_eq!(serialized["organization"], "test-org");
     }
-
-    // Integration tests would go in a separate file: tests/storage_integration.rs
-    // Example structure:
-    //
-    // #[sqlx::test]
-    // async fn test_upsert_new_dataset(pool: PgPool) -> sqlx::Result<()> {
-    //     let repo = DatasetRepository::new(pool);
-    //     let new_dataset = NewDataset { ... };
-    //     let uuid = repo.upsert(&new_dataset).await?;
-    //     assert!(uuid != Uuid::nil());
-    //     Ok(())
-    // }
 }

@@ -1,48 +1,19 @@
-[package]
-name = "ceres"
+[workspace]
+members = [
+    "crates/ceres-cli",
+    "crates/ceres-core",
+    "crates/ceres-db",
+    "crates/ceres-client",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.0.1"
-edition = "2024"
+edition = "2021"
 authors = ["Andrea Bozzo"]
 license = "Apache-2.0"
 rust-version = "1.85"
-description = "Semantic search engine for open data portals"
 repository = "https://github.com/yourusername/ceres"
-keywords = ["opendata", "semantic-search", "ckan", "vector-database"]
-categories = ["command-line-utilities", "database"]
-
-[dependencies]
-# --- Core Async & Runtime ---
-tokio = { version = "1.39", features = ["full"] }
-futures = "0.3"
-
-# --- Web & API ---
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
-url = "2.5.0"
-async-openai = { version = "0.31.0", features = ["embedding"] }
-
-# --- Data & Serialization ---
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-csv = "1.3"
-
-# --- Database ---
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
-pgvector = { version = "0.4", features = ["sqlx", "serde"] }
-uuid = { version = "1.0", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-
-# --- Observability & CLI ---
-tracing = "0.1"
-tracing-subscriber = "0.3"
-clap = { version = "4.4", features = ["derive", "env"] }
-dotenvy = "0.15"
-
-# --- Error Handling ---
-thiserror = "2.0"
-anyhow = "1.0"
-
-[dev-dependencies]
-tokio-test = "0.4"
 
 [profile.release]
 lto = true
@@ -52,3 +23,46 @@ strip = true
 [profile.dev]
 opt-level = 0
 debug = true
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.39", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
+pgvector = { version = "0.4", features = ["sqlx", "serde"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# OpenAI
+async-openai = "0.27"
+
+# CLI
+clap = { version = "4.4", features = ["derive", "env"] }
+dotenvy = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Domain types
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
+
+# Async utilities
+futures = "0.3"
+
+# Internal crates
+ceres-core = { path = "crates/ceres-core" }
+ceres-client = { path = "crates/ceres-client" }
+ceres-db = { path = "crates/ceres-db" }

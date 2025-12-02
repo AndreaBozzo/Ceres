@@ -1,0 +1,37 @@
+[package]
+name = "ceres-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Command-line interface for Ceres semantic search engine"
+
+[[bin]]
+name = "ceres"
+path = "src/main.rs"
+
+[dependencies]
+# Internal crates
+ceres-core.workspace = true
+ceres-client.workspace = true
+ceres-db.workspace = true
+
+# CLI
+clap.workspace = true
+dotenvy.workspace = true
+
+# Async runtime
+tokio.workspace = true
+futures.workspace = true
+
+# Database
+sqlx.workspace = true
+pgvector.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Error handling
+anyhow.workspace = true

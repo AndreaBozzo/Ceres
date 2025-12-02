@@ -1,0 +1,24 @@
+[package]
+name = "ceres-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core types and error handling for Ceres"
+
+[dependencies]
+# Serialization
+serde = { workspace = true }
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Domain types
+uuid.workspace = true
+chrono.workspace = true
+
+# Database types (for Vector in models)
+pgvector.workspace = true
+sqlx.workspace = true
