@@ -1,15 +1,22 @@
 <div align="center">
   <img src="assets/images/logo.jpeg" alt="Ceres Logo" width="800"/>
   <h1>Ceres</h1>
+  <p><strong>Semantic search engine for open data portals</strong></p>
+  <p>
+    <a href="#quick-start">Quick Start</a> •
+    <a href="#features">Features</a> •
+    <a href="#usage">Usage</a> •
+    <a href="#roadmap">Roadmap</a>
+  </p>
 </div>
 
-**Semantic search engine for open data portals.**
+---
 
-Ceres harvests metadata from government open data portals (CKAN, Socrata, DCAT) and indexes them with vector embeddings, enabling semantic search across fragmented data sources.
+Ceres harvests metadata from CKAN open data portals and indexes them with vector embeddings, enabling semantic search across fragmented data sources.
 
 > *Named after the Roman goddess of harvest and agriculture.*
 
-## General Overview
+## Why Ceres?
 
 Open data portals are everywhere, but finding the right dataset is still painful:
 
@@ -22,88 +29,120 @@ Ceres solves this by creating a unified semantic index. Search by *meaning*, not
 ```bash
 $ ceres search "air quality monitoring stations"
 
-1. [0.91] Centraline qualità aria - Comune di Milano
-2. [0.87] Stazioni monitoraggio atmosferico - ARPA Lombardia  
-3. [0.84] Air quality sensor network - Regione Emilia-Romagna
+🔍 Search Results for: "air quality monitoring stations"
+
+Found 3 matching datasets:
+
+1. [██████████] [91%] Centraline qualità aria
+   📍 https://dati.comune.milano.it
+   🔗 https://dati.comune.milano.it/dataset/centraline-qualita-aria
+
+2. [████████░░] [87%] Stazioni monitoraggio atmosferico
+   📍 https://dati.arpalombardia.it
+   🔗 https://dati.arpalombardia.it/dataset/stazioni-monitoraggio
+
+3. [████████░░] [84%] Air quality sensor network
+   📍 https://dati.emilia-romagna.it
+   🔗 https://dati.emilia-romagna.it/dataset/air-quality-sensors
 ```
 
-## Status
+## Features
 
-🚧 **Early development** — not yet ready for production use.
-
-- [x] Database schema with pgvector
-- [x] Repository pattern for datasets
-- [x] CKAN client
-- [x] OpenAI embeddings integration
-- [x] CLI interface with harvest, search, export, stats commands
-- [ ] REST API
-- [ ] Portals configuration from `portals.toml`
+- **CKAN Harvester** — Fetch datasets from any CKAN-compatible portal
+- **Semantic Search** — Find datasets by meaning using OpenAI embeddings
+- **Multi-format Export** — Export to JSON, JSON Lines, or CSV
+- **Database Statistics** — Monitor indexed datasets and portals
 
 ## Tech Stack
 
-- **Rust** — async runtime with Tokio
-- **PostgreSQL + pgvector** — metadata storage and vector similarity search
-- **OpenAI API** — text-embedding-3-small for semantic vectors
-- **CKAN/DCAT** — standard protocols for open data harvesting
+| Component | Technology |
+|-----------|------------|
+| Language | Rust (async with Tokio) |
+| Database | PostgreSQL 16+ with pgvector |
+| Embeddings | OpenAI text-embedding-3-small |
+| Portal Protocol | CKAN API v3 |
 
 ## Quick Start
 
 ### Prerequisites
 
-- Rust 1.75+
-- PostgreSQL 16+ with pgvector extension
+- Rust 1.85+
+- Docker & Docker Compose
 - OpenAI API key
 
 ### Setup
 
 ```bash
-# Clone the repository
+# Clone and enter directory
 git clone https://github.com/AndreaBozzo/Ceres.git
 cd Ceres
 
 # Start PostgreSQL with pgvector
 docker-compose up -d
 
-# Run migrations
-psql $DATABASE_URL -f migrations/202511290001_init.sql
+# Run database migrations
+psql postgresql://ceres_user:password@localhost:5432/ceres_db \
+  -f migrations/202511290001_init.sql
 
 # Configure environment
 cp .env.example .env
 # Edit .env with your OpenAI API key
 
-# Build and run
+# Build
 cargo build --release
-./target/release/ceres --help
 ```
 
-### Usage
+## Usage
+
+### Harvest datasets from a CKAN portal
 
 ```bash
-# Harvest a CKAN portal
 ceres harvest https://dati.comune.milano.it
-
-# Search indexed datasets
-ceres search "trasporto pubblico" --limit 10
-
-# Export to JSON Lines
-ceres export --format jsonl > datasets.jsonl
 ```
 
-## Configuration
+### Search indexed datasets
 
-Portals are configured via `portals.toml`:
+```bash
+ceres search "trasporto pubblico" --limit 10
+```
 
-```toml
-[[portals]]
-name = "Milano Open Data"
-url = "https://dati.comune.milano.it"
-type = "ckan"
+### Export datasets
 
-[[portals]]
-name = "dati.gov.it"
-url = "https://dati.gov.it"
-type = "ckan"
-schedule = "0 3 * * *"  # Daily at 3 AM
+```bash
+# JSON Lines (default)
+ceres export > datasets.jsonl
+
+# JSON array
+ceres export --format json > datasets.json
+
+# CSV
+ceres export --format csv > datasets.csv
+
+# Filter by portal
+ceres export --portal https://dati.comune.milano.it
+```
+
+### View statistics
+
+```bash
+ceres stats
+```
+
+## CLI Reference
+
+```
+ceres <COMMAND>
+
+Commands:
+  harvest  Harvest datasets from a CKAN portal
+  search   Search indexed datasets using semantic similarity
+  export   Export indexed datasets to various formats
+  stats    Show database statistics
+  help     Print help information
+
+Environment Variables:
+  DATABASE_URL     PostgreSQL connection string
+  OPENAI_API_KEY   OpenAI API key for embeddings
 ```
 
 ## Architecture
@@ -112,28 +151,31 @@ schedule = "0 3 * * *"  # Daily at 3 AM
 
 ## Roadmap
 
-### v0.1 — MVP (in progress)
-- CKAN harvester for Italian portals
-- OpenAI embeddings
-- Basic CLI search
-- Single PostgreSQL backend
+### v0.0.1 — Initial Release ✅
+- CKAN harvester
+- OpenAI embeddings (text-embedding-3-small)
+- CLI with harvest, search, export, stats commands
+- PostgreSQL + pgvector backend
 
-### v0.2 — Multi-portal
-- Socrata support (Lombardia)
-- DCAT-AP harvester (EU portals)
+### v0.1 — Enhancements
+- Portals configuration from `portals.toml`
 - Incremental/delta harvesting
+- Improved error handling and retry logic
+
+### v0.2 — Multi-portal & API
 - REST API
+- Socrata support
+- DCAT-AP harvester (EU portals)
 
 ### v0.3 — European scale
 - Multilingual embeddings (E5-multilingual)
-- Cross-language search (query in Italian, find German datasets)
+- Cross-language search
 - data.europa.eu integration
 
 ### Future
 - Local embedding models (no OpenAI dependency)
-- Schema-level search ("find datasets with postal codes")
+- Schema-level search
 - Data quality scoring
-- Knowledge graph linking (ISTAT codes, ATECO, etc.)
 
 ## Contributing
 
