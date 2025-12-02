@@ -3,7 +3,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 /// CLI configuration parsed from command line arguments and environment variables
 #[derive(Parser, Debug)]
 #[command(name = "ceres")]
-#[command(author, version, about = "Semantic search engine for open data portals")]
+#[command(
+    author,
+    version,
+    about = "Semantic search engine for open data portals"
+)]
 #[command(after_help = "Examples:
   ceres harvest https://dati.comune.milano.it
   ceres search \"air quality monitoring\" --limit 5

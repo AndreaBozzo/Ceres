@@ -4,7 +4,7 @@ use dotenvy::dotenv;
 use futures::stream::{self, StreamExt};
 use pgvector::Vector;
 use sqlx::postgres::PgPoolOptions;
-use tracing::{Level, error, info};
+use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use ceres_cli::{Command, Config, ExportFormat};
@@ -47,7 +47,11 @@ async fn main() -> anyhow::Result<()> {
         Command::Search { query, limit } => {
             search(&repo, &openai_client, &query, limit).await?;
         }
-        Command::Export { format, portal, limit } => {
+        Command::Export {
+            format,
+            portal,
+            limit,
+        } => {
             export(&repo, format, portal.as_deref(), limit).await?;
         }
         Command::Stats => {
@@ -238,7 +242,10 @@ async fn show_stats(repo: &DatasetRepository) -> anyhow::Result<()> {
 
     println!("\n📊 Database Statistics\n");
     println!("  Total datasets:        {}", stats.total_datasets);
-    println!("  With embeddings:       {}", stats.datasets_with_embeddings);
+    println!(
+        "  With embeddings:       {}",
+        stats.datasets_with_embeddings
+    );
     println!("  Unique portals:        {}", stats.total_portals);
     if let Some(last_update) = stats.last_update {
         println!("  Last update:           {}", last_update);

@@ -1,9 +1,9 @@
-use ceres_core::error::AppError;
 use async_openai::{
-    Client,
     config::OpenAIConfig,
     types::{CreateEmbeddingRequestArgs, EmbeddingInput},
+    Client,
 };
+use ceres_core::error::AppError;
 
 /// HTTP client for interacting with OpenAI's Embeddings API.
 ///
