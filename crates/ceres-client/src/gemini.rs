@@ -150,7 +150,8 @@ impl GeminiClient {
             if let Ok(gemini_error) = serde_json::from_str::<GeminiError>(&error_text) {
                 let msg = gemini_error.error.message;
                 if status.as_u16() == 401 || msg.contains("API key") {
-                    return Err(AppError::OpenAiError(
+                    // TODO: Implement proper handling for Gemini instead of old OpenAiError
+                    return Err(AppError::GeminiError(
                         "401 Unauthorized - Invalid API key".to_string(),
                     ));
                 } else if status.as_u16() == 429 {

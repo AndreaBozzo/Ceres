@@ -11,7 +11,6 @@ use thiserror::Error;
 /// Most errors automatically convert from their source types using the `#[from]` attribute:
 /// - `sqlx::Error` → `AppError::DatabaseError`
 /// - `reqwest::Error` → `AppError::ClientError`
-/// - `async_openai::error::OpenAIError` → `AppError::OpenAiError`
 /// - `serde_json::Error` → `AppError::SerializationError`
 /// - `url::ParseError` → `AppError::InvalidUrl`
 ///
@@ -41,12 +40,12 @@ pub enum AppError {
     #[error("API Client error: {0}")]
     ClientError(String),
 
-    /// OpenAI API call failed.
+    /// Gemini API call failed.
     ///
     /// This error occurs when OpenAI API calls fail, including
     /// authentication failures, rate limiting, and API errors.
-    #[error("OpenAI error: {0}")]
-    OpenAiError(String),
+    #[error("Gemini error: {0}")] // TODO improve this
+    GeminiError(String),
 
     /// JSON serialization or deserialization failed.
     ///
@@ -129,19 +128,19 @@ impl AppError {
                     format!("API error: {}", msg)
                 }
             }
-            AppError::OpenAiError(msg) => {
+            AppError::GeminiError(msg) => {
                 if msg.contains("401")
                     || msg.contains("Unauthorized")
                     || msg.contains("invalid_api_key")
                 {
-                    "Invalid OpenAI API key.\n   Check your OPENAI_API_KEY environment variable."
+                    "Invalid Gemini API key.\n   Check your GEMINI_API_KEY environment variable."
                         .to_string()
                 } else if msg.contains("429") || msg.contains("rate") {
-                    "OpenAI rate limit reached.\n   Wait a moment and try again, or reduce concurrency.".to_string()
+                    "Gemini rate limit reached.\n   Wait a moment and try again, or reduce concurrency.".to_string()
                 } else if msg.contains("insufficient_quota") {
-                    "OpenAI quota exceeded.\n   Check your OpenAI account billing.".to_string()
+                    "Gemini quota exceeded.\n   Check your Google account billing.".to_string()
                 } else {
-                    format!("OpenAI error: {}", msg)
+                    format!("Gemini error: {}", msg)
                 }
             }
             AppError::InvalidPortalUrl(url) => {
@@ -219,6 +218,20 @@ mod tests {
     }
 
     #[test]
+    fn test_user_message_gemini_auth() {
+        let err = AppError::GeminiError("401 Unauthorized".to_string());
+        let msg = err.user_message();
+        assert!(msg.contains("Invalid Gemini API key"));
+    }
+
+    #[test]
+    fn test_user_message_rate_limit() {
+        let err = AppError::GeminiError("429 rate limit".to_string());
+        let msg = err.user_message();
+        assert!(msg.contains("rate limit"));
+    }
+
+    #[test]
     fn test_invalid_portal_url() {
         let err = AppError::InvalidPortalUrl("not a url".to_string());
         assert!(err.to_string().contains("Invalid CKAN portal URL"));
@@ -239,20 +252,6 @@ mod tests {
         let err = AppError::DatabaseError(sqlx::Error::PoolTimedOut);
         let msg = err.user_message();
         assert!(msg.contains("Cannot connect to database") || msg.contains("Database error"));
-    }
-
-    #[test]
-    fn test_user_message_openai_auth() {
-        let err = AppError::OpenAiError("401 Unauthorized".to_string());
-        let msg = err.user_message();
-        assert!(msg.contains("Invalid OpenAI API key"));
-    }
-
-    #[test]
-    fn test_user_message_rate_limit() {
-        let err = AppError::OpenAiError("429 rate limit".to_string());
-        let msg = err.user_message();
-        assert!(msg.contains("rate limit"));
     }
 
     #[test]

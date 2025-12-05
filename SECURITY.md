@@ -26,7 +26,7 @@ We will respond within 48 hours and work with you to address the issue.
 
 When using Ceres:
 
-- **API Keys**: Never commit OpenAI API keys or database credentials to version control
+- **API Keys**: Never commit API keys or database credentials to version control
 - **Database**: Use strong passwords for PostgreSQL and restrict network access
 - **Input Validation**: Be cautious when harvesting from untrusted data portals
 - **Dependencies**: Keep Rust dependencies updated with `cargo update`
