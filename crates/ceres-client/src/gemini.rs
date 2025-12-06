@@ -139,10 +139,7 @@ impl GeminiClient {
         // Sanitize text - replace newlines with spaces
         let sanitized_text = text.replace('\n', " ");
 
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
-            self.api_key
-        );
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent";
 
         let request_body = EmbeddingRequest {
             model: "models/text-embedding-004".to_string(),
@@ -155,7 +152,8 @@ impl GeminiClient {
 
         let response = self
             .client
-            .post(&url)
+            .post(url)
+            .header("x-goog-api-key", self.api_key.clone())
             .json(&request_body)
             .send()
             .await
