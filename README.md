@@ -127,8 +127,11 @@ cd Ceres
 docker-compose up -d
 
 # Run database migrations
-psql postgresql://ceres_user:password@localhost:5432/ceres_db \
-  -f migrations/202511290001_init.sql
+make migrate
+
+# Or manually with psql if you prefer
+# psql postgresql://ceres_user:password@localhost:5432/ceres_db \
+#   -f migrations/202511290001_init.sql
 
 # Configure environment
 cp .env.example .env
@@ -137,6 +140,8 @@ cp .env.example .env
 # Build
 cargo build --release
 ```
+
+> **💡 Tip**: This project includes a Makefile with convenient shortcuts. Run `make help` to see all available commands.
 
 ## Usage
 
@@ -189,6 +194,36 @@ Commands:
 Environment Variables:
   DATABASE_URL     PostgreSQL connection string
   GEMINI_API_KEY   Google Gemini API key for embeddings
+```
+
+## Development
+
+The project includes a Makefile with convenient shortcuts for common development tasks:
+
+```bash
+# Start development environment (starts PostgreSQL with docker-compose)
+make dev
+
+# Run database migrations
+make migrate
+
+# Build the project
+make build
+
+# Build in release mode
+make release
+
+# Run tests
+make test
+
+# Format code
+make fmt
+
+# Run lints
+make clippy
+
+# See all available commands
+make help
 ```
 
 ## Architecture
