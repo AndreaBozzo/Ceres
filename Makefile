@@ -43,7 +43,7 @@ migrate: ## Run database migrations
 		[ -f "$$f" ] || continue; \
 		filename=$$(basename "$$f"); \
 		escaped_filename=$$(printf '%s' "$$filename" | sed "s/'/''/g"); \
-		applied=$$(psql $$DATABASE_URL -t -A -c "SELECT 1 FROM schema_migrations WHERE filename = '$$escaped_filename'" 2>/dev/null); \
+		applied=$$(psql $$DATABASE_URL -t -A -c "SELECT 1 FROM schema_migrations WHERE filename = '$$escaped_filename'" 2>/dev/null || echo "0"); \
 		if [ "$$applied" = "1" ]; then \
 			echo "  ✓ $$filename (already applied)"; \
 		else \
