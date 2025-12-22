@@ -40,14 +40,16 @@ migrate: ## Run database migrations
 	@psql $$DATABASE_URL -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());" > /dev/null
 	@echo "Checking for pending migrations..."
 	@for f in migrations/*.sql; do \
+		[ -f "$$f" ] || continue; \
 		filename=$$(basename "$$f"); \
-		applied=$$(psql $$DATABASE_URL -t -A -c "SELECT 1 FROM schema_migrations WHERE filename='$$filename'" 2>/dev/null); \
+		escaped_filename=$$(printf '%s' "$$filename" | sed "s/'/''/g"); \
+		applied=$$(psql $$DATABASE_URL -t -A -c "SELECT 1 FROM schema_migrations WHERE filename = '$$escaped_filename'" 2>/dev/null); \
 		if [ "$$applied" = "1" ]; then \
 			echo "  ✓ $$filename (already applied)"; \
 		else \
 			echo "  → Running $$filename..."; \
 			if psql $$DATABASE_URL -v ON_ERROR_STOP=1 -f "$$f"; then \
-				psql $$DATABASE_URL -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations (filename) VALUES ('$$filename');" > /dev/null; \
+				psql $$DATABASE_URL -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations (filename) VALUES ('$$escaped_filename');" > /dev/null; \
 				echo "  ✓ $$filename (applied successfully)"; \
 			else \
 				echo "  ✗ $$filename (failed)"; \
