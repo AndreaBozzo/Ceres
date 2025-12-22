@@ -277,10 +277,7 @@ async fn harvest(
     info!("  + New datasets:              {}", new_count);
     info!("  ✗ Failed:                    {}", failed);
     info!("───────────────────────────────────────────────────────");
-    info!(
-        "  API calls saved:             {} (vs full sync)",
-        total.saturating_sub(regenerated + new_count)
-    );
+    info!("  API calls saved:             {} (vs full sync)", skipped);
     info!("═══════════════════════════════════════════════════════");
 
     if successful == total {

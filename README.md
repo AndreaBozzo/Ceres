@@ -29,27 +29,26 @@ Ceres solves this by creating a unified semantic index. Search by *meaning*, not
 ```
 $ ceres harvest https://dati.comune.milano.it
 
-INFO ceres: Connecting to database...
 INFO ceres: Starting delta harvest for: https://dati.comune.milano.it
 INFO ceres: Loading existing content hashes from database...
-INFO ceres: Found 0 existing datasets in database
+INFO ceres: Found 2575 existing datasets in database
 INFO ceres: Fetching package list from portal...
-INFO ceres: Found 2575 datasets on portal. Starting concurrent processing...
-INFO ceres: [1/2575] + New dataset: Catalogo CSV dei dataset
-INFO ceres: [1/2575] ✓ Indexed: Catalogo CSV dei dataset (b74f2145-bb06-4891-87b2-32ffaccb3689)
+INFO ceres: Found 2580 datasets on portal. Starting concurrent processing...
+INFO ceres: [1/2580] ~ Skipped (unchanged): Catalogo CSV dei dataset
+INFO ceres: [2/2580] * Content changed, regenerating: Dati demografici 2024
 ...
 INFO ceres: ═══════════════════════════════════════════════════════
 INFO ceres: Delta Harvesting Complete for: https://dati.comune.milano.it
 INFO ceres: ═══════════════════════════════════════════════════════
-INFO ceres:   Total datasets on portal:    2575
-INFO ceres:   Previously in database:      0
+INFO ceres:   Total datasets on portal:    2580
+INFO ceres:   Previously in database:      2575
 INFO ceres: ───────────────────────────────────────────────────────
-INFO ceres:   ~ Skipped (unchanged):       0 (0.0%)
-INFO ceres:   * Regenerated (changed):     2575
-INFO ceres:   + New datasets:              2575
+INFO ceres:   ~ Skipped (unchanged):       2570 (99.6%)
+INFO ceres:   * Regenerated (changed):     5
+INFO ceres:   + New datasets:              5
 INFO ceres:   ✗ Failed:                    0
 INFO ceres: ───────────────────────────────────────────────────────
-INFO ceres:   API calls saved:             0 (vs full sync)
+INFO ceres:   API calls saved:             2570 (vs full sync)
 INFO ceres: ═══════════════════════════════════════════════════════
 ```
 
