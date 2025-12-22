@@ -121,7 +121,7 @@ impl DatasetRepository {
     ///
     /// A HashMap where:
     /// - Key: `original_id` (String)
-    /// - Value: `content_hash` (Option<String>) - None if hash was never computed
+    /// - Value: `content_hash` (`Option<String>`) - None if hash was never computed
     pub async fn get_hashes_for_portal(
         &self,
         portal_url: &str,
