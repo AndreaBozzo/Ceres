@@ -36,7 +36,10 @@ docker-down: ## Stop PostgreSQL
 	docker-compose down
 
 migrate: ## Run database migrations
-	psql $$DATABASE_URL -f migrations/202511290001_init.sql
+	@for f in migrations/*.sql; do \
+		echo "Running $$f..."; \
+		psql $$DATABASE_URL -f "$$f"; \
+	done
 
 dev: docker-up ## Start development environment
 	@echo "PostgreSQL started. Run 'make migrate' to initialize the database."

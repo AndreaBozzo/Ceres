@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use pgvector::Vector;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::prelude::FromRow;
 use sqlx::types::Json;
 use uuid::Uuid;
@@ -48,6 +49,8 @@ pub struct Dataset {
     pub first_seen_at: DateTime<Utc>,
     /// Timestamp of the most recent update
     pub last_updated_at: DateTime<Utc>,
+    /// SHA-256 hash of title + description for delta detection
+    pub content_hash: Option<String>,
 }
 
 /// Data Transfer Object for inserting or updating datasets.
@@ -62,18 +65,24 @@ pub struct Dataset {
 /// use ceres_core::NewDataset;
 /// use serde_json::json;
 ///
+/// let title = "My Dataset";
+/// let description = Some("Description here".to_string());
+/// let content_hash = NewDataset::compute_content_hash(title, description.as_deref());
+///
 /// let dataset = NewDataset {
 ///     original_id: "dataset-123".to_string(),
 ///     source_portal: "https://dati.gov.it".to_string(),
 ///     url: "https://dati.gov.it/dataset/my-data".to_string(),
-///     title: "My Dataset".to_string(),
-///     description: Some("Description here".to_string()),
+///     title: title.to_string(),
+///     description,
 ///     embedding: None,
 ///     metadata: json!({"tags": ["open-data", "italy"]}),
+///     content_hash,
 /// };
 ///
 /// assert_eq!(dataset.title, "My Dataset");
 /// assert!(dataset.embedding.is_none());
+/// assert_eq!(dataset.content_hash.len(), 64); // SHA-256 = 64 hex chars
 /// ```
 ///
 /// # Fields
@@ -85,6 +94,7 @@ pub struct Dataset {
 /// * `description` - Optional detailed description
 /// * `embedding` - Optional vector of 768 floats (pgvector)
 /// * `metadata` - Additional metadata as JSON
+/// * `content_hash` - SHA-256 hash of title + description for delta detection
 #[derive(Debug, Serialize, Clone)]
 pub struct NewDataset {
     /// Original identifier from the source portal
@@ -97,10 +107,35 @@ pub struct NewDataset {
     pub title: String,
     /// Optional detailed description
     pub description: Option<String>,
-    /// Optional vector of 1536 floats (converted to pgvector on storage)
+    /// Optional vector of 768 floats (converted to pgvector on storage)
     pub embedding: Option<Vector>,
     /// Additional metadata as JSON
     pub metadata: serde_json::Value,
+    /// SHA-256 hash of title + description for delta detection
+    pub content_hash: String,
+}
+
+impl NewDataset {
+    /// Computes a SHA-256 hash of the content (title + description) for delta detection.
+    ///
+    /// This hash is used to determine if the dataset content has changed since
+    /// the last harvest, avoiding unnecessary embedding regeneration.
+    ///
+    /// # Arguments
+    ///
+    /// * `title` - The dataset title
+    /// * `description` - Optional dataset description
+    ///
+    /// # Returns
+    ///
+    /// A 64-character lowercase hexadecimal string representing the SHA-256 hash.
+    pub fn compute_content_hash(title: &str, description: Option<&str>) -> String {
+        let mut hasher = Sha256::new();
+        // Use newline separator to prevent collisions (e.g., "AB" + "C" != "A" + "BC")
+        let content = format!("{}\n{}", title, description.unwrap_or(""));
+        hasher.update(content.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 /// Result of a semantic search with similarity score.
@@ -208,17 +243,54 @@ mod tests {
 
     #[test]
     fn test_new_dataset_creation() {
+        let title = "Test Dataset";
+        let description = Some("A test dataset".to_string());
+        let content_hash = NewDataset::compute_content_hash(title, description.as_deref());
+
         let dataset = NewDataset {
             original_id: "test-123".to_string(),
             source_portal: "https://example.com".to_string(),
             url: "https://example.com/dataset/test".to_string(),
-            title: "Test Dataset".to_string(),
-            description: Some("A test dataset".to_string()),
+            title: title.to_string(),
+            description,
             embedding: None,
             metadata: serde_json::json!({"key": "value"}),
+            content_hash,
         };
 
         assert_eq!(dataset.original_id, "test-123");
         assert!(dataset.embedding.is_none());
+        assert_eq!(dataset.content_hash.len(), 64);
+    }
+
+    #[test]
+    fn test_compute_content_hash_consistency() {
+        let hash1 = NewDataset::compute_content_hash("Test Title", Some("Test Description"));
+        let hash2 = NewDataset::compute_content_hash("Test Title", Some("Test Description"));
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 64); // SHA-256 = 64 hex chars
+    }
+
+    #[test]
+    fn test_compute_content_hash_different_content() {
+        let hash1 = NewDataset::compute_content_hash("Title A", Some("Description"));
+        let hash2 = NewDataset::compute_content_hash("Title B", Some("Description"));
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_content_hash_none_vs_empty() {
+        // None description and empty description should produce same hash
+        let hash1 = NewDataset::compute_content_hash("Title", None);
+        let hash2 = NewDataset::compute_content_hash("Title", Some(""));
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_content_hash_separator_prevents_collision() {
+        // "AB" + "C" should differ from "A" + "BC"
+        let hash1 = NewDataset::compute_content_hash("AB", Some("C"));
+        let hash2 = NewDataset::compute_content_hash("A", Some("BC"));
+        assert_ne!(hash1, hash2);
     }
 }

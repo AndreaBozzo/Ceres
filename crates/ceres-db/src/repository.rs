@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use pgvector::Vector;
 use sqlx::types::Json;
 use sqlx::{PgPool, Pool, Postgres};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Repository for managing dataset persistence in PostgreSQL with pgvector.
@@ -69,23 +70,25 @@ impl DatasetRepository {
         let rec: (Uuid,) = sqlx::query_as(
             r#"
             INSERT INTO datasets (
-                original_id, 
-                source_portal, 
-                url, 
-                title, 
-                description, 
-                embedding, 
+                original_id,
+                source_portal,
+                url,
+                title,
+                description,
+                embedding,
                 metadata,
+                content_hash,
                 last_updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-            ON CONFLICT (source_portal, original_id) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (source_portal, original_id)
             DO UPDATE SET
                 title = EXCLUDED.title,
                 description = EXCLUDED.description,
                 url = EXCLUDED.url,
-                embedding = EXCLUDED.embedding,
+                embedding = COALESCE(EXCLUDED.embedding, datasets.embedding),
                 metadata = EXCLUDED.metadata,
+                content_hash = EXCLUDED.content_hash,
                 last_updated_at = NOW()
             RETURNING id
             "#,
@@ -97,11 +100,84 @@ impl DatasetRepository {
         .bind(&new_data.description)
         .bind(embedding_vector)
         .bind(serde_json::to_value(&new_data.metadata).unwrap_or(serde_json::json!({})))
+        .bind(&new_data.content_hash)
         .fetch_one(&self.pool)
         .await
         .map_err(AppError::DatabaseError)?;
 
         Ok(rec.0)
+    }
+
+    /// Retrieves all content hashes for datasets from a specific portal.
+    ///
+    /// This method is optimized for delta detection during harvesting.
+    /// It returns a HashMap for O(1) lookup by original_id.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_url` - The source portal URL to filter by
+    ///
+    /// # Returns
+    ///
+    /// A HashMap where:
+    /// - Key: `original_id` (String)
+    /// - Value: `content_hash` (Option<String>) - None if hash was never computed
+    pub async fn get_hashes_for_portal(
+        &self,
+        portal_url: &str,
+    ) -> Result<HashMap<String, Option<String>>, AppError> {
+        let rows: Vec<HashRow> = sqlx::query_as(
+            r#"
+            SELECT original_id, content_hash
+            FROM datasets
+            WHERE source_portal = $1
+            "#,
+        )
+        .bind(portal_url)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+        let hash_map: HashMap<String, Option<String>> = rows
+            .into_iter()
+            .map(|row| (row.original_id, row.content_hash))
+            .collect();
+
+        Ok(hash_map)
+    }
+
+    /// Updates only the last_updated_at timestamp for a dataset.
+    ///
+    /// This is an optimization for delta harvesting when content hasn't changed.
+    /// Instead of a full upsert, we only touch the timestamp.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_url` - The source portal URL
+    /// * `original_id` - The original ID from the portal
+    ///
+    /// # Returns
+    ///
+    /// true if a row was updated, false if no matching row found.
+    pub async fn update_timestamp_only(
+        &self,
+        portal_url: &str,
+        original_id: &str,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE datasets
+            SET last_updated_at = NOW()
+            WHERE source_portal = $1 AND original_id = $2
+            "#,
+        )
+        .bind(portal_url)
+        .bind(original_id)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     /// Retrieves a dataset by its unique identifier.
@@ -130,7 +206,8 @@ impl DatasetRepository {
                 embedding,
                 metadata,
                 first_seen_at,
-                last_updated_at
+                last_updated_at,
+                content_hash
             FROM datasets
             WHERE id = $1
             "#,
@@ -178,6 +255,7 @@ impl DatasetRepository {
                 metadata,
                 first_seen_at,
                 last_updated_at,
+                content_hash,
                 1 - (embedding <=> $1) as similarity_score
             FROM datasets
             WHERE embedding IS NOT NULL
@@ -205,6 +283,7 @@ impl DatasetRepository {
                     metadata: row.metadata,
                     first_seen_at: row.first_seen_at,
                     last_updated_at: row.last_updated_at,
+                    content_hash: row.content_hash,
                 },
                 similarity_score: row.similarity_score as f32,
             })
@@ -245,7 +324,8 @@ impl DatasetRepository {
                     embedding,
                     metadata,
                     first_seen_at,
-                    last_updated_at
+                    last_updated_at,
+                    content_hash
                 FROM datasets
                 WHERE source_portal = $1
                 ORDER BY last_updated_at DESC
@@ -270,7 +350,8 @@ impl DatasetRepository {
                     embedding,
                     metadata,
                     first_seen_at,
-                    last_updated_at
+                    last_updated_at,
+                    content_hash
                 FROM datasets
                 ORDER BY last_updated_at DESC
                 LIMIT $1
@@ -343,7 +424,15 @@ struct SearchResultRow {
     metadata: Json<serde_json::Value>,
     first_seen_at: DateTime<Utc>,
     last_updated_at: DateTime<Utc>,
+    content_hash: Option<String>,
     similarity_score: f64,
+}
+
+/// Helper struct for deserializing hash lookup query results
+#[derive(sqlx::FromRow)]
+struct HashRow {
+    original_id: String,
+    content_hash: Option<String>,
 }
 
 #[cfg(test)]
@@ -353,19 +442,25 @@ mod tests {
 
     #[test]
     fn test_new_dataset_structure() {
+        let title = "Test Dataset";
+        let description = Some("Test description".to_string());
+        let content_hash = NewDataset::compute_content_hash(title, description.as_deref());
+
         let new_dataset = NewDataset {
             original_id: "test-id".to_string(),
             source_portal: "https://example.com".to_string(),
             url: "https://example.com/dataset/test".to_string(),
-            title: "Test Dataset".to_string(),
-            description: Some("Test description".to_string()),
+            title: title.to_string(),
+            description,
             embedding: Some(Vector::from(vec![0.1, 0.2, 0.3])),
             metadata: json!({"key": "value"}),
+            content_hash,
         };
 
         assert_eq!(new_dataset.original_id, "test-id");
         assert_eq!(new_dataset.title, "Test Dataset");
         assert!(new_dataset.embedding.is_some());
+        assert_eq!(new_dataset.content_hash.len(), 64);
     }
 
     #[test]

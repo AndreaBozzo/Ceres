@@ -4,6 +4,8 @@ use dotenvy::dotenv;
 use futures::stream::{self, StreamExt};
 use pgvector::Vector;
 use sqlx::postgres::PgPoolOptions;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -11,6 +13,18 @@ use ceres_cli::{Command, Config, ExportFormat};
 use ceres_client::{CkanClient, GeminiClient};
 use ceres_core::Dataset;
 use ceres_db::DatasetRepository;
+
+/// Statistics for delta harvesting
+struct HarvestStats {
+    /// Datasets skipped (content unchanged)
+    skipped: AtomicUsize,
+    /// Datasets with new/updated embeddings
+    regenerated: AtomicUsize,
+    /// New datasets (first time indexed)
+    new: AtomicUsize,
+    /// Failed operations
+    failed: AtomicUsize,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -62,85 +76,172 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Harvest datasets from a CKAN portal
+/// Harvest datasets from a CKAN portal with delta detection
 async fn harvest(
     repo: &DatasetRepository,
     gemini_client: &GeminiClient,
     portal_url: &str,
 ) -> anyhow::Result<()> {
-    info!("Starting harvest for: {}", portal_url);
+    info!("Starting delta harvest for: {}", portal_url);
 
     // Initialize CKAN client
     let ckan = CkanClient::new(portal_url).context("Invalid CKAN portal URL")?;
 
-    // Fetch package list
-    info!("Fetching package list...");
-    let ids = ckan.list_package_ids().await?;
+    // PHASE 1: Fetch existing hashes from database
+    info!("Loading existing content hashes from database...");
+    let existing_hashes = repo.get_hashes_for_portal(portal_url).await?;
     info!(
-        "Found {} datasets. Starting concurrent processing...",
-        ids.len()
+        "Found {} existing datasets in database",
+        existing_hashes.len()
     );
 
-    // Process datasets concurrently (10 at a time)
+    // PHASE 2: Fetch package list from portal
+    info!("Fetching package list from portal...");
+    let ids = ckan.list_package_ids().await?;
     let total = ids.len();
+    info!(
+        "Found {} datasets on portal. Starting concurrent processing...",
+        total
+    );
+
+    // Initialize stats
+    let stats = Arc::new(HarvestStats {
+        skipped: AtomicUsize::new(0),
+        regenerated: AtomicUsize::new(0),
+        new: AtomicUsize::new(0),
+        failed: AtomicUsize::new(0),
+    });
+
+    // PHASE 3: Process datasets concurrently (10 at a time)
     let results: Vec<_> = stream::iter(ids.into_iter().enumerate())
         .map(|(i, id)| {
             let ckan = ckan.clone();
             let gemini = gemini_client.clone();
             let repo = repo.clone();
             let portal_url = portal_url.to_string();
+            let existing_hashes = existing_hashes.clone();
+            let stats = Arc::clone(&stats);
 
             async move {
-                // Fetch dataset details
+                // Fetch dataset details from CKAN
                 let ckan_data = match ckan.show_package(&id).await {
                     Ok(data) => data,
                     Err(e) => {
                         error!("[{}/{}] Failed to fetch {}: {}", i + 1, total, id, e);
+                        stats.failed.fetch_add(1, Ordering::Relaxed);
                         return Err(e);
                     }
                 };
 
-                // Convert to internal model
+                // Convert to internal model (computes content_hash)
                 let mut new_dataset = CkanClient::into_new_dataset(ckan_data, &portal_url);
+                let new_hash = &new_dataset.content_hash;
 
-                // Generate embedding from title and description
-                let combined_text = format!(
-                    "{} {}",
-                    new_dataset.title,
-                    new_dataset.description.as_deref().unwrap_or_default()
-                );
+                // DELTA DETECTION: Check if embedding regeneration is needed
+                let needs_embedding = match existing_hashes.get(&new_dataset.original_id) {
+                    // Dataset exists in DB
+                    Some(existing_hash) => {
+                        match existing_hash {
+                            // Hash exists and matches -> skip embedding
+                            Some(hash) if hash == new_hash => {
+                                info!(
+                                    "[{}/{}] ~ Skipped (unchanged): {}",
+                                    i + 1,
+                                    total,
+                                    new_dataset.title
+                                );
+                                stats.skipped.fetch_add(1, Ordering::Relaxed);
 
-                if !combined_text.trim().is_empty() {
-                    match gemini.get_embeddings(&combined_text).await {
-                        Ok(emb) => {
-                            new_dataset.embedding = Some(Vector::from(emb));
+                                // Just update the timestamp
+                                if let Err(e) = repo
+                                    .update_timestamp_only(&portal_url, &new_dataset.original_id)
+                                    .await
+                                {
+                                    error!(
+                                        "[{}/{}] Failed to update timestamp: {}",
+                                        i + 1,
+                                        total,
+                                        e
+                                    );
+                                }
+                                return Ok(());
+                            }
+                            // Hash differs -> content changed, regenerate
+                            Some(_) => {
+                                info!(
+                                    "[{}/{}] * Content changed, regenerating: {}",
+                                    i + 1,
+                                    total,
+                                    new_dataset.title
+                                );
+                                true
+                            }
+                            // Hash is NULL (legacy record) -> regenerate
+                            None => {
+                                info!(
+                                    "[{}/{}] + Legacy record, generating hash: {}",
+                                    i + 1,
+                                    total,
+                                    new_dataset.title
+                                );
+                                true
+                            }
                         }
-                        Err(e) => {
-                            error!(
-                                "[{}/{}] Failed to generate embedding for {}: {}",
-                                i + 1,
-                                total,
-                                id,
-                                e
-                            );
+                    }
+                    // Dataset not in DB -> new dataset
+                    None => {
+                        stats.new.fetch_add(1, Ordering::Relaxed);
+                        info!("[{}/{}] + New dataset: {}", i + 1, total, new_dataset.title);
+                        true
+                    }
+                };
+
+                // Generate embedding only if needed
+                if needs_embedding {
+                    let combined_text = format!(
+                        "{} {}",
+                        new_dataset.title,
+                        new_dataset.description.as_deref().unwrap_or_default()
+                    );
+
+                    if !combined_text.trim().is_empty() {
+                        match gemini.get_embeddings(&combined_text).await {
+                            Ok(emb) => {
+                                new_dataset.embedding = Some(Vector::from(emb));
+                                stats.regenerated.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(e) => {
+                                error!(
+                                    "[{}/{}] Failed to generate embedding for {}: {}",
+                                    i + 1,
+                                    total,
+                                    id,
+                                    e
+                                );
+                                stats.failed.fetch_add(1, Ordering::Relaxed);
+                                // Continue anyway - save dataset without embedding
+                            }
                         }
                     }
                 }
 
-                // Upsert to database
+                // Upsert to database (with content_hash)
                 match repo.upsert(&new_dataset).await {
                     Ok(uuid) => {
-                        info!(
-                            "[{}/{}] ✓ Indexed: {} ({})",
-                            i + 1,
-                            total,
-                            new_dataset.title,
-                            uuid
-                        );
+                        if needs_embedding {
+                            info!(
+                                "[{}/{}] ✓ Indexed: {} ({})",
+                                i + 1,
+                                total,
+                                new_dataset.title,
+                                uuid
+                            );
+                        }
                         Ok(())
                     }
                     Err(e) => {
                         error!("[{}/{}] Failed to save {}: {}", i + 1, total, id, e);
+                        stats.failed.fetch_add(1, Ordering::Relaxed);
                         Err(e)
                     }
                 }
@@ -150,13 +251,41 @@ async fn harvest(
         .collect()
         .await;
 
-    // Summary
+    // PHASE 4: Print summary with delta statistics
     let successful = results.iter().filter(|r| r.is_ok()).count();
-    let failed = results.iter().filter(|r| r.is_err()).count();
+    let failed = stats.failed.load(Ordering::Relaxed);
+    let skipped = stats.skipped.load(Ordering::Relaxed);
+    let regenerated = stats.regenerated.load(Ordering::Relaxed);
+    let new_count = stats.new.load(Ordering::Relaxed);
+
+    info!("═══════════════════════════════════════════════════════");
+    info!("Delta Harvesting Complete for: {}", portal_url);
+    info!("═══════════════════════════════════════════════════════");
+    info!("  Total datasets on portal:    {}", total);
+    info!("  Previously in database:      {}", existing_hashes.len());
+    info!("───────────────────────────────────────────────────────");
     info!(
-        "Harvesting complete: {} successful, {} failed out of {} total",
-        successful, failed, total
+        "  ~ Skipped (unchanged):       {} ({:.1}%)",
+        skipped,
+        if total > 0 {
+            (skipped as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        }
     );
+    info!("  * Regenerated (changed):     {}", regenerated);
+    info!("  + New datasets:              {}", new_count);
+    info!("  ✗ Failed:                    {}", failed);
+    info!("───────────────────────────────────────────────────────");
+    info!(
+        "  API calls saved:             {} (vs full sync)",
+        total.saturating_sub(regenerated + new_count)
+    );
+    info!("═══════════════════════════════════════════════════════");
+
+    if successful == total {
+        info!("All datasets processed successfully!");
+    }
 
     Ok(())
 }

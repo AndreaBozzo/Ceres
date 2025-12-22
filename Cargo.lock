@@ -192,6 +192,7 @@ dependencies = [
  "pgvector",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror",
  "uuid",

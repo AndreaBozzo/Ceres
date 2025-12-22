@@ -309,6 +309,10 @@ impl CkanClient {
 
         let metadata_json = serde_json::Value::Object(dataset.extras.clone());
 
+        // Compute content hash for delta detection
+        let content_hash =
+            NewDataset::compute_content_hash(&dataset.title, dataset.notes.as_deref());
+
         NewDataset {
             original_id: dataset.id,
             source_portal: portal_url.to_string(),
@@ -317,6 +321,7 @@ impl CkanClient {
             description: dataset.notes,
             embedding: None,
             metadata: metadata_json,
+            content_hash,
         }
     }
 }
@@ -356,13 +361,19 @@ mod tests {
         };
 
         let portal_url = "https://dati.gov.it";
-        let new_dataset = CkanClient::into_new_dataset(ckan_dataset, portal_url);
+        let new_dataset = CkanClient::into_new_dataset(ckan_dataset.clone(), portal_url);
 
         assert_eq!(new_dataset.original_id, "dataset-123");
         assert_eq!(new_dataset.source_portal, "https://dati.gov.it");
         assert_eq!(new_dataset.url, "https://dati.gov.it/dataset/my-dataset");
         assert_eq!(new_dataset.title, "My Dataset");
         assert!(new_dataset.embedding.is_none());
+
+        // Verify content hash is computed correctly
+        let expected_hash =
+            NewDataset::compute_content_hash(&ckan_dataset.title, ckan_dataset.notes.as_deref());
+        assert_eq!(new_dataset.content_hash, expected_hash);
+        assert_eq!(new_dataset.content_hash.len(), 64);
     }
 
     #[test]
