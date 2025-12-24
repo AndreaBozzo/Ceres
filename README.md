@@ -256,7 +256,8 @@ make help
 ### v0.1 — Enhancements
 - Portals configuration from `portals.toml`
 - Delta harvesting ✅
-- Improved error handling and retry logic
+- Incremental harvesting
+- Improved error handling (✅) and retry logic
 
 ### v0.2 — Multi-portal & API
 - REST API
