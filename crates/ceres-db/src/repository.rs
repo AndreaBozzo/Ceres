@@ -7,10 +7,9 @@ use sqlx::{PgPool, Pool, Postgres};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-/// Repository for managing dataset persistence in PostgreSQL with pgvector.
-///
-/// This repository provides methods to store, update, and retrieve datasets
-/// with vector embeddings for semantic search capabilities.
+const DATASET_COLUMNS: &str = "id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash";
+
+/// Repository for dataset persistence in PostgreSQL with pgvector.
 ///
 /// # Examples
 ///
@@ -34,36 +33,11 @@ pub struct DatasetRepository {
 }
 
 impl DatasetRepository {
-    /// Creates a new repository instance with the given database connection pool.
-    ///
-    /// # Arguments
-    ///
-    /// * `pool` - A PostgreSQL connection pool
-    ///
-    /// # Returns
-    ///
-    /// A new `DatasetRepository` instance.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    /// Inserts a new dataset or updates an existing one based on unique constraints.
-    ///
-    /// This method performs an UPSERT operation using PostgreSQL's `ON CONFLICT`
-    /// clause. If a dataset with the same `(source_portal, original_id)` pair
-    /// exists, it will be updated. Otherwise, a new record is inserted.
-    ///
-    /// # Arguments
-    ///
-    /// * `new_data` - The dataset to insert or update
-    ///
-    /// # Returns
-    ///
-    /// The UUID of the inserted or updated dataset.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AppError::DatabaseError` if the database operation fails.
+    /// Inserts or updates a dataset. Returns the UUID of the affected row.
     pub async fn upsert(&self, new_data: &NewDataset) -> Result<Uuid, AppError> {
         let embedding_vector = new_data.embedding.as_ref().cloned();
 
@@ -108,20 +82,7 @@ impl DatasetRepository {
         Ok(rec.0)
     }
 
-    /// Retrieves all content hashes for datasets from a specific portal.
-    ///
-    /// This method is optimized for delta detection during harvesting.
-    /// It returns a HashMap for O(1) lookup by original_id.
-    ///
-    /// # Arguments
-    ///
-    /// * `portal_url` - The source portal URL to filter by
-    ///
-    /// # Returns
-    ///
-    /// A HashMap where:
-    /// - Key: `original_id` (String)
-    /// - Value: `content_hash` (`Option<String>`) - None if hash was never computed
+    /// Returns a map of original_id → content_hash for all datasets from a portal.
     pub async fn get_hashes_for_portal(
         &self,
         portal_url: &str,
@@ -146,19 +107,7 @@ impl DatasetRepository {
         Ok(hash_map)
     }
 
-    /// Updates only the last_updated_at timestamp for a dataset.
-    ///
-    /// This is an optimization for delta harvesting when content hasn't changed.
-    /// Instead of a full upsert, we only touch the timestamp.
-    ///
-    /// # Arguments
-    ///
-    /// * `portal_url` - The source portal URL
-    /// * `original_id` - The original ID from the portal
-    ///
-    /// # Returns
-    ///
-    /// true if a row was updated, false if no matching row found.
+    /// Updates only the timestamp for unchanged datasets. Returns true if a row was updated.
     pub async fn update_timestamp_only(
         &self,
         portal_url: &str,
@@ -180,94 +129,34 @@ impl DatasetRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Retrieves a dataset by its unique identifier.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The UUID of the dataset to retrieve
-    ///
-    /// # Returns
-    ///
-    /// Returns `Some(Dataset)` if found, `None` if no dataset exists with the given ID.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AppError::DatabaseError` if the database query fails.
+    /// Retrieves a dataset by UUID.
     pub async fn get(&self, id: Uuid) -> Result<Option<Dataset>, AppError> {
-        let result = sqlx::query_as::<_, Dataset>(
-            r#"
-            SELECT
-                id,
-                original_id,
-                source_portal,
-                url,
-                title,
-                description,
-                embedding,
-                metadata,
-                first_seen_at,
-                last_updated_at,
-                content_hash
-            FROM datasets
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(AppError::DatabaseError)?;
+        let query = format!("SELECT {} FROM datasets WHERE id = $1", DATASET_COLUMNS);
+        let result = sqlx::query_as::<_, Dataset>(&query)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(AppError::DatabaseError)?;
 
         Ok(result)
     }
 
-    /// Semantic search using cosine similarity with pgvector
-    ///
-    /// Searches for datasets similar to the provided query using cosine distance.
-    /// Returns only datasets with embeddings, ordered by similarity (descending).
-    ///
-    /// # Arguments
-    ///
-    /// * `query_vector` - The embedding vector of the search query
-    /// * `limit` - Maximum number of results to return
-    ///
-    /// # Returns
-    ///
-    /// A list of `SearchResult` ordered by similarity score (best matches first).
-    ///
-    /// # Errors
-    ///
-    /// Returns `AppError::DatabaseError` if the database query fails.
+    /// Semantic search using cosine similarity. Returns results ordered by similarity.
     pub async fn search(
         &self,
         query_vector: Vector,
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
-        let results = sqlx::query_as::<_, SearchResultRow>(
-            r#"
-            SELECT
-                id,
-                original_id,
-                source_portal,
-                url,
-                title,
-                description,
-                embedding,
-                metadata,
-                first_seen_at,
-                last_updated_at,
-                content_hash,
-                1 - (embedding <=> $1) as similarity_score
-            FROM datasets
-            WHERE embedding IS NOT NULL
-            ORDER BY embedding <=> $1
-            LIMIT $2
-            "#,
-        )
-        .bind(query_vector)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(AppError::DatabaseError)?;
+        let query = format!(
+            "SELECT {}, 1 - (embedding <=> $1) as similarity_score FROM datasets WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2",
+            DATASET_COLUMNS
+        );
+        let results = sqlx::query_as::<_, SearchResultRow>(&query)
+            .bind(query_vector)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(AppError::DatabaseError)?;
 
         Ok(results
             .into_iter()
@@ -290,20 +179,7 @@ impl DatasetRepository {
             .collect())
     }
 
-    /// Lists all datasets with optional filtering by portal.
-    ///
-    /// # Arguments
-    ///
-    /// * `portal_filter` - Optional portal URL to filter by
-    /// * `limit` - Optional maximum number of results
-    ///
-    /// # Returns
-    ///
-    /// A vector of all matching datasets.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AppError::DatabaseError` if the database query fails.
+    /// Lists datasets with optional portal filter and limit.
     pub async fn list_all(
         &self,
         portal_filter: Option<&str>,
@@ -312,72 +188,32 @@ impl DatasetRepository {
         let limit_val = limit.unwrap_or(10000) as i64;
 
         let datasets = if let Some(portal) = portal_filter {
-            sqlx::query_as::<_, Dataset>(
-                r#"
-                SELECT
-                    id,
-                    original_id,
-                    source_portal,
-                    url,
-                    title,
-                    description,
-                    embedding,
-                    metadata,
-                    first_seen_at,
-                    last_updated_at,
-                    content_hash
-                FROM datasets
-                WHERE source_portal = $1
-                ORDER BY last_updated_at DESC
-                LIMIT $2
-                "#,
-            )
-            .bind(portal)
-            .bind(limit_val)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(AppError::DatabaseError)?
+            let query = format!(
+                "SELECT {} FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2",
+                DATASET_COLUMNS
+            );
+            sqlx::query_as::<_, Dataset>(&query)
+                .bind(portal)
+                .bind(limit_val)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(AppError::DatabaseError)?
         } else {
-            sqlx::query_as::<_, Dataset>(
-                r#"
-                SELECT
-                    id,
-                    original_id,
-                    source_portal,
-                    url,
-                    title,
-                    description,
-                    embedding,
-                    metadata,
-                    first_seen_at,
-                    last_updated_at,
-                    content_hash
-                FROM datasets
-                ORDER BY last_updated_at DESC
-                LIMIT $1
-                "#,
-            )
-            .bind(limit_val)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(AppError::DatabaseError)?
+            let query = format!(
+                "SELECT {} FROM datasets ORDER BY last_updated_at DESC LIMIT $1",
+                DATASET_COLUMNS
+            );
+            sqlx::query_as::<_, Dataset>(&query)
+                .bind(limit_val)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(AppError::DatabaseError)?
         };
 
         Ok(datasets)
     }
 
-    /// Gets aggregated database statistics
-    ///
-    /// Provides an overview of the current database state, including
-    /// total counts and last update information.
-    ///
-    /// # Returns
-    ///
-    /// A `DatabaseStats` struct with aggregated statistics.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AppError::DatabaseError` if the database query fails.
+    /// Returns aggregated database statistics.
     pub async fn get_stats(&self) -> Result<DatabaseStats, AppError> {
         let row: StatsRow = sqlx::query_as(
             r#"

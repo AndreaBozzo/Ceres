@@ -1,16 +1,10 @@
 use ceres_core::error::AppError;
 use ceres_core::models::NewDataset;
+use ceres_core::HttpConfig;
 use reqwest::{Client, StatusCode, Url};
 use serde::Deserialize;
 use serde_json::Value;
-use std::time::Duration;
 use tokio::time::sleep;
-
-/// Maximum number of retry attempts for failed requests.
-const MAX_RETRIES: u32 = 3;
-
-/// Base delay between retries (will be multiplied by attempt number).
-const RETRY_BASE_DELAY_MS: u64 = 500;
 
 /// Generic wrapper for CKAN API responses.
 ///
@@ -109,9 +103,10 @@ impl CkanClient {
         let base_url = Url::parse(base_url_str)
             .map_err(|_| AppError::Generic(format!("Invalid CKAN URL: {}", base_url_str)))?;
 
+        let http_config = HttpConfig::default();
         let client = Client::builder()
             .user_agent("Ceres/0.1 (semantic-search-bot)")
-            .timeout(Duration::from_secs(30))
+            .timeout(http_config.timeout)
             .build()
             .map_err(|e| AppError::ClientError(e.to_string()))?;
 
@@ -190,51 +185,42 @@ impl CkanClient {
         Ok(ckan_resp.result)
     }
 
-    /// Makes an HTTP GET request with automatic retry on transient failures.
-    ///
-    /// Implements exponential backoff for retries on:
-    /// - Network errors
-    /// - Timeouts
-    /// - Server errors (5xx)
-    /// - Rate limiting (429)
     async fn request_with_retry(&self, url: &Url) -> Result<reqwest::Response, AppError> {
+        let http_config = HttpConfig::default();
+        let max_retries = http_config.max_retries;
+        let base_delay = http_config.retry_base_delay;
         let mut last_error = AppError::Generic("No attempts made".to_string());
 
-        for attempt in 1..=MAX_RETRIES {
+        for attempt in 1..=max_retries {
             match self.client.get(url.clone()).send().await {
                 Ok(resp) => {
                     let status = resp.status();
 
-                    // Success
                     if status.is_success() {
                         return Ok(resp);
                     }
 
-                    // Rate limited - retry with backoff
                     if status == StatusCode::TOO_MANY_REQUESTS {
                         last_error = AppError::RateLimitExceeded;
-                        if attempt < MAX_RETRIES {
-                            let delay =
-                                Duration::from_millis(RETRY_BASE_DELAY_MS * 2_u64.pow(attempt));
+                        if attempt < max_retries {
+                            let delay = base_delay * 2_u32.pow(attempt);
                             sleep(delay).await;
                             continue;
                         }
                     }
 
-                    // Server error - retry
                     if status.is_server_error() {
                         last_error = AppError::ClientError(format!(
                             "Server error: HTTP {}",
                             status.as_u16()
                         ));
-                        if attempt < MAX_RETRIES {
-                            let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * attempt as u64);
+                        if attempt < max_retries {
+                            let delay = base_delay * attempt;
                             sleep(delay).await;
                             continue;
                         }
                     }
 
-                    // Client error (4xx except 429) - don't retry
                     return Err(AppError::ClientError(format!(
                         "HTTP {} from {}",
                         status.as_u16(),
@@ -242,17 +228,16 @@ impl CkanClient {
                     )));
                 }
                 Err(e) => {
-                    // Network/timeout errors - retry
                     if e.is_timeout() {
-                        last_error = AppError::Timeout(30);
+                        last_error = AppError::Timeout(http_config.timeout.as_secs());
                     } else if e.is_connect() {
                         last_error = AppError::NetworkError(format!("Connection failed: {}", e));
                     } else {
                         last_error = AppError::ClientError(e.to_string());
                     }
 
-                    if attempt < MAX_RETRIES && (e.is_timeout() || e.is_connect()) {
-                        let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * attempt as u64);
+                    if attempt < max_retries && (e.is_timeout() || e.is_connect()) {
+                        let delay = base_delay * attempt;
                         sleep(delay).await;
                         continue;
                     }

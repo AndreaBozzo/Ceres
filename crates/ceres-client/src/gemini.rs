@@ -1,7 +1,7 @@
 use ceres_core::error::{AppError, GeminiErrorDetails, GeminiErrorKind};
+use ceres_core::HttpConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 /// HTTP client for interacting with Google's Gemini Embeddings API.
 ///
@@ -20,7 +20,7 @@ use std::time::Duration;
 /// use ceres_client::GeminiClient;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let client = GeminiClient::new("your-api-key");
+/// let client = GeminiClient::new("your-api-key")?;
 /// let embedding = client.get_embeddings("Hello, world!").await?;
 /// println!("Embedding dimension: {}", embedding.len()); // 768
 /// # Ok(())
@@ -103,24 +103,17 @@ fn classify_gemini_error(status_code: u16, message: &str) -> GeminiErrorKind {
 
 impl GeminiClient {
     /// Creates a new Gemini client with the specified API key.
-    ///
-    /// # Arguments
-    ///
-    /// * `api_key` - Your Google AI API key
-    ///
-    /// # Returns
-    ///
-    /// A configured `GeminiClient` instance.
-    pub fn new(api_key: &str) -> Self {
+    pub fn new(api_key: &str) -> Result<Self, AppError> {
+        let http_config = HttpConfig::default();
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(http_config.timeout)
             .build()
-            .expect("Failed to build HTTP client");
+            .map_err(|e| AppError::ClientError(e.to_string()))?;
 
-        Self {
+        Ok(Self {
             client,
             api_key: api_key.to_string(),
-        }
+        })
     }
 
     /// Generates text embeddings using Google's text-embedding-004 model.
@@ -216,8 +209,8 @@ mod tests {
 
     #[test]
     fn test_new_client() {
-        let _client = GeminiClient::new("test-api-key");
-        // Just verify we can create a client without panicking
+        let client = GeminiClient::new("test-api-key");
+        assert!(client.is_ok());
     }
 
     #[test]

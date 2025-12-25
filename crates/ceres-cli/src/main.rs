@@ -11,52 +11,43 @@ use tracing_subscriber::FmtSubscriber;
 
 use ceres_cli::{Command, Config, ExportFormat};
 use ceres_client::{CkanClient, GeminiClient};
-use ceres_core::Dataset;
+use ceres_core::{Dataset, DbConfig, SyncConfig};
 use ceres_db::DatasetRepository;
 
-/// Statistics for delta harvesting
-struct HarvestStats {
-    /// Datasets skipped (content unchanged)
-    skipped: AtomicUsize,
-    /// Datasets with new/updated embeddings
-    regenerated: AtomicUsize,
-    /// New datasets (first time indexed)
-    new: AtomicUsize,
-    /// Failed operations
+struct SyncStats {
+    unchanged: AtomicUsize,
+    updated: AtomicUsize,
+    created: AtomicUsize,
     failed: AtomicUsize,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load environment variables from .env file
     dotenv().ok();
 
-    // Setup logging (stderr to keep stdout clean for exports)
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .with_writer(std::io::stderr)
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    // Parse command line arguments
     let config = Config::parse();
 
-    // Database connection
     info!("Connecting to database...");
+    let db_config = DbConfig::default();
     let pool = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(db_config.max_connections)
         .connect(&config.database_url)
         .await
         .context("Failed to connect to database")?;
 
-    // Initialize services
     let repo = DatasetRepository::new(pool);
-    let gemini_client = GeminiClient::new(&config.gemini_api_key);
+    let gemini_client = GeminiClient::new(&config.gemini_api_key)
+        .context("Failed to initialize embedding client")?;
 
-    // Execute command
     match config.command {
         Command::Harvest { portal_url } => {
-            harvest(&repo, &gemini_client, &portal_url).await?;
+            sync_portal(&repo, &gemini_client, &portal_url).await?;
         }
         Command::Search { query, limit } => {
             search(&repo, &gemini_client, &query, limit).await?;
@@ -76,43 +67,29 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Harvest datasets from a CKAN portal with delta detection
-async fn harvest(
+async fn sync_portal(
     repo: &DatasetRepository,
     gemini_client: &GeminiClient,
     portal_url: &str,
 ) -> anyhow::Result<()> {
-    info!("Starting delta harvest for: {}", portal_url);
+    info!("Syncing portal: {}", portal_url);
 
-    // Initialize CKAN client
     let ckan = CkanClient::new(portal_url).context("Invalid CKAN portal URL")?;
 
-    // PHASE 1: Fetch existing hashes from database
-    info!("Loading existing content hashes from database...");
     let existing_hashes = repo.get_hashes_for_portal(portal_url).await?;
-    info!(
-        "Found {} existing datasets in database",
-        existing_hashes.len()
-    );
+    info!("Found {} existing datasets", existing_hashes.len());
 
-    // PHASE 2: Fetch package list from portal
-    info!("Fetching package list from portal...");
     let ids = ckan.list_package_ids().await?;
     let total = ids.len();
-    info!(
-        "Found {} datasets on portal. Starting concurrent processing...",
-        total
-    );
+    info!("Found {} datasets on portal", total);
 
-    // Initialize stats
-    let stats = Arc::new(HarvestStats {
-        skipped: AtomicUsize::new(0),
-        regenerated: AtomicUsize::new(0),
-        new: AtomicUsize::new(0),
+    let stats = Arc::new(SyncStats {
+        unchanged: AtomicUsize::new(0),
+        updated: AtomicUsize::new(0),
+        created: AtomicUsize::new(0),
         failed: AtomicUsize::new(0),
     });
 
-    // PHASE 3: Process datasets concurrently (10 at a time)
     let results: Vec<_> = stream::iter(ids.into_iter().enumerate())
         .map(|(i, id)| {
             let ckan = ckan.clone();
@@ -123,7 +100,6 @@ async fn harvest(
             let stats = Arc::clone(&stats);
 
             async move {
-                // Fetch dataset details from CKAN
                 let ckan_data = match ckan.show_package(&id).await {
                     Ok(data) => data,
                     Err(e) => {
@@ -133,70 +109,44 @@ async fn harvest(
                     }
                 };
 
-                // Convert to internal model (computes content_hash)
                 let mut new_dataset = CkanClient::into_new_dataset(ckan_data, &portal_url);
                 let new_hash = &new_dataset.content_hash;
 
-                // DELTA DETECTION: Check if embedding regeneration is needed
                 let needs_embedding = match existing_hashes.get(&new_dataset.original_id) {
-                    // Dataset exists in DB
-                    Some(existing_hash) => {
-                        match existing_hash {
-                            // Hash exists and matches -> skip embedding
-                            Some(hash) if hash == new_hash => {
-                                info!(
-                                    "[{}/{}] ~ Skipped (unchanged): {}",
-                                    i + 1,
-                                    total,
-                                    new_dataset.title
-                                );
-                                stats.skipped.fetch_add(1, Ordering::Relaxed);
+                    Some(existing_hash) => match existing_hash {
+                        Some(hash) if hash == new_hash => {
+                            info!("[{}/{}] = Unchanged: {}", i + 1, total, new_dataset.title);
+                            stats.unchanged.fetch_add(1, Ordering::Relaxed);
 
-                                // Just update the timestamp
-                                if let Err(e) = repo
-                                    .update_timestamp_only(&portal_url, &new_dataset.original_id)
-                                    .await
-                                {
-                                    error!(
-                                        "[{}/{}] Failed to update timestamp: {}",
-                                        i + 1,
-                                        total,
-                                        e
-                                    );
-                                }
-                                return Ok(());
+                            if let Err(e) = repo
+                                .update_timestamp_only(&portal_url, &new_dataset.original_id)
+                                .await
+                            {
+                                error!("[{}/{}] Failed to update timestamp: {}", i + 1, total, e);
                             }
-                            // Hash differs -> content changed, regenerate
-                            Some(_) => {
-                                info!(
-                                    "[{}/{}] * Content changed, regenerating: {}",
-                                    i + 1,
-                                    total,
-                                    new_dataset.title
-                                );
-                                true
-                            }
-                            // Hash is NULL (legacy record) -> regenerate
-                            None => {
-                                info!(
-                                    "[{}/{}] + Legacy record, generating hash: {}",
-                                    i + 1,
-                                    total,
-                                    new_dataset.title
-                                );
-                                true
-                            }
+                            return Ok(());
                         }
-                    }
-                    // Dataset not in DB -> new dataset
+                        Some(_) => {
+                            info!("[{}/{}] ↑ Updated: {}", i + 1, total, new_dataset.title);
+                            true
+                        }
+                        None => {
+                            info!(
+                                "[{}/{}] ↑ Updated (legacy): {}",
+                                i + 1,
+                                total,
+                                new_dataset.title
+                            );
+                            true
+                        }
+                    },
                     None => {
-                        stats.new.fetch_add(1, Ordering::Relaxed);
-                        info!("[{}/{}] + New dataset: {}", i + 1, total, new_dataset.title);
+                        stats.created.fetch_add(1, Ordering::Relaxed);
+                        info!("[{}/{}] + Created: {}", i + 1, total, new_dataset.title);
                         true
                     }
                 };
 
-                // Generate embedding only if needed
                 if needs_embedding {
                     let combined_text = format!(
                         "{} {}",
@@ -208,7 +158,7 @@ async fn harvest(
                         match gemini.get_embeddings(&combined_text).await {
                             Ok(emb) => {
                                 new_dataset.embedding = Some(Vector::from(emb));
-                                stats.regenerated.fetch_add(1, Ordering::Relaxed);
+                                stats.updated.fetch_add(1, Ordering::Relaxed);
                             }
                             Err(e) => {
                                 error!(
@@ -219,13 +169,11 @@ async fn harvest(
                                     e
                                 );
                                 stats.failed.fetch_add(1, Ordering::Relaxed);
-                                // Continue anyway - save dataset without embedding
                             }
                         }
                     }
                 }
 
-                // Upsert to database (with content_hash)
                 match repo.upsert(&new_dataset).await {
                     Ok(uuid) => {
                         if needs_embedding {
@@ -247,37 +195,34 @@ async fn harvest(
                 }
             }
         })
-        .buffer_unordered(10)
+        .buffer_unordered(SyncConfig::default().concurrency)
         .collect()
         .await;
 
-    // PHASE 4: Print summary with delta statistics
     let successful = results.iter().filter(|r| r.is_ok()).count();
     let failed = stats.failed.load(Ordering::Relaxed);
-    let skipped = stats.skipped.load(Ordering::Relaxed);
-    let regenerated = stats.regenerated.load(Ordering::Relaxed);
-    let new_count = stats.new.load(Ordering::Relaxed);
+    let unchanged = stats.unchanged.load(Ordering::Relaxed);
+    let updated = stats.updated.load(Ordering::Relaxed);
+    let created = stats.created.load(Ordering::Relaxed);
 
     info!("═══════════════════════════════════════════════════════");
-    info!("Delta Harvesting Complete for: {}", portal_url);
+    info!("Sync complete: {}", portal_url);
     info!("═══════════════════════════════════════════════════════");
-    info!("  Total datasets on portal:    {}", total);
-    info!("  Previously in database:      {}", existing_hashes.len());
+    info!("  Total on portal:     {}", total);
+    info!("  Previously indexed:  {}", existing_hashes.len());
     info!("───────────────────────────────────────────────────────");
     info!(
-        "  ~ Skipped (unchanged):       {} ({:.1}%)",
-        skipped,
+        "  = Unchanged:         {} ({:.1}%)",
+        unchanged,
         if total > 0 {
-            (skipped as f64 / total as f64) * 100.0
+            (unchanged as f64 / total as f64) * 100.0
         } else {
             0.0
         }
     );
-    info!("  * Regenerated (changed):     {}", regenerated);
-    info!("  + New datasets:              {}", new_count);
-    info!("  ✗ Failed:                    {}", failed);
-    info!("───────────────────────────────────────────────────────");
-    info!("  API calls saved:             {} (vs full sync)", skipped);
+    info!("  ↑ Updated:           {}", updated);
+    info!("  + Created:           {}", created);
+    info!("  ✗ Failed:            {}", failed);
     info!("═══════════════════════════════════════════════════════");
 
     if successful == total {
@@ -287,7 +232,6 @@ async fn harvest(
     Ok(())
 }
 
-/// Search for datasets using semantic similarity
 async fn search(
     repo: &DatasetRepository,
     gemini_client: &GeminiClient,
@@ -296,14 +240,10 @@ async fn search(
 ) -> anyhow::Result<()> {
     info!("Searching for: '{}' (limit: {})", query, limit);
 
-    // Generate query embedding
     let vector = gemini_client.get_embeddings(query).await?;
     let query_vector = Vector::from(vector);
-
-    // Search in repository
     let results = repo.search(query_vector, limit).await?;
 
-    // Output results
     if results.is_empty() {
         println!("\n🔍 No results found for: \"{}\"\n", query);
         println!("Try:");
@@ -339,16 +279,13 @@ async fn search(
     Ok(())
 }
 
-/// Create a visual similarity bar
 fn create_similarity_bar(score: f32) -> String {
     let filled = (score * 10.0).round() as usize;
     let empty = 10 - filled;
     format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
 }
 
-/// Truncate text to a maximum length, adding ellipsis if needed
 fn truncate_text(text: &str, max_len: usize) -> String {
-    // Clean up whitespace and newlines
     let cleaned: String = text
         .chars()
         .map(|c| if c.is_whitespace() { ' ' } else { c })
@@ -362,7 +299,6 @@ fn truncate_text(text: &str, max_len: usize) -> String {
     }
 }
 
-/// Show database statistics
 async fn show_stats(repo: &DatasetRepository) -> anyhow::Result<()> {
     let stats = repo.get_stats().await?;
 
@@ -381,7 +317,6 @@ async fn show_stats(repo: &DatasetRepository) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Export datasets to various formats
 async fn export(
     repo: &DatasetRepository,
     format: ExportFormat,
@@ -415,7 +350,6 @@ async fn export(
     Ok(())
 }
 
-/// Export datasets in JSON Lines format (one JSON object per line)
 fn export_jsonl(datasets: &[Dataset]) -> anyhow::Result<()> {
     for dataset in datasets {
         let export_record = create_export_record(dataset);
@@ -425,7 +359,6 @@ fn export_jsonl(datasets: &[Dataset]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Export datasets as a JSON array
 fn export_json(datasets: &[Dataset]) -> anyhow::Result<()> {
     let export_records: Vec<_> = datasets.iter().map(create_export_record).collect();
     let json = serde_json::to_string_pretty(&export_records)?;
@@ -433,13 +366,10 @@ fn export_json(datasets: &[Dataset]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Export datasets in CSV format
 fn export_csv(datasets: &[Dataset]) -> anyhow::Result<()> {
-    // Print CSV header
     println!("id,original_id,source_portal,url,title,description,first_seen_at,last_updated_at");
 
     for dataset in datasets {
-        // Escape and quote CSV fields properly
         let description = dataset
             .description
             .as_ref()
@@ -461,7 +391,6 @@ fn export_csv(datasets: &[Dataset]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Create an export record without the embedding (too large for export)
 fn create_export_record(dataset: &Dataset) -> serde_json::Value {
     serde_json::json!({
         "id": dataset.id,
@@ -476,7 +405,6 @@ fn create_export_record(dataset: &Dataset) -> serde_json::Value {
     })
 }
 
-/// Escape a string for CSV output
 fn escape_csv(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
         format!("\"{}\"", s.replace('"', "\"\""))
