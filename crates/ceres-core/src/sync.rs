@@ -63,6 +63,13 @@ pub struct ReprocessingDecision {
     pub reason: &'static str,
 }
 
+impl ReprocessingDecision {
+    /// Returns true if this is a legacy record update (existing record without hash).
+    pub fn is_legacy(&self) -> bool {
+        self.reason == "legacy record without hash"
+    }
+}
+
 /// Determines if a dataset needs reprocessing based on content hash comparison.
 ///
 /// # Arguments
@@ -201,5 +208,24 @@ mod tests {
         assert!(decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Created);
         assert_eq!(decision.reason, "new dataset");
+    }
+
+    #[test]
+    fn test_is_legacy_true() {
+        let existing: Option<Option<String>> = Some(None);
+        let decision = needs_reprocessing(existing.as_ref(), "new_hash");
+
+        assert!(decision.is_legacy());
+    }
+
+    #[test]
+    fn test_is_legacy_false() {
+        let decision = needs_reprocessing(None, "new_hash");
+        assert!(!decision.is_legacy());
+
+        let hash = "abc123".to_string();
+        let existing = Some(Some(hash.clone()));
+        let decision = needs_reprocessing(existing.as_ref(), &hash);
+        assert!(!decision.is_legacy());
     }
 }

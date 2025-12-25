@@ -154,7 +154,7 @@ async fn sync_portal(
                         return Ok(());
                     }
                     SyncOutcome::Updated => {
-                        let label = if decision.reason == "legacy record without hash" {
+                        let label = if decision.is_legacy() {
                             "↑ Updated (legacy)"
                         } else {
                             "↑ Updated"
@@ -164,6 +164,8 @@ async fn sync_portal(
                     SyncOutcome::Created => {
                         info!("[{}/{}] + Created: {}", i + 1, total, new_dataset.title);
                     }
+                    // TODO: Consider replacing unreachable! with explicit error handling
+                    // if needs_reprocessing() is ever modified to return Failed
                     SyncOutcome::Failed => unreachable!("needs_reprocessing never returns Failed"),
                 }
 
@@ -490,5 +492,47 @@ mod tests {
     #[test]
     fn test_escape_csv_with_newline() {
         assert_eq!(escape_csv("line1\nline2"), "\"line1\nline2\"");
+    }
+
+    #[test]
+    fn test_atomic_sync_stats_new() {
+        let stats = AtomicSyncStats::new();
+        let result = stats.to_stats();
+        assert_eq!(result.unchanged, 0);
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.created, 0);
+        assert_eq!(result.failed, 0);
+    }
+
+    #[test]
+    fn test_atomic_sync_stats_record() {
+        let stats = AtomicSyncStats::new();
+        stats.record(SyncOutcome::Unchanged);
+        stats.record(SyncOutcome::Updated);
+        stats.record(SyncOutcome::Created);
+        stats.record(SyncOutcome::Failed);
+
+        let result = stats.to_stats();
+        assert_eq!(result.unchanged, 1);
+        assert_eq!(result.updated, 1);
+        assert_eq!(result.created, 1);
+        assert_eq!(result.failed, 1);
+    }
+
+    #[test]
+    fn test_atomic_sync_stats_multiple_records() {
+        let stats = AtomicSyncStats::new();
+        for _ in 0..10 {
+            stats.record(SyncOutcome::Unchanged);
+        }
+        for _ in 0..5 {
+            stats.record(SyncOutcome::Updated);
+        }
+
+        let result = stats.to_stats();
+        assert_eq!(result.unchanged, 10);
+        assert_eq!(result.updated, 5);
+        assert_eq!(result.total(), 15);
+        assert_eq!(result.successful(), 15);
     }
 }
