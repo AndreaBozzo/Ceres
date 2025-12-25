@@ -11,14 +11,44 @@ use tracing_subscriber::FmtSubscriber;
 
 use ceres_cli::{Command, Config, ExportFormat};
 use ceres_client::{CkanClient, GeminiClient};
-use ceres_core::{Dataset, DbConfig, SyncConfig};
+use ceres_core::{needs_reprocessing, Dataset, DbConfig, SyncConfig, SyncOutcome, SyncStats};
 use ceres_db::DatasetRepository;
 
-struct SyncStats {
+/// Thread-safe wrapper for SyncStats using atomic counters.
+struct AtomicSyncStats {
     unchanged: AtomicUsize,
     updated: AtomicUsize,
     created: AtomicUsize,
     failed: AtomicUsize,
+}
+
+impl AtomicSyncStats {
+    fn new() -> Self {
+        Self {
+            unchanged: AtomicUsize::new(0),
+            updated: AtomicUsize::new(0),
+            created: AtomicUsize::new(0),
+            failed: AtomicUsize::new(0),
+        }
+    }
+
+    fn record(&self, outcome: SyncOutcome) {
+        match outcome {
+            SyncOutcome::Unchanged => self.unchanged.fetch_add(1, Ordering::Relaxed),
+            SyncOutcome::Updated => self.updated.fetch_add(1, Ordering::Relaxed),
+            SyncOutcome::Created => self.created.fetch_add(1, Ordering::Relaxed),
+            SyncOutcome::Failed => self.failed.fetch_add(1, Ordering::Relaxed),
+        };
+    }
+
+    fn to_stats(&self) -> SyncStats {
+        SyncStats {
+            unchanged: self.unchanged.load(Ordering::Relaxed),
+            updated: self.updated.load(Ordering::Relaxed),
+            created: self.created.load(Ordering::Relaxed),
+            failed: self.failed.load(Ordering::Relaxed),
+        }
+    }
 }
 
 #[tokio::main]
@@ -83,14 +113,9 @@ async fn sync_portal(
     let total = ids.len();
     info!("Found {} datasets on portal", total);
 
-    let stats = Arc::new(SyncStats {
-        unchanged: AtomicUsize::new(0),
-        updated: AtomicUsize::new(0),
-        created: AtomicUsize::new(0),
-        failed: AtomicUsize::new(0),
-    });
+    let stats = Arc::new(AtomicSyncStats::new());
 
-    let results: Vec<_> = stream::iter(ids.into_iter().enumerate())
+    let _results: Vec<_> = stream::iter(ids.into_iter().enumerate())
         .map(|(i, id)| {
             let ckan = ckan.clone();
             let gemini = gemini_client.clone();
@@ -104,50 +129,47 @@ async fn sync_portal(
                     Ok(data) => data,
                     Err(e) => {
                         error!("[{}/{}] Failed to fetch {}: {}", i + 1, total, id, e);
-                        stats.failed.fetch_add(1, Ordering::Relaxed);
+                        stats.record(SyncOutcome::Failed);
                         return Err(e);
                     }
                 };
 
                 let mut new_dataset = CkanClient::into_new_dataset(ckan_data, &portal_url);
-                let new_hash = &new_dataset.content_hash;
+                let decision = needs_reprocessing(
+                    existing_hashes.get(&new_dataset.original_id),
+                    &new_dataset.content_hash,
+                );
 
-                let needs_embedding = match existing_hashes.get(&new_dataset.original_id) {
-                    Some(existing_hash) => match existing_hash {
-                        Some(hash) if hash == new_hash => {
-                            info!("[{}/{}] = Unchanged: {}", i + 1, total, new_dataset.title);
-                            stats.unchanged.fetch_add(1, Ordering::Relaxed);
+                match decision.outcome {
+                    SyncOutcome::Unchanged => {
+                        info!("[{}/{}] = Unchanged: {}", i + 1, total, new_dataset.title);
+                        stats.record(SyncOutcome::Unchanged);
 
-                            if let Err(e) = repo
-                                .update_timestamp_only(&portal_url, &new_dataset.original_id)
-                                .await
-                            {
-                                error!("[{}/{}] Failed to update timestamp: {}", i + 1, total, e);
-                            }
-                            return Ok(());
+                        if let Err(e) = repo
+                            .update_timestamp_only(&portal_url, &new_dataset.original_id)
+                            .await
+                        {
+                            error!("[{}/{}] Failed to update timestamp: {}", i + 1, total, e);
                         }
-                        Some(_) => {
-                            info!("[{}/{}] ↑ Updated: {}", i + 1, total, new_dataset.title);
-                            true
-                        }
-                        None => {
-                            info!(
-                                "[{}/{}] ↑ Updated (legacy): {}",
-                                i + 1,
-                                total,
-                                new_dataset.title
-                            );
-                            true
-                        }
-                    },
-                    None => {
-                        stats.created.fetch_add(1, Ordering::Relaxed);
-                        info!("[{}/{}] + Created: {}", i + 1, total, new_dataset.title);
-                        true
+                        return Ok(());
                     }
-                };
+                    SyncOutcome::Updated => {
+                        let label = if decision.is_legacy() {
+                            "↑ Updated (legacy)"
+                        } else {
+                            "↑ Updated"
+                        };
+                        info!("[{}/{}] {}: {}", i + 1, total, label, new_dataset.title);
+                    }
+                    SyncOutcome::Created => {
+                        info!("[{}/{}] + Created: {}", i + 1, total, new_dataset.title);
+                    }
+                    // TODO: Consider replacing unreachable! with explicit error handling
+                    // if needs_reprocessing() is ever modified to return Failed
+                    SyncOutcome::Failed => unreachable!("needs_reprocessing never returns Failed"),
+                }
 
-                if needs_embedding {
+                if decision.needs_embedding {
                     let combined_text = format!(
                         "{} {}",
                         new_dataset.title,
@@ -158,7 +180,7 @@ async fn sync_portal(
                         match gemini.get_embeddings(&combined_text).await {
                             Ok(emb) => {
                                 new_dataset.embedding = Some(Vector::from(emb));
-                                stats.updated.fetch_add(1, Ordering::Relaxed);
+                                stats.record(decision.outcome);
                             }
                             Err(e) => {
                                 error!(
@@ -168,7 +190,7 @@ async fn sync_portal(
                                     id,
                                     e
                                 );
-                                stats.failed.fetch_add(1, Ordering::Relaxed);
+                                stats.record(SyncOutcome::Failed);
                             }
                         }
                     }
@@ -176,7 +198,7 @@ async fn sync_portal(
 
                 match repo.upsert(&new_dataset).await {
                     Ok(uuid) => {
-                        if needs_embedding {
+                        if decision.needs_embedding {
                             info!(
                                 "[{}/{}] ✓ Indexed: {} ({})",
                                 i + 1,
@@ -189,7 +211,7 @@ async fn sync_portal(
                     }
                     Err(e) => {
                         error!("[{}/{}] Failed to save {}: {}", i + 1, total, id, e);
-                        stats.failed.fetch_add(1, Ordering::Relaxed);
+                        stats.record(SyncOutcome::Failed);
                         Err(e)
                     }
                 }
@@ -199,11 +221,7 @@ async fn sync_portal(
         .collect()
         .await;
 
-    let successful = results.iter().filter(|r| r.is_ok()).count();
-    let failed = stats.failed.load(Ordering::Relaxed);
-    let unchanged = stats.unchanged.load(Ordering::Relaxed);
-    let updated = stats.updated.load(Ordering::Relaxed);
-    let created = stats.created.load(Ordering::Relaxed);
+    let final_stats = stats.to_stats();
 
     info!("═══════════════════════════════════════════════════════");
     info!("Sync complete: {}", portal_url);
@@ -213,19 +231,19 @@ async fn sync_portal(
     info!("───────────────────────────────────────────────────────");
     info!(
         "  = Unchanged:         {} ({:.1}%)",
-        unchanged,
+        final_stats.unchanged,
         if total > 0 {
-            (unchanged as f64 / total as f64) * 100.0
+            (final_stats.unchanged as f64 / total as f64) * 100.0
         } else {
             0.0
         }
     );
-    info!("  ↑ Updated:           {}", updated);
-    info!("  + Created:           {}", created);
-    info!("  ✗ Failed:            {}", failed);
+    info!("  ↑ Updated:           {}", final_stats.updated);
+    info!("  + Created:           {}", final_stats.created);
+    info!("  ✗ Failed:            {}", final_stats.failed);
     info!("═══════════════════════════════════════════════════════");
 
-    if successful == total {
+    if final_stats.successful() == total {
         info!("All datasets processed successfully!");
     }
 
@@ -474,5 +492,47 @@ mod tests {
     #[test]
     fn test_escape_csv_with_newline() {
         assert_eq!(escape_csv("line1\nline2"), "\"line1\nline2\"");
+    }
+
+    #[test]
+    fn test_atomic_sync_stats_new() {
+        let stats = AtomicSyncStats::new();
+        let result = stats.to_stats();
+        assert_eq!(result.unchanged, 0);
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.created, 0);
+        assert_eq!(result.failed, 0);
+    }
+
+    #[test]
+    fn test_atomic_sync_stats_record() {
+        let stats = AtomicSyncStats::new();
+        stats.record(SyncOutcome::Unchanged);
+        stats.record(SyncOutcome::Updated);
+        stats.record(SyncOutcome::Created);
+        stats.record(SyncOutcome::Failed);
+
+        let result = stats.to_stats();
+        assert_eq!(result.unchanged, 1);
+        assert_eq!(result.updated, 1);
+        assert_eq!(result.created, 1);
+        assert_eq!(result.failed, 1);
+    }
+
+    #[test]
+    fn test_atomic_sync_stats_multiple_records() {
+        let stats = AtomicSyncStats::new();
+        for _ in 0..10 {
+            stats.record(SyncOutcome::Unchanged);
+        }
+        for _ in 0..5 {
+            stats.record(SyncOutcome::Updated);
+        }
+
+        let result = stats.to_stats();
+        assert_eq!(result.unchanged, 10);
+        assert_eq!(result.updated, 5);
+        assert_eq!(result.total(), 15);
+        assert_eq!(result.successful(), 15);
     }
 }
