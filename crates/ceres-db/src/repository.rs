@@ -7,6 +7,8 @@ use sqlx::{PgPool, Pool, Postgres};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Column list for SELECT queries. Must remain a const literal to ensure SQL safety
+/// since format!() bypasses sqlx compile-time validation.
 const DATASET_COLUMNS: &str = "id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash";
 
 /// Repository for dataset persistence in PostgreSQL with pgvector.
