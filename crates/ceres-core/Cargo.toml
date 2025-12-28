@@ -25,3 +25,10 @@ sqlx.workspace = true
 
 # Hashing for delta detection
 sha2.workspace = true
+
+# Configuration
+toml.workspace = true
+dirs.workspace = true
+
+# Logging
+tracing.workspace = true

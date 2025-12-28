@@ -119,6 +119,89 @@ pub fn needs_reprocessing(
     }
 }
 
+// =============================================================================
+// Batch Harvest Types
+// =============================================================================
+
+/// Result of harvesting a single portal in batch mode.
+#[derive(Debug, Clone)]
+pub struct PortalHarvestResult {
+    /// Portal name identifier.
+    pub portal_name: String,
+    /// Portal URL.
+    pub portal_url: String,
+    /// Sync statistics for this portal.
+    pub stats: SyncStats,
+    /// Error message if harvest failed, None if successful.
+    pub error: Option<String>,
+}
+
+impl PortalHarvestResult {
+    /// Creates a successful harvest result.
+    pub fn success(name: String, url: String, stats: SyncStats) -> Self {
+        Self {
+            portal_name: name,
+            portal_url: url,
+            stats,
+            error: None,
+        }
+    }
+
+    /// Creates a failed harvest result.
+    pub fn failure(name: String, url: String, error: String) -> Self {
+        Self {
+            portal_name: name,
+            portal_url: url,
+            stats: SyncStats::default(),
+            error: Some(error),
+        }
+    }
+
+    /// Returns true if the harvest was successful.
+    pub fn is_success(&self) -> bool {
+        self.error.is_none()
+    }
+}
+
+/// Aggregated results from batch harvesting multiple portals.
+#[derive(Debug, Clone, Default)]
+pub struct BatchHarvestSummary {
+    /// Results for each portal.
+    pub results: Vec<PortalHarvestResult>,
+}
+
+impl BatchHarvestSummary {
+    /// Creates a new empty summary.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a portal harvest result.
+    pub fn add(&mut self, result: PortalHarvestResult) {
+        self.results.push(result);
+    }
+
+    /// Returns the count of successful harvests.
+    pub fn successful_count(&self) -> usize {
+        self.results.iter().filter(|r| r.is_success()).count()
+    }
+
+    /// Returns the count of failed harvests.
+    pub fn failed_count(&self) -> usize {
+        self.results.iter().filter(|r| !r.is_success()).count()
+    }
+
+    /// Returns the total number of datasets across all successful portals.
+    pub fn total_datasets(&self) -> usize {
+        self.results.iter().map(|r| r.stats.total()).sum()
+    }
+
+    /// Returns the total number of portals processed.
+    pub fn total_portals(&self) -> usize {
+        self.results.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

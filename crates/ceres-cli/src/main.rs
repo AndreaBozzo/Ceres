@@ -9,9 +9,14 @@ use std::sync::Arc;
 use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+use std::path::PathBuf;
+
 use ceres_cli::{Command, Config, ExportFormat};
 use ceres_client::{CkanClient, GeminiClient};
-use ceres_core::{needs_reprocessing, Dataset, DbConfig, SyncConfig, SyncOutcome, SyncStats};
+use ceres_core::{
+    load_portals_config, needs_reprocessing, BatchHarvestSummary, Dataset, DbConfig, PortalEntry,
+    PortalHarvestResult, SyncConfig, SyncOutcome, SyncStats,
+};
 use ceres_db::DatasetRepository;
 
 /// Thread-safe wrapper for SyncStats using atomic counters.
@@ -51,10 +56,6 @@ impl AtomicSyncStats {
     }
 }
 
-// TODO(#4): Add `harvest-all` command that reads portal URLs from portals.toml
-// This would enable multi-portal harvesting with a single command.
-// See: https://github.com/AndreaBozzo/Ceres/issues/4
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv().ok();
@@ -80,8 +81,12 @@ async fn main() -> anyhow::Result<()> {
         .context("Failed to initialize embedding client")?;
 
     match config.command {
-        Command::Harvest { portal_url } => {
-            sync_portal(&repo, &gemini_client, &portal_url).await?;
+        Command::Harvest {
+            portal_url,
+            portal,
+            config: config_path,
+        } => {
+            handle_harvest(&repo, &gemini_client, portal_url, portal, config_path).await?;
         }
         Command::Search { query, limit } => {
             search(&repo, &gemini_client, &query, limit).await?;
@@ -99,6 +104,281 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Handle the harvest command with its three modes:
+/// 1. Direct URL (backward compatible)
+/// 2. Named portal from config
+/// 3. Batch mode (all enabled portals)
+async fn handle_harvest(
+    repo: &DatasetRepository,
+    gemini_client: &GeminiClient,
+    portal_url: Option<String>,
+    portal_name: Option<String>,
+    config_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    match (portal_url, portal_name) {
+        // Mode 1: Direct URL (backward compatible)
+        (Some(url), None) => {
+            sync_portal(repo, gemini_client, &url).await?;
+        }
+
+        // Mode 2: Named portal from config
+        (None, Some(name)) => {
+            let portals_config = load_portals_config(config_path)?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "No configuration file found. Create ~/.config/ceres/portals.toml or use --config"
+                ))?;
+
+            let portal = portals_config
+                .find_by_name(&name)
+                .ok_or_else(|| anyhow::anyhow!("Portal '{}' not found in configuration", name))?;
+
+            if !portal.enabled {
+                info!(
+                    "Note: Portal '{}' is marked as disabled in configuration",
+                    name
+                );
+            }
+
+            sync_portal(repo, gemini_client, &portal.url).await?;
+        }
+
+        // Mode 3: Batch mode (all enabled portals)
+        (None, None) => {
+            let portals_config = load_portals_config(config_path)?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "No configuration file found. Create ~/.config/ceres/portals.toml or use --config"
+                ))?;
+
+            let enabled: Vec<&PortalEntry> = portals_config.enabled_portals();
+
+            if enabled.is_empty() {
+                info!("No enabled portals found in configuration.");
+                info!("Add portals to ~/.config/ceres/portals.toml or use: ceres harvest <url>");
+                return Ok(());
+            }
+
+            batch_harvest(repo, gemini_client, &enabled).await;
+        }
+
+        // This case is prevented by clap's conflicts_with
+        (Some(_), Some(_)) => unreachable!("portal_url and portal are mutually exclusive"),
+    }
+
+    Ok(())
+}
+
+/// Harvest multiple portals sequentially with error isolation.
+///
+/// Failure in one portal does not stop processing of others.
+async fn batch_harvest(
+    repo: &DatasetRepository,
+    gemini_client: &GeminiClient,
+    portals: &[&PortalEntry],
+) -> BatchHarvestSummary {
+    let mut summary = BatchHarvestSummary::new();
+    let total = portals.len();
+
+    info!("═══════════════════════════════════════════════════════");
+    info!("Starting batch harvest of {} portals", total);
+    info!("═══════════════════════════════════════════════════════");
+
+    for (i, portal) in portals.iter().enumerate() {
+        info!("");
+        info!("───────────────────────────────────────────────────────");
+        info!(
+            "[Portal {}/{}] {} ({})",
+            i + 1,
+            total,
+            portal.name,
+            portal.url
+        );
+        info!("───────────────────────────────────────────────────────");
+
+        match sync_portal_with_stats(repo, gemini_client, &portal.url).await {
+            Ok(stats) => {
+                info!(
+                    "[Portal {}/{}] Completed: {} datasets ({} created, {} updated, {} unchanged)",
+                    i + 1,
+                    total,
+                    stats.total(),
+                    stats.created,
+                    stats.updated,
+                    stats.unchanged
+                );
+                summary.add(PortalHarvestResult::success(
+                    portal.name.clone(),
+                    portal.url.clone(),
+                    stats,
+                ));
+            }
+            Err(e) => {
+                error!("[Portal {}/{}] Failed: {}", i + 1, total, e);
+                summary.add(PortalHarvestResult::failure(
+                    portal.name.clone(),
+                    portal.url.clone(),
+                    e.to_string(),
+                ));
+            }
+        }
+    }
+
+    // Print batch summary
+    print_batch_summary(&summary);
+
+    summary
+}
+
+/// Print a summary of batch harvesting results.
+fn print_batch_summary(summary: &BatchHarvestSummary) {
+    info!("");
+    info!("═══════════════════════════════════════════════════════");
+    info!("BATCH HARVEST COMPLETE");
+    info!("═══════════════════════════════════════════════════════");
+    info!("  Portals processed:   {}", summary.total_portals());
+    info!("  Successful:          {}", summary.successful_count());
+    info!("  Failed:              {}", summary.failed_count());
+    info!("  Total datasets:      {}", summary.total_datasets());
+
+    if summary.failed_count() > 0 {
+        info!("───────────────────────────────────────────────────────");
+        info!("Failed portals:");
+        for result in summary.results.iter().filter(|r| !r.is_success()) {
+            if let Some(err) = &result.error {
+                error!("  - {}: {}", result.portal_name, err);
+            }
+        }
+    }
+    info!("═══════════════════════════════════════════════════════");
+}
+
+/// Sync a single portal and return statistics.
+///
+/// This is used by batch_harvest to collect stats for each portal.
+async fn sync_portal_with_stats(
+    repo: &DatasetRepository,
+    gemini_client: &GeminiClient,
+    portal_url: &str,
+) -> anyhow::Result<SyncStats> {
+    info!("Syncing portal: {}", portal_url);
+
+    let ckan = CkanClient::new(portal_url).context("Invalid CKAN portal URL")?;
+
+    let existing_hashes = repo.get_hashes_for_portal(portal_url).await?;
+    info!("Found {} existing datasets", existing_hashes.len());
+
+    let ids = ckan.list_package_ids().await?;
+    let total = ids.len();
+    info!("Found {} datasets on portal", total);
+
+    let stats = Arc::new(AtomicSyncStats::new());
+
+    let _results: Vec<_> = stream::iter(ids.into_iter().enumerate())
+        .map(|(i, id)| {
+            let ckan = ckan.clone();
+            let gemini = gemini_client.clone();
+            let repo = repo.clone();
+            let portal_url = portal_url.to_string();
+            let existing_hashes = existing_hashes.clone();
+            let stats = Arc::clone(&stats);
+
+            async move {
+                let ckan_data = match ckan.show_package(&id).await {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!("[{}/{}] Failed to fetch {}: {}", i + 1, total, id, e);
+                        stats.record(SyncOutcome::Failed);
+                        return Err(e);
+                    }
+                };
+
+                let mut new_dataset = CkanClient::into_new_dataset(ckan_data, &portal_url);
+                let decision = needs_reprocessing(
+                    existing_hashes.get(&new_dataset.original_id),
+                    &new_dataset.content_hash,
+                );
+
+                match decision.outcome {
+                    SyncOutcome::Unchanged => {
+                        info!("[{}/{}] = Unchanged: {}", i + 1, total, new_dataset.title);
+                        stats.record(SyncOutcome::Unchanged);
+
+                        if let Err(e) = repo
+                            .update_timestamp_only(&portal_url, &new_dataset.original_id)
+                            .await
+                        {
+                            error!("[{}/{}] Failed to update timestamp: {}", i + 1, total, e);
+                        }
+                        return Ok(());
+                    }
+                    SyncOutcome::Updated => {
+                        let label = if decision.is_legacy() {
+                            "↑ Updated (legacy)"
+                        } else {
+                            "↑ Updated"
+                        };
+                        info!("[{}/{}] {}: {}", i + 1, total, label, new_dataset.title);
+                    }
+                    SyncOutcome::Created => {
+                        info!("[{}/{}] + Created: {}", i + 1, total, new_dataset.title);
+                    }
+                    SyncOutcome::Failed => unreachable!("needs_reprocessing never returns Failed"),
+                }
+
+                if decision.needs_embedding {
+                    let combined_text = format!(
+                        "{} {}",
+                        new_dataset.title,
+                        new_dataset.description.as_deref().unwrap_or_default()
+                    );
+
+                    if !combined_text.trim().is_empty() {
+                        match gemini.get_embeddings(&combined_text).await {
+                            Ok(emb) => {
+                                new_dataset.embedding = Some(Vector::from(emb));
+                                stats.record(decision.outcome);
+                            }
+                            Err(e) => {
+                                error!(
+                                    "[{}/{}] Failed to generate embedding for {}: {}",
+                                    i + 1,
+                                    total,
+                                    id,
+                                    e
+                                );
+                                stats.record(SyncOutcome::Failed);
+                            }
+                        }
+                    }
+                }
+
+                match repo.upsert(&new_dataset).await {
+                    Ok(uuid) => {
+                        if decision.needs_embedding {
+                            info!(
+                                "[{}/{}] ✓ Indexed: {} ({})",
+                                i + 1,
+                                total,
+                                new_dataset.title,
+                                uuid
+                            );
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!("[{}/{}] Failed to save {}: {}", i + 1, total, id, e);
+                        stats.record(SyncOutcome::Failed);
+                        Err(e)
+                    }
+                }
+            }
+        })
+        .buffer_unordered(SyncConfig::default().concurrency)
+        .collect()
+        .await;
+
+    Ok(stats.to_stats())
 }
 
 // TODO(#10): Implement time-based incremental harvesting

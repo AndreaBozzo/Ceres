@@ -38,3 +38,6 @@ tracing-subscriber.workspace = true
 
 # Error handling
 anyhow.workspace = true
+
+# Configuration paths
+dirs.workspace = true

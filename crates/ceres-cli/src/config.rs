@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 /// CLI configuration parsed from command line arguments and environment variables
 #[derive(Parser, Debug)]
@@ -29,11 +30,24 @@ pub struct Config {
 /// Available CLI commands
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Harvest datasets from a CKAN portal
-    #[command(after_help = "Example: ceres harvest https://dati.comune.milano.it")]
+    /// Harvest datasets from CKAN portals
+    #[command(after_help = "Examples:
+  ceres harvest                               # Harvest all enabled portals from config
+  ceres harvest https://dati.comune.milano.it # Harvest single URL (backward compatible)
+  ceres harvest --portal milano               # Harvest portal by name from config
+  ceres harvest --config ~/custom.toml        # Use custom config file")]
     Harvest {
-        /// URL of the CKAN portal to harvest
-        portal_url: String,
+        /// URL of a single CKAN portal to harvest (backward compatible)
+        #[arg(value_name = "URL")]
+        portal_url: Option<String>,
+
+        /// Harvest a specific portal by name from config file
+        #[arg(short, long, value_name = "NAME", conflicts_with = "portal_url")]
+        portal: Option<String>,
+
+        /// Custom path to portals.toml configuration file
+        #[arg(short, long, value_name = "PATH")]
+        config: Option<PathBuf>,
     },
     /// Search indexed datasets using semantic similarity
     #[command(after_help = "Example: ceres search \"trasporto pubblico\" --limit 10")]

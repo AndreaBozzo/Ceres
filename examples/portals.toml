@@ -1,0 +1,32 @@
+# Ceres Portal Configuration
+#
+# This file defines CKAN portals to harvest.
+# Copy this file to ~/.config/ceres/portals.toml to use it.
+#
+# Usage:
+#   ceres harvest                 # Harvest all enabled portals
+#   ceres harvest --portal milano # Harvest specific portal by name
+#   ceres harvest https://...     # Harvest single URL (ignores this file)
+#   ceres harvest --config path   # Use custom config file location
+
+# City of Milan open data
+[[portals]]
+name = "milano"
+url = "https://dati.comune.milano.it"
+type = "ckan"
+description = "Open data del Comune di Milano"
+
+# Sicily Region open data
+[[portals]]
+name = "sicilia"
+url = "https://dati.regione.sicilia.it"
+type = "ckan"
+description = "Open data della Regione Siciliana"
+
+# Example disabled portal (won't be harvested in batch mode)
+# [[portals]]
+# name = "disabled-example"
+# url = "https://example.com"
+# type = "ckan"
+# enabled = false
+# description = "This portal is disabled and won't be harvested"

@@ -62,6 +62,10 @@ futures = "0.3"
 # Hashing
 sha2 = "0.10"
 
+# Configuration
+toml = "0.9"
+dirs = "6.0"
+
 # Internal crates
 ceres-core = { path = "crates/ceres-core" }
 ceres-client = { path = "crates/ceres-client" }

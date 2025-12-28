@@ -153,6 +153,13 @@ pub enum AppError {
     #[error("Rate limit exceeded. Please wait and try again.")]
     RateLimitExceeded,
 
+    /// Configuration file error.
+    ///
+    /// This error occurs when reading or parsing the configuration file fails,
+    /// such as when the portals.toml file is malformed or contains invalid values.
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+
     /// Generic application error for cases not covered by specific variants.
     ///
     /// Use this sparingly - prefer creating specific error variants
@@ -226,6 +233,12 @@ impl AppError {
             }
             AppError::EmptyResponse => {
                 "The API returned no data. The portal may be temporarily unavailable.".to_string()
+            }
+            AppError::ConfigError(msg) => {
+                format!(
+                    "Configuration error: {}\n   Check your portals.toml file.",
+                    msg
+                )
             }
             _ => self.to_string(),
         }
