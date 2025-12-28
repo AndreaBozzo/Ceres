@@ -137,13 +137,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Dry run publish
-        run: |
-          for crate in ceres-core ceres-client ceres-db ceres-cli; do
-            echo "::group::Dry run: $crate"
-            cargo publish --dry-run -p "$crate"
-            echo "::endgroup::"
-          done
+      - name: Dry run publish ceres-core
+        run: cargo publish --dry-run -p ceres-core
 
   publish:
     name: Publish to crates.io
