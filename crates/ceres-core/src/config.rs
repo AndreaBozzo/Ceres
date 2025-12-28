@@ -13,7 +13,7 @@
 //! defaults -> config file -> environment variables -> CLI args
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::AppError;
@@ -280,7 +280,7 @@ pub fn load_portals_config(path: Option<PathBuf>) -> Result<Option<PortalsConfig
 ///
 /// # Arguments
 /// * `path` - The path where the config file should be created.
-fn create_default_config(path: &PathBuf) -> std::io::Result<()> {
+fn create_default_config(path: &Path) -> std::io::Result<()> {
     // Create parent directory if needed
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

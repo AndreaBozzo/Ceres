@@ -236,7 +236,7 @@ impl AppError {
             }
             AppError::ConfigError(msg) => {
                 format!(
-                    "Configuration error: {}\n   Check your portals.toml file.",
+                    "Configuration error: {}\n   Check your configuration file.",
                     msg
                 )
             }

@@ -120,7 +120,8 @@ async fn handle_harvest(
     match (portal_url, portal_name) {
         // Mode 1: Direct URL (backward compatible)
         (Some(url), None) => {
-            sync_portal(repo, gemini_client, &url).await?;
+            let stats = sync_portal(repo, gemini_client, &url).await?;
+            print_single_portal_summary(&url, &stats);
         }
 
         // Mode 2: Named portal from config
@@ -141,7 +142,8 @@ async fn handle_harvest(
                 );
             }
 
-            sync_portal(repo, gemini_client, &portal.url).await?;
+            let stats = sync_portal(repo, gemini_client, &portal.url).await?;
+            print_single_portal_summary(&portal.url, &stats);
         }
 
         // Mode 3: Batch mode (all enabled portals)
@@ -196,7 +198,7 @@ async fn batch_harvest(
         );
         info!("───────────────────────────────────────────────────────");
 
-        match sync_portal_with_stats(repo, gemini_client, &portal.url).await {
+        match sync_portal(repo, gemini_client, &portal.url).await {
             Ok(stats) => {
                 info!(
                     "[Portal {}/{}] Completed: {} datasets ({} created, {} updated, {} unchanged)",
@@ -253,10 +255,48 @@ fn print_batch_summary(summary: &BatchHarvestSummary) {
     info!("═══════════════════════════════════════════════════════");
 }
 
+/// Print a summary for single portal harvest (modes 1 and 2).
+fn print_single_portal_summary(portal_url: &str, stats: &SyncStats) {
+    info!("");
+    info!("═══════════════════════════════════════════════════════");
+    info!("Sync complete: {}", portal_url);
+    info!("═══════════════════════════════════════════════════════");
+    info!("  = Unchanged:         {}", stats.unchanged);
+    info!("  ↑ Updated:           {}", stats.updated);
+    info!("  + Created:           {}", stats.created);
+    info!("  ✗ Failed:            {}", stats.failed);
+    info!("───────────────────────────────────────────────────────");
+    info!("  Total processed:     {}", stats.total());
+    info!("  Successful:          {}", stats.successful());
+    info!("═══════════════════════════════════════════════════════");
+
+    if stats.failed == 0 {
+        info!("All datasets processed successfully!");
+    }
+}
+
+// TODO(#10): Implement time-based incremental harvesting
+// Currently we fetch all package IDs and compare hashes. For large portals,
+// we could use CKAN's `package_search` with `fq=metadata_modified:[NOW-1DAY TO *]`
+// to only fetch recently modified datasets.
+// See: https://github.com/AndreaBozzo/Ceres/issues/10
+
+// TODO(robustness): Add circuit breaker pattern for API failures
+// Currently no backpressure when Gemini/CKAN APIs fail repeatedly.
+// Consider: (1) Stop after N consecutive failures
+// (2) Exponential backoff on rate limits
+// (3) Health check before continuing after failure spike
+
+// TODO(performance): Batch embedding API calls
+// Each dataset embedding is generated individually. Gemini API may support
+// batching multiple texts per request, reducing latency and API calls.
+
 /// Sync a single portal and return statistics.
 ///
-/// This is used by batch_harvest to collect stats for each portal.
-async fn sync_portal_with_stats(
+/// This is the core harvesting function used by all harvest modes.
+/// It fetches datasets from the portal, compares with existing data,
+/// generates embeddings for new/updated content, and persists changes.
+async fn sync_portal(
     repo: &DatasetRepository,
     gemini_client: &GeminiClient,
     portal_url: &str,
@@ -379,174 +419,6 @@ async fn sync_portal_with_stats(
         .await;
 
     Ok(stats.to_stats())
-}
-
-// TODO(#10): Implement time-based incremental harvesting
-// Currently we fetch all package IDs and compare hashes. For large portals,
-// we could use CKAN's `package_search` with `fq=metadata_modified:[NOW-1DAY TO *]`
-// to only fetch recently modified datasets.
-// See: https://github.com/AndreaBozzo/Ceres/issues/10
-async fn sync_portal(
-    repo: &DatasetRepository,
-    gemini_client: &GeminiClient,
-    portal_url: &str,
-) -> anyhow::Result<()> {
-    info!("Syncing portal: {}", portal_url);
-
-    let ckan = CkanClient::new(portal_url).context("Invalid CKAN portal URL")?;
-
-    let existing_hashes = repo.get_hashes_for_portal(portal_url).await?;
-    info!("Found {} existing datasets", existing_hashes.len());
-
-    let ids = ckan.list_package_ids().await?;
-    let total = ids.len();
-    info!("Found {} datasets on portal", total);
-
-    let stats = Arc::new(AtomicSyncStats::new());
-
-    // TODO(robustness): Add circuit breaker pattern for API failures
-    // Currently no backpressure when Gemini/CKAN APIs fail repeatedly.
-    // Consider: (1) Stop after N consecutive failures
-    // (2) Exponential backoff on rate limits
-    // (3) Health check before continuing after failure spike
-
-    // TODO(performance): Batch embedding API calls
-    // Each dataset embedding is generated individually. Gemini API may support
-    // batching multiple texts per request, reducing latency and API calls.
-
-    let _results: Vec<_> = stream::iter(ids.into_iter().enumerate())
-        .map(|(i, id)| {
-            let ckan = ckan.clone();
-            let gemini = gemini_client.clone();
-            let repo = repo.clone();
-            let portal_url = portal_url.to_string();
-            let existing_hashes = existing_hashes.clone();
-            let stats = Arc::clone(&stats);
-
-            async move {
-                let ckan_data = match ckan.show_package(&id).await {
-                    Ok(data) => data,
-                    Err(e) => {
-                        error!("[{}/{}] Failed to fetch {}: {}", i + 1, total, id, e);
-                        stats.record(SyncOutcome::Failed);
-                        return Err(e);
-                    }
-                };
-
-                let mut new_dataset = CkanClient::into_new_dataset(ckan_data, &portal_url);
-                let decision = needs_reprocessing(
-                    existing_hashes.get(&new_dataset.original_id),
-                    &new_dataset.content_hash,
-                );
-
-                match decision.outcome {
-                    SyncOutcome::Unchanged => {
-                        info!("[{}/{}] = Unchanged: {}", i + 1, total, new_dataset.title);
-                        stats.record(SyncOutcome::Unchanged);
-
-                        if let Err(e) = repo
-                            .update_timestamp_only(&portal_url, &new_dataset.original_id)
-                            .await
-                        {
-                            error!("[{}/{}] Failed to update timestamp: {}", i + 1, total, e);
-                        }
-                        return Ok(());
-                    }
-                    SyncOutcome::Updated => {
-                        let label = if decision.is_legacy() {
-                            "↑ Updated (legacy)"
-                        } else {
-                            "↑ Updated"
-                        };
-                        info!("[{}/{}] {}: {}", i + 1, total, label, new_dataset.title);
-                    }
-                    SyncOutcome::Created => {
-                        info!("[{}/{}] + Created: {}", i + 1, total, new_dataset.title);
-                    }
-                    // TODO: Consider replacing unreachable! with explicit error handling
-                    // if needs_reprocessing() is ever modified to return Failed
-                    SyncOutcome::Failed => unreachable!("needs_reprocessing never returns Failed"),
-                }
-
-                if decision.needs_embedding {
-                    let combined_text = format!(
-                        "{} {}",
-                        new_dataset.title,
-                        new_dataset.description.as_deref().unwrap_or_default()
-                    );
-
-                    if !combined_text.trim().is_empty() {
-                        match gemini.get_embeddings(&combined_text).await {
-                            Ok(emb) => {
-                                new_dataset.embedding = Some(Vector::from(emb));
-                                stats.record(decision.outcome);
-                            }
-                            Err(e) => {
-                                error!(
-                                    "[{}/{}] Failed to generate embedding for {}: {}",
-                                    i + 1,
-                                    total,
-                                    id,
-                                    e
-                                );
-                                stats.record(SyncOutcome::Failed);
-                            }
-                        }
-                    }
-                }
-
-                match repo.upsert(&new_dataset).await {
-                    Ok(uuid) => {
-                        if decision.needs_embedding {
-                            info!(
-                                "[{}/{}] ✓ Indexed: {} ({})",
-                                i + 1,
-                                total,
-                                new_dataset.title,
-                                uuid
-                            );
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!("[{}/{}] Failed to save {}: {}", i + 1, total, id, e);
-                        stats.record(SyncOutcome::Failed);
-                        Err(e)
-                    }
-                }
-            }
-        })
-        .buffer_unordered(SyncConfig::default().concurrency)
-        .collect()
-        .await;
-
-    let final_stats = stats.to_stats();
-
-    info!("═══════════════════════════════════════════════════════");
-    info!("Sync complete: {}", portal_url);
-    info!("═══════════════════════════════════════════════════════");
-    info!("  Total on portal:     {}", total);
-    info!("  Previously indexed:  {}", existing_hashes.len());
-    info!("───────────────────────────────────────────────────────");
-    info!(
-        "  = Unchanged:         {} ({:.1}%)",
-        final_stats.unchanged,
-        if total > 0 {
-            (final_stats.unchanged as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        }
-    );
-    info!("  ↑ Updated:           {}", final_stats.updated);
-    info!("  + Created:           {}", final_stats.created);
-    info!("  ✗ Failed:            {}", final_stats.failed);
-    info!("═══════════════════════════════════════════════════════");
-
-    if final_stats.successful() == total {
-        info!("All datasets processed successfully!");
-    }
-
-    Ok(())
 }
 
 async fn search(
