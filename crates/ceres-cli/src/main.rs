@@ -477,10 +477,6 @@ fn create_similarity_bar(score: f32) -> String {
     format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
 }
 
-// FIXME(unicode): Byte slicing can panic on multi-byte UTF-8 characters
-// `&cleaned[..max_len]` assumes ASCII. For text with emojis or non-Latin
-// characters, this will panic. Use `.chars().take(max_len)` instead.
-// See: https://doc.rust-lang.org/book/ch08-02-strings.html#bytes-and-scalar-values-and-grapheme-clusters
 fn truncate_text(text: &str, max_len: usize) -> String {
     let cleaned: String = text
         .chars()
@@ -491,8 +487,9 @@ fn truncate_text(text: &str, max_len: usize) -> String {
     if cleaned.len() <= max_len {
         cleaned
     } else {
-        // FIXME: Use cleaned.chars().take(max_len).collect::<String>()
-        format!("{}...", &cleaned[..max_len])
+        // Safely truncate text by characters to handle multi-byte UTF-8
+        let truncated: String = cleaned.chars().take(max_len).collect();
+        format!("{}...", truncated)
     }
 }
 
