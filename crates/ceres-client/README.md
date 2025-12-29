@@ -7,7 +7,8 @@
 ### Supported Protocols & Portals
 * **CKAN Integration:** Seamlessly fetches data from Comprehensive Knowledge Archive Network portals.
 * **HTTP Clients:** Robust handling of web-based data requests.
-* **Gemini Support:** (Awaiting confirmation on protocol details)
+* **Gemini API**: This is Google's embeddings API, which is already integrated. It generates text embeddings for semantic search. 
+
 
 ### Why this matters
 Without this client, Ceres wouldn't have any data to harvest. This crate ensures that connections to fragmented regional portals remain stable and efficient.
