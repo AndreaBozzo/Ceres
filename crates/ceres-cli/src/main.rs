@@ -468,11 +468,10 @@ async fn search(
     Ok(())
 }
 
-// TODO(ui): Improve similarity bar for edge cases
-// Currently (0.05 * 10).round() = 1, showing 1 bar for 5% similarity.
-// Consider using floor() or a minimum threshold for more intuitive display.
+// Use floor() instead of round() so very low similarity scores (e.g. 5%)
+// do not display a filled bar, making the UI less misleading.
 fn create_similarity_bar(score: f32) -> String {
-    let filled = (score * 10.0).round() as usize;
+    let filled = ((score * 10.0).floor() as isize).clamp(0, 10) as usize;
     let empty = 10 - filled;
     format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
 }
