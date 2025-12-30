@@ -214,6 +214,7 @@ version = "0.1.1"
 dependencies = [
  "chrono",
  "dirs",
+ "futures",
  "pgvector",
  "serde",
  "serde_json",
@@ -221,6 +222,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "thiserror",
+ "tokio",
  "toml",
  "tracing",
  "uuid",

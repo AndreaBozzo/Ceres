@@ -355,3 +355,37 @@ mod tests {
         assert_eq!(serialized["organization"], "test-org");
     }
 }
+
+// =============================================================================
+// Trait Implementation: DatasetStore
+// =============================================================================
+
+impl ceres_core::traits::DatasetStore for DatasetRepository {
+    async fn get_hashes_for_portal(
+        &self,
+        portal_url: &str,
+    ) -> Result<HashMap<String, Option<String>>, AppError> {
+        DatasetRepository::get_hashes_for_portal(self, portal_url).await
+    }
+
+    async fn update_timestamp_only(
+        &self,
+        portal_url: &str,
+        original_id: &str,
+    ) -> Result<(), AppError> {
+        DatasetRepository::update_timestamp_only(self, portal_url, original_id).await?;
+        Ok(())
+    }
+
+    async fn upsert(&self, dataset: &NewDataset) -> Result<Uuid, AppError> {
+        DatasetRepository::upsert(self, dataset).await
+    }
+
+    async fn search(
+        &self,
+        query_vector: Vector,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, AppError> {
+        DatasetRepository::search(self, query_vector, limit).await
+    }
+}

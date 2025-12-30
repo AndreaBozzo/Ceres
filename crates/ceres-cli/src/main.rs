@@ -1,60 +1,19 @@
+use std::path::PathBuf;
+
 use anyhow::Context;
 use clap::Parser;
 use dotenvy::dotenv;
-use futures::stream::{self, StreamExt};
-use pgvector::Vector;
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
-use std::path::PathBuf;
-
-use ceres_client::{CkanClient, GeminiClient};
+use ceres_client::{CkanClientFactory, GeminiClient};
 use ceres_core::{
-    BatchHarvestSummary, Dataset, DbConfig, PortalEntry, PortalHarvestResult, SyncConfig,
-    SyncOutcome, SyncStats, load_portals_config, needs_reprocessing,
+    BatchHarvestSummary, Dataset, DbConfig, HarvestService, PortalEntry, SearchService, SyncStats,
+    TracingReporter, load_portals_config,
 };
 use ceres_db::DatasetRepository;
 use ceres_search::{Command, Config, ExportFormat};
-
-/// Thread-safe wrapper for SyncStats using atomic counters.
-struct AtomicSyncStats {
-    unchanged: AtomicUsize,
-    updated: AtomicUsize,
-    created: AtomicUsize,
-    failed: AtomicUsize,
-}
-
-impl AtomicSyncStats {
-    fn new() -> Self {
-        Self {
-            unchanged: AtomicUsize::new(0),
-            updated: AtomicUsize::new(0),
-            created: AtomicUsize::new(0),
-            failed: AtomicUsize::new(0),
-        }
-    }
-
-    fn record(&self, outcome: SyncOutcome) {
-        match outcome {
-            SyncOutcome::Unchanged => self.unchanged.fetch_add(1, Ordering::Relaxed),
-            SyncOutcome::Updated => self.updated.fetch_add(1, Ordering::Relaxed),
-            SyncOutcome::Created => self.created.fetch_add(1, Ordering::Relaxed),
-            SyncOutcome::Failed => self.failed.fetch_add(1, Ordering::Relaxed),
-        };
-    }
-
-    fn to_stats(&self) -> SyncStats {
-        SyncStats {
-            unchanged: self.unchanged.load(Ordering::Relaxed),
-            updated: self.updated.load(Ordering::Relaxed),
-            created: self.created.load(Ordering::Relaxed),
-            failed: self.failed.load(Ordering::Relaxed),
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -80,16 +39,21 @@ async fn main() -> anyhow::Result<()> {
     let gemini_client = GeminiClient::new(&config.gemini_api_key)
         .context("Failed to initialize embedding client")?;
 
+    // Create services with concrete implementations (dependency injection)
+    let ckan_factory = CkanClientFactory::new();
+    let harvest_service = HarvestService::new(repo.clone(), gemini_client.clone(), ckan_factory);
+    let search_service = SearchService::new(repo.clone(), gemini_client);
+
     match config.command {
         Command::Harvest {
             portal_url,
             portal,
             config: config_path,
         } => {
-            handle_harvest(&repo, &gemini_client, portal_url, portal, config_path).await?;
+            handle_harvest(&harvest_service, portal_url, portal, config_path).await?;
         }
         Command::Search { query, limit } => {
-            search(&repo, &gemini_client, &query, limit).await?;
+            search(&search_service, &query, limit).await?;
         }
         Command::Export {
             format,
@@ -111,16 +75,20 @@ async fn main() -> anyhow::Result<()> {
 /// 2. Named portal from config
 /// 3. Batch mode (all enabled portals)
 async fn handle_harvest(
-    repo: &DatasetRepository,
-    gemini_client: &GeminiClient,
+    harvest_service: &HarvestService<DatasetRepository, GeminiClient, CkanClientFactory>,
     portal_url: Option<String>,
     portal_name: Option<String>,
     config_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    let reporter = TracingReporter;
+
     match (portal_url, portal_name) {
         // Mode 1: Direct URL (backward compatible)
         (Some(url), None) => {
-            let stats = sync_portal(repo, gemini_client, &url).await?;
+            info!("Syncing portal: {}", url);
+            let stats = harvest_service
+                .sync_portal_with_progress(&url, &reporter)
+                .await?;
             print_single_portal_summary(&url, &stats);
         }
 
@@ -142,7 +110,10 @@ async fn handle_harvest(
                 );
             }
 
-            let stats = sync_portal(repo, gemini_client, &portal.url).await?;
+            info!("Syncing portal: {}", portal.url);
+            let stats = harvest_service
+                .sync_portal_with_progress(&portal.url, &reporter)
+                .await?;
             print_single_portal_summary(&portal.url, &stats);
         }
 
@@ -161,7 +132,15 @@ async fn handle_harvest(
                 return Ok(());
             }
 
-            batch_harvest(repo, gemini_client, &enabled).await;
+            info!("═══════════════════════════════════════════════════════");
+            info!("Starting batch harvest of {} portals", enabled.len());
+            info!("═══════════════════════════════════════════════════════");
+
+            let summary = harvest_service
+                .batch_harvest_with_progress(&enabled, &reporter)
+                .await;
+
+            print_batch_summary(&summary);
         }
 
         // This case is prevented by clap's conflicts_with
@@ -169,67 +148,6 @@ async fn handle_harvest(
     }
 
     Ok(())
-}
-
-/// Harvest multiple portals sequentially with error isolation.
-///
-/// Failure in one portal does not stop processing of others.
-async fn batch_harvest(
-    repo: &DatasetRepository,
-    gemini_client: &GeminiClient,
-    portals: &[&PortalEntry],
-) -> BatchHarvestSummary {
-    let mut summary = BatchHarvestSummary::new();
-    let total = portals.len();
-
-    info!("═══════════════════════════════════════════════════════");
-    info!("Starting batch harvest of {} portals", total);
-    info!("═══════════════════════════════════════════════════════");
-
-    for (i, portal) in portals.iter().enumerate() {
-        info!("");
-        info!("───────────────────────────────────────────────────────");
-        info!(
-            "[Portal {}/{}] {} ({})",
-            i + 1,
-            total,
-            portal.name,
-            portal.url
-        );
-        info!("───────────────────────────────────────────────────────");
-
-        match sync_portal(repo, gemini_client, &portal.url).await {
-            Ok(stats) => {
-                info!(
-                    "[Portal {}/{}] Completed: {} datasets ({} created, {} updated, {} unchanged)",
-                    i + 1,
-                    total,
-                    stats.total(),
-                    stats.created,
-                    stats.updated,
-                    stats.unchanged
-                );
-                summary.add(PortalHarvestResult::success(
-                    portal.name.clone(),
-                    portal.url.clone(),
-                    stats,
-                ));
-            }
-            Err(e) => {
-                error!("[Portal {}/{}] Failed: {}", i + 1, total, e);
-                summary.add(PortalHarvestResult::failure(
-                    portal.name.clone(),
-                    portal.url.clone(),
-                    e.to_string(),
-                ));
-            }
-        }
-    }
-
-    // Print batch summary
-    print_batch_summary(&summary);
-
-    summary
 }
 
 /// Print a summary of batch harvesting results.
@@ -275,163 +193,14 @@ fn print_single_portal_summary(portal_url: &str, stats: &SyncStats) {
     }
 }
 
-// TODO(#10): Implement time-based incremental harvesting
-// Currently we fetch all package IDs and compare hashes. For large portals,
-// we could use CKAN's `package_search` with `fq=metadata_modified:[NOW-1DAY TO *]`
-// to only fetch recently modified datasets.
-// See: https://github.com/AndreaBozzo/Ceres/issues/10
-
-// TODO(robustness): Add circuit breaker pattern for API failures
-// Currently no backpressure when Gemini/CKAN APIs fail repeatedly.
-// Consider: (1) Stop after N consecutive failures
-// (2) Exponential backoff on rate limits
-// (3) Health check before continuing after failure spike
-
-// TODO(performance): Batch embedding API calls
-// Each dataset embedding is generated individually. Gemini API may support
-// batching multiple texts per request, reducing latency and API calls.
-
-/// Sync a single portal and return statistics.
-///
-/// This is the core harvesting function used by all harvest modes.
-/// It fetches datasets from the portal, compares with existing data,
-/// generates embeddings for new/updated content, and persists changes.
-async fn sync_portal(
-    repo: &DatasetRepository,
-    gemini_client: &GeminiClient,
-    portal_url: &str,
-) -> anyhow::Result<SyncStats> {
-    info!("Syncing portal: {}", portal_url);
-
-    let ckan = CkanClient::new(portal_url).context("Invalid CKAN portal URL")?;
-
-    let existing_hashes = repo.get_hashes_for_portal(portal_url).await?;
-    info!("Found {} existing datasets", existing_hashes.len());
-
-    let ids = ckan.list_package_ids().await?;
-    let total = ids.len();
-    info!("Found {} datasets on portal", total);
-
-    let stats = Arc::new(AtomicSyncStats::new());
-
-    let _results: Vec<_> = stream::iter(ids.into_iter().enumerate())
-        .map(|(i, id)| {
-            let ckan = ckan.clone();
-            let gemini = gemini_client.clone();
-            let repo = repo.clone();
-            let portal_url = portal_url.to_string();
-            let existing_hashes = existing_hashes.clone();
-            let stats = Arc::clone(&stats);
-
-            async move {
-                let ckan_data = match ckan.show_package(&id).await {
-                    Ok(data) => data,
-                    Err(e) => {
-                        error!("[{}/{}] Failed to fetch {}: {}", i + 1, total, id, e);
-                        stats.record(SyncOutcome::Failed);
-                        return Err(e);
-                    }
-                };
-
-                let mut new_dataset = CkanClient::into_new_dataset(ckan_data, &portal_url);
-                let decision = needs_reprocessing(
-                    existing_hashes.get(&new_dataset.original_id),
-                    &new_dataset.content_hash,
-                );
-
-                match decision.outcome {
-                    SyncOutcome::Unchanged => {
-                        info!("[{}/{}] = Unchanged: {}", i + 1, total, new_dataset.title);
-                        stats.record(SyncOutcome::Unchanged);
-
-                        if let Err(e) = repo
-                            .update_timestamp_only(&portal_url, &new_dataset.original_id)
-                            .await
-                        {
-                            error!("[{}/{}] Failed to update timestamp: {}", i + 1, total, e);
-                        }
-                        return Ok(());
-                    }
-                    SyncOutcome::Updated => {
-                        let label = if decision.is_legacy() {
-                            "↑ Updated (legacy)"
-                        } else {
-                            "↑ Updated"
-                        };
-                        info!("[{}/{}] {}: {}", i + 1, total, label, new_dataset.title);
-                    }
-                    SyncOutcome::Created => {
-                        info!("[{}/{}] + Created: {}", i + 1, total, new_dataset.title);
-                    }
-                    SyncOutcome::Failed => unreachable!("needs_reprocessing never returns Failed"),
-                }
-
-                if decision.needs_embedding {
-                    let combined_text = format!(
-                        "{} {}",
-                        new_dataset.title,
-                        new_dataset.description.as_deref().unwrap_or_default()
-                    );
-
-                    if !combined_text.trim().is_empty() {
-                        match gemini.get_embeddings(&combined_text).await {
-                            Ok(emb) => {
-                                new_dataset.embedding = Some(Vector::from(emb));
-                                stats.record(decision.outcome);
-                            }
-                            Err(e) => {
-                                error!(
-                                    "[{}/{}] Failed to generate embedding for {}: {}",
-                                    i + 1,
-                                    total,
-                                    id,
-                                    e
-                                );
-                                stats.record(SyncOutcome::Failed);
-                            }
-                        }
-                    }
-                }
-
-                match repo.upsert(&new_dataset).await {
-                    Ok(uuid) => {
-                        if decision.needs_embedding {
-                            info!(
-                                "[{}/{}] ✓ Indexed: {} ({})",
-                                i + 1,
-                                total,
-                                new_dataset.title,
-                                uuid
-                            );
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!("[{}/{}] Failed to save {}: {}", i + 1, total, id, e);
-                        stats.record(SyncOutcome::Failed);
-                        Err(e)
-                    }
-                }
-            }
-        })
-        .buffer_unordered(SyncConfig::default().concurrency)
-        .collect()
-        .await;
-
-    Ok(stats.to_stats())
-}
-
 async fn search(
-    repo: &DatasetRepository,
-    gemini_client: &GeminiClient,
+    search_service: &SearchService<DatasetRepository, GeminiClient>,
     query: &str,
     limit: usize,
 ) -> anyhow::Result<()> {
     info!("Searching for: '{}' (limit: {})", query, limit);
 
-    let vector = gemini_client.get_embeddings(query).await?;
-    let query_vector = Vector::from(vector);
-    let results = repo.search(query_vector, limit).await?;
+    let results = search_service.search(query, limit).await?;
 
     if results.is_empty() {
         println!("\n🔍 No results found for: \"{}\"\n", query);
@@ -672,47 +441,5 @@ mod tests {
     #[test]
     fn test_escape_csv_with_newline() {
         assert_eq!(escape_csv("line1\nline2"), "\"line1\nline2\"");
-    }
-
-    #[test]
-    fn test_atomic_sync_stats_new() {
-        let stats = AtomicSyncStats::new();
-        let result = stats.to_stats();
-        assert_eq!(result.unchanged, 0);
-        assert_eq!(result.updated, 0);
-        assert_eq!(result.created, 0);
-        assert_eq!(result.failed, 0);
-    }
-
-    #[test]
-    fn test_atomic_sync_stats_record() {
-        let stats = AtomicSyncStats::new();
-        stats.record(SyncOutcome::Unchanged);
-        stats.record(SyncOutcome::Updated);
-        stats.record(SyncOutcome::Created);
-        stats.record(SyncOutcome::Failed);
-
-        let result = stats.to_stats();
-        assert_eq!(result.unchanged, 1);
-        assert_eq!(result.updated, 1);
-        assert_eq!(result.created, 1);
-        assert_eq!(result.failed, 1);
-    }
-
-    #[test]
-    fn test_atomic_sync_stats_multiple_records() {
-        let stats = AtomicSyncStats::new();
-        for _ in 0..10 {
-            stats.record(SyncOutcome::Unchanged);
-        }
-        for _ in 0..5 {
-            stats.record(SyncOutcome::Updated);
-        }
-
-        let result = stats.to_stats();
-        assert_eq!(result.unchanged, 10);
-        assert_eq!(result.updated, 5);
-        assert_eq!(result.total(), 15);
-        assert_eq!(result.successful(), 15);
     }
 }

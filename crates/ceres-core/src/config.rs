@@ -55,6 +55,7 @@ impl Default for HttpConfig {
 /// TODO(config): Support CLI arg `--concurrency` and env var `SYNC_CONCURRENCY`
 /// Optimal value depends on portal rate limits and system resources.
 /// Consider auto-tuning based on API response times.
+#[derive(Clone)]
 pub struct SyncConfig {
     pub concurrency: usize,
 }

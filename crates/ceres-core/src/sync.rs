@@ -3,6 +3,8 @@
 //! This module provides pure business logic for delta detection and sync statistics,
 //! decoupled from I/O operations and CLI orchestration.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 /// Outcome of processing a single dataset during sync.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncOutcome {
@@ -49,6 +51,71 @@ impl SyncStats {
     /// Returns the number of successfully processed datasets.
     pub fn successful(&self) -> usize {
         self.unchanged + self.updated + self.created
+    }
+}
+
+/// Thread-safe wrapper for [`SyncStats`] using atomic counters.
+///
+/// This is useful for concurrent harvesting where multiple tasks
+/// update statistics simultaneously without requiring a mutex.
+///
+/// # Example
+///
+/// ```
+/// use ceres_core::sync::{AtomicSyncStats, SyncOutcome};
+///
+/// let stats = AtomicSyncStats::new();
+///
+/// // Can be safely called from multiple threads
+/// stats.record(SyncOutcome::Created);
+/// stats.record(SyncOutcome::Unchanged);
+///
+/// let snapshot = stats.to_stats();
+/// assert_eq!(snapshot.created, 1);
+/// assert_eq!(snapshot.unchanged, 1);
+/// ```
+pub struct AtomicSyncStats {
+    unchanged: AtomicUsize,
+    updated: AtomicUsize,
+    created: AtomicUsize,
+    failed: AtomicUsize,
+}
+
+impl AtomicSyncStats {
+    /// Creates a new zeroed stats tracker.
+    pub fn new() -> Self {
+        Self {
+            unchanged: AtomicUsize::new(0),
+            updated: AtomicUsize::new(0),
+            created: AtomicUsize::new(0),
+            failed: AtomicUsize::new(0),
+        }
+    }
+
+    /// Records an outcome, incrementing the appropriate counter atomically.
+    pub fn record(&self, outcome: SyncOutcome) {
+        match outcome {
+            SyncOutcome::Unchanged => self.unchanged.fetch_add(1, Ordering::Relaxed),
+            SyncOutcome::Updated => self.updated.fetch_add(1, Ordering::Relaxed),
+            SyncOutcome::Created => self.created.fetch_add(1, Ordering::Relaxed),
+            SyncOutcome::Failed => self.failed.fetch_add(1, Ordering::Relaxed),
+        };
+    }
+
+    /// Converts atomic counters to a snapshot [`SyncStats`].
+    pub fn to_stats(&self) -> SyncStats {
+        SyncStats {
+            unchanged: self.unchanged.load(Ordering::Relaxed),
+            updated: self.updated.load(Ordering::Relaxed),
+            created: self.created.load(Ordering::Relaxed),
+            failed: self.failed.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl Default for AtomicSyncStats {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -441,5 +508,58 @@ mod tests {
         assert_eq!(summary.failed_count(), 2);
         assert_eq!(summary.total_datasets(), 0);
         assert_eq!(summary.total_portals(), 2);
+    }
+
+    // =========================================================================
+    // AtomicSyncStats tests
+    // =========================================================================
+
+    #[test]
+    fn test_atomic_sync_stats_new() {
+        let stats = AtomicSyncStats::new();
+        let result = stats.to_stats();
+        assert_eq!(result.unchanged, 0);
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.created, 0);
+        assert_eq!(result.failed, 0);
+    }
+
+    #[test]
+    fn test_atomic_sync_stats_record() {
+        let stats = AtomicSyncStats::new();
+        stats.record(SyncOutcome::Unchanged);
+        stats.record(SyncOutcome::Updated);
+        stats.record(SyncOutcome::Created);
+        stats.record(SyncOutcome::Failed);
+
+        let result = stats.to_stats();
+        assert_eq!(result.unchanged, 1);
+        assert_eq!(result.updated, 1);
+        assert_eq!(result.created, 1);
+        assert_eq!(result.failed, 1);
+    }
+
+    #[test]
+    fn test_atomic_sync_stats_multiple_records() {
+        let stats = AtomicSyncStats::new();
+        for _ in 0..10 {
+            stats.record(SyncOutcome::Unchanged);
+        }
+        for _ in 0..5 {
+            stats.record(SyncOutcome::Updated);
+        }
+
+        let result = stats.to_stats();
+        assert_eq!(result.unchanged, 10);
+        assert_eq!(result.updated, 5);
+        assert_eq!(result.total(), 15);
+        assert_eq!(result.successful(), 15);
+    }
+
+    #[test]
+    fn test_atomic_sync_stats_default() {
+        let stats = AtomicSyncStats::default();
+        let result = stats.to_stats();
+        assert_eq!(result.total(), 0);
     }
 }

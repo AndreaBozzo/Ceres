@@ -421,3 +421,42 @@ mod tests {
         assert!(dataset.extras.contains_key("organization"));
     }
 }
+
+// =============================================================================
+// Trait Implementations: PortalClient and PortalClientFactory
+// =============================================================================
+
+impl ceres_core::traits::PortalClient for CkanClient {
+    type PortalData = CkanDataset;
+
+    async fn list_dataset_ids(&self) -> Result<Vec<String>, AppError> {
+        self.list_package_ids().await
+    }
+
+    async fn get_dataset(&self, id: &str) -> Result<Self::PortalData, AppError> {
+        self.show_package(id).await
+    }
+
+    fn into_new_dataset(data: Self::PortalData, portal_url: &str) -> NewDataset {
+        CkanClient::into_new_dataset(data, portal_url)
+    }
+}
+
+/// Factory for creating CKAN portal clients.
+#[derive(Debug, Clone, Default)]
+pub struct CkanClientFactory;
+
+impl CkanClientFactory {
+    /// Creates a new CKAN client factory.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ceres_core::traits::PortalClientFactory for CkanClientFactory {
+    type Client = CkanClient;
+
+    fn create(&self, portal_url: &str) -> Result<Self::Client, AppError> {
+        CkanClient::new(portal_url)
+    }
+}

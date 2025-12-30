@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core types and error handling for Ceres"
+description = "Core types, business logic, and services for Ceres"
 keywords = ["ckan", "open-data", "semantic-search", "embeddings"]
 categories = ["data-structures"]
 
@@ -34,6 +34,10 @@ dirs.workspace = true
 
 # Logging
 tracing.workspace = true
+
+# Async runtime and utilities (for harvest/search services)
+tokio.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

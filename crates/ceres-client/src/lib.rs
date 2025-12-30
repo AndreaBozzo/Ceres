@@ -14,5 +14,5 @@ pub mod ckan;
 pub mod gemini;
 
 // Re-export main client types
-pub use ckan::CkanClient;
+pub use ckan::{CkanClient, CkanClientFactory};
 pub use gemini::GeminiClient;
