@@ -50,7 +50,6 @@ rust:
       - any-glob-to-any-file:
           - compose.yml
           - Makefile
-          - .env
           - .env.example
           - clippy.toml
           - rustfmt.toml
