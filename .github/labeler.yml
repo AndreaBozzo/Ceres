@@ -1,0 +1,62 @@
+"area: cli":
+  - changed-files:
+      - any-glob-to-any-file:
+          - crates/ceres-cli/**
+
+"area: core":
+  - changed-files:
+      - any-glob-to-any-file:
+          - crates/ceres-core/**
+
+"area: db":
+  - changed-files:
+      - any-glob-to-any-file:
+          - crates/ceres-db/**
+          - migrations/**
+
+"area: client":
+  - changed-files:
+      - any-glob-to-any-file:
+          - crates/ceres-client/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - README.md
+          - CHANGELOG.md
+          - CONTRIBUTING.md
+          - CODE_OF_CONDUCT.md
+          - SECURITY.md
+          - LICENSE
+
+ci/cd:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+
+rust:
+  - changed-files:
+      - any-glob-to-any-file:
+          - crates/**
+
+"area: examples":
+  - changed-files:
+      - any-glob-to-any-file:
+          - examples/**
+
+"area: infra":
+  - changed-files:
+      - any-glob-to-any-file:
+          - compose.yml
+          - Makefile
+          - .env
+          - .env.example
+          - clippy.toml
+          - rustfmt.toml
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Cargo.lock
+          - "**/Cargo.toml"
