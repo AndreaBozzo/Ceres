@@ -1,12 +1,32 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+use std::sync::LazyLock;
+
+static VERSION_INFO: LazyLock<String> = LazyLock::new(|| {
+    let version = env!("CARGO_PKG_VERSION");
+
+    // Use VERGEN_GIT_SHA for the commit hash (with safe slicing)
+    let commit = option_env!("VERGEN_GIT_SHA")
+        .map(|s| s.chars().take(7).collect::<String>())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let built = option_env!("VERGEN_BUILD_DATE").unwrap_or("unknown"); // YYYY-MM-DD
+    let target = option_env!("VERGEN_CARGO_TARGET_TRIPLE").unwrap_or("unknown");
+    let rustc = option_env!("VERGEN_RUSTC_SEMVER").unwrap_or("unknown");
+
+    format!("{version}\ncommit: {commit}\nbuilt: {built}\ntarget: {target}\nrustc: {rustc}")
+});
+
+pub fn version_info() -> &'static str {
+    &VERSION_INFO
+}
 
 /// CLI configuration parsed from command line arguments and environment variables
 #[derive(Parser, Debug)]
 #[command(name = "ceres")]
 #[command(
     author,
-    version,
+    version = version_info(),
     about = "Semantic search engine for open data portals"
 )]
 #[command(after_help = "Examples:
@@ -86,4 +106,18 @@ pub enum ExportFormat {
     Json,
     /// CSV format (comma-separated values)
     Csv,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_info;
+
+    #[test]
+    fn test_version_info_contains_expected_fields() {
+        let info = version_info();
+        assert!(info.contains("commit:"));
+        assert!(info.contains("built:"));
+        assert!(info.contains("target:"));
+        assert!(info.contains("rustc:"));
+    }
 }

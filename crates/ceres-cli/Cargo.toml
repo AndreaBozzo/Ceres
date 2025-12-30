@@ -1,5 +1,6 @@
 [package]
 name = "ceres-search"
+build = "build.rs"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -43,3 +44,6 @@ anyhow.workspace = true
 
 # Configuration paths
 dirs.workspace = true
+
+[build-dependencies]
+vergen-git2 = { version = "1.0", features = ["build", "cargo", "rustc", "si"] }
