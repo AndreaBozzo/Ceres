@@ -1,12 +1,11 @@
-use vergen_git2::{BuildBuilder, CargoBuilder, Emitter, Git2Builder, RustcBuilder, SysinfoBuilder};
+use vergen_git2::{BuildBuilder, CargoBuilder, Emitter, Git2Builder, RustcBuilder};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build instructions
-    let build = BuildBuilder::all_build()?;
-    let cargo = CargoBuilder::all_cargo()?;
-    let git2 = Git2Builder::all_git()?;
-    let rustc = RustcBuilder::all_rustc()?;
-    let sysinfo = SysinfoBuilder::all_sysinfo()?;
+    let git2 = Git2Builder::default().sha(true).build()?;
+    let build = BuildBuilder::default().build_date(true).build()?;
+    let cargo = CargoBuilder::default().target_triple(true).build()?;
+    let rustc = RustcBuilder::default().semver(true).build()?;
 
     // Emit env variables for cargo
     Emitter::default()
@@ -14,7 +13,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_instructions(&cargo)?
         .add_instructions(&git2)?
         .add_instructions(&rustc)?
-        .add_instructions(&sysinfo)?
         .emit()?;
 
     Ok(())
