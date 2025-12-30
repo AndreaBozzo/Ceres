@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use once_cell::sync::Lazy;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
-static VERSION_INFO: Lazy<String> = Lazy::new(|| {
+static VERSION_INFO: LazyLock<String> = LazyLock::new(|| {
     let version = env!("CARGO_PKG_VERSION");
 
     // Use VERGEN_GIT_SHA for the commit hash

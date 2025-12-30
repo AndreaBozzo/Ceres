@@ -251,7 +251,6 @@ dependencies = [
  "dirs",
  "dotenvy",
  "futures",
- "once_cell",
  "pgvector",
  "serde_json",
  "sqlx",
