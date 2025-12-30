@@ -229,6 +229,16 @@ impl GeminiClient {
     }
 }
 
+// =============================================================================
+// Trait Implementation: EmbeddingProvider
+// =============================================================================
+
+impl ceres_core::traits::EmbeddingProvider for GeminiClient {
+    async fn generate(&self, text: &str) -> Result<Vec<f32>, AppError> {
+        self.get_embeddings(text).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,15 +312,5 @@ mod tests {
     fn test_classify_gemini_error_unknown() {
         let kind = classify_gemini_error(400, "Bad request");
         assert_eq!(kind, GeminiErrorKind::Unknown);
-    }
-}
-
-// =============================================================================
-// Trait Implementation: EmbeddingProvider
-// =============================================================================
-
-impl ceres_core::traits::EmbeddingProvider for GeminiClient {
-    async fn generate(&self, text: &str) -> Result<Vec<f32>, AppError> {
-        self.get_embeddings(text).await
     }
 }

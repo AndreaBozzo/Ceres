@@ -3,8 +3,7 @@
 //! This module provides a trait-based abstraction for reporting progress during
 //! harvest operations, enabling decoupled logging and UI updates.
 
-use crate::{BatchHarvestSummary, SyncOutcome, SyncStats};
-use uuid::Uuid;
+use crate::{BatchHarvestSummary, SyncStats};
 
 /// Events emitted during harvesting operations.
 ///
@@ -40,44 +39,6 @@ pub enum HarvestEvent<'a> {
     PortalDatasetsFound {
         /// Number of datasets found.
         count: usize,
-    },
-
-    /// Single dataset processed (delta detection complete).
-    DatasetProcessed {
-        /// Zero-based index of the current dataset.
-        index: usize,
-        /// Total number of datasets.
-        total: usize,
-        /// Dataset title.
-        title: &'a str,
-        /// Processing outcome.
-        outcome: SyncOutcome,
-        /// Whether this is a legacy record update.
-        is_legacy: bool,
-    },
-
-    /// Dataset embedding generated and indexed.
-    DatasetIndexed {
-        /// Zero-based index of the current dataset.
-        index: usize,
-        /// Total number of datasets.
-        total: usize,
-        /// Dataset title.
-        title: &'a str,
-        /// Generated UUID.
-        id: Uuid,
-    },
-
-    /// Error occurred while processing a dataset.
-    DatasetError {
-        /// Zero-based index of the current dataset.
-        index: usize,
-        /// Total number of datasets.
-        total: usize,
-        /// Dataset original ID.
-        dataset_id: &'a str,
-        /// Error description.
-        error: &'a str,
     },
 
     /// Single portal harvest completed successfully.
@@ -189,38 +150,6 @@ impl ProgressReporter for TracingReporter {
             HarvestEvent::PortalDatasetsFound { count } => {
                 info!("Found {} dataset(s) on portal", count);
             }
-            HarvestEvent::DatasetProcessed {
-                index,
-                total,
-                title,
-                outcome,
-                is_legacy,
-            } => {
-                let label = match outcome {
-                    SyncOutcome::Unchanged => "=",
-                    SyncOutcome::Updated if is_legacy => "^ (legacy)",
-                    SyncOutcome::Updated => "^",
-                    SyncOutcome::Created => "+",
-                    SyncOutcome::Failed => "!",
-                };
-                info!("[{}/{}] {} {}", index + 1, total, label, title);
-            }
-            HarvestEvent::DatasetIndexed {
-                index,
-                total,
-                title,
-                id,
-            } => {
-                info!("[{}/{}] Indexed: {} ({})", index + 1, total, title, id);
-            }
-            HarvestEvent::DatasetError {
-                index,
-                total,
-                dataset_id,
-                error,
-            } => {
-                error!("[{}/{}] Failed {}: {}", index + 1, total, dataset_id, error);
-            }
             HarvestEvent::PortalCompleted {
                 portal_index,
                 total_portals,
@@ -290,25 +219,6 @@ mod tests {
         });
         reporter.report(HarvestEvent::ExistingDatasetsFound { count: 10 });
         reporter.report(HarvestEvent::PortalDatasetsFound { count: 20 });
-        reporter.report(HarvestEvent::DatasetProcessed {
-            index: 0,
-            total: 20,
-            title: "Test Dataset",
-            outcome: SyncOutcome::Created,
-            is_legacy: false,
-        });
-        reporter.report(HarvestEvent::DatasetIndexed {
-            index: 0,
-            total: 20,
-            title: "Test Dataset",
-            id: Uuid::nil(),
-        });
-        reporter.report(HarvestEvent::DatasetError {
-            index: 1,
-            total: 20,
-            dataset_id: "test-id",
-            error: "test error",
-        });
 
         let stats = SyncStats {
             unchanged: 5,
@@ -335,10 +245,10 @@ mod tests {
 
     #[test]
     fn test_default_implementations() {
-        let silent = SilentReporter::default();
+        let silent = SilentReporter;
         silent.report(HarvestEvent::BatchStarted { total_portals: 1 });
 
-        let tracing = TracingReporter::default();
+        let tracing = TracingReporter;
         tracing.report(HarvestEvent::BatchStarted { total_portals: 1 });
     }
 }

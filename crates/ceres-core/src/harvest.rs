@@ -186,7 +186,7 @@ where
         let stats = Arc::new(AtomicSyncStats::new());
 
         let _results: Vec<_> = stream::iter(ids.into_iter().enumerate())
-            .map(|(_i, id)| {
+            .map(|(_, id)| {
                 let portal_client = portal_client.clone();
                 let embedding = self.embedding.clone();
                 let store = self.store.clone();
@@ -213,11 +213,16 @@ where
                         SyncOutcome::Unchanged => {
                             stats.record(SyncOutcome::Unchanged);
 
-                            if let Err(_e) = store
+                            if let Err(e) = store
                                 .update_timestamp_only(&portal_url, &new_dataset.original_id)
                                 .await
                             {
-                                // Log error but don't fail the operation
+                                // Non-fatal: timestamp update failure doesn't affect data integrity
+                                tracing::warn!(
+                                    dataset_id = %new_dataset.original_id,
+                                    error = %e,
+                                    "Failed to update timestamp for unchanged dataset"
+                                );
                             }
                             return Ok(());
                         }
@@ -242,11 +247,11 @@ where
                                     new_dataset.embedding = Some(Vector::from(emb));
                                     stats.record(decision.outcome);
                                 }
-                                Err(_e) => {
+                                Err(e) => {
                                     stats.record(SyncOutcome::Failed);
-                                    return Err(AppError::Generic(
-                                        "Failed to generate embedding".to_string(),
-                                    ));
+                                    return Err(AppError::Generic(format!(
+                                        "Failed to generate embedding: {e}"
+                                    )));
                                 }
                             }
                         }
