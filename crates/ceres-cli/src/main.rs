@@ -4,17 +4,17 @@ use dotenvy::dotenv;
 use futures::stream::{self, StreamExt};
 use pgvector::Vector;
 use sqlx::postgres::PgPoolOptions;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tracing::{error, info, Level};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
 use std::path::PathBuf;
 
 use ceres_client::{CkanClient, GeminiClient};
 use ceres_core::{
-    load_portals_config, needs_reprocessing, BatchHarvestSummary, Dataset, DbConfig, PortalEntry,
-    PortalHarvestResult, SyncConfig, SyncOutcome, SyncStats,
+    BatchHarvestSummary, Dataset, DbConfig, PortalEntry, PortalHarvestResult, SyncConfig,
+    SyncOutcome, SyncStats, load_portals_config, needs_reprocessing,
 };
 use ceres_db::DatasetRepository;
 use ceres_search::{Command, Config, ExportFormat};

@@ -14,9 +14,9 @@
 //! }
 //! ```
 
+use ceres_core::HttpConfig;
 use ceres_core::error::AppError;
 use ceres_core::models::NewDataset;
-use ceres_core::HttpConfig;
 use reqwest::{Client, StatusCode, Url};
 use serde::Deserialize;
 use serde_json::Value;

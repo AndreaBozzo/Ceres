@@ -18,8 +18,8 @@
 //! - E5-multilingual (local, for cross-language search)
 //! - Ollama (local embeddings)
 
-use ceres_core::error::{AppError, GeminiErrorDetails, GeminiErrorKind};
 use ceres_core::HttpConfig;
+use ceres_core::error::{AppError, GeminiErrorDetails, GeminiErrorKind};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 

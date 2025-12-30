@@ -6,12 +6,12 @@ pub mod models;
 pub mod sync;
 
 pub use config::{
-    default_config_path, load_portals_config, DbConfig, HttpConfig, PortalEntry, PortalsConfig,
-    SyncConfig,
+    DbConfig, HttpConfig, PortalEntry, PortalsConfig, SyncConfig, default_config_path,
+    load_portals_config,
 };
 pub use error::AppError;
 pub use models::{DatabaseStats, Dataset, NewDataset, Portal, SearchResult};
 pub use sync::{
-    needs_reprocessing, BatchHarvestSummary, PortalHarvestResult, ReprocessingDecision,
-    SyncOutcome, SyncStats,
+    BatchHarvestSummary, PortalHarvestResult, ReprocessingDecision, SyncOutcome, SyncStats,
+    needs_reprocessing,
 };
