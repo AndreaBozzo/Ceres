@@ -107,3 +107,17 @@ pub enum ExportFormat {
     /// CSV format (comma-separated values)
     Csv,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::version_info;
+
+    #[test]
+    fn test_version_info_contains_expected_fields() {
+        let info = version_info();
+        assert!(info.contains("commit:"));
+        assert!(info.contains("built:"));
+        assert!(info.contains("target:"));
+        assert!(info.contains("rustc:"));
+    }
+}
