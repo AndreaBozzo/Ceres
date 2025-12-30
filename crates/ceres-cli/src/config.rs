@@ -5,11 +5,10 @@ use std::sync::LazyLock;
 static VERSION_INFO: LazyLock<String> = LazyLock::new(|| {
     let version = env!("CARGO_PKG_VERSION");
 
-    // Use VERGEN_GIT_SHA for the commit hash
+    // Use VERGEN_GIT_SHA for the commit hash (with safe slicing)
     let commit = option_env!("VERGEN_GIT_SHA")
-        .unwrap_or("unknown")
-        .get(..7) // optional: shorten to 7 chars
-        .unwrap_or("unknown");
+        .map(|s| s.chars().take(7).collect::<String>())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let built = option_env!("VERGEN_BUILD_DATE").unwrap_or("unknown"); // YYYY-MM-DD
     let target = option_env!("VERGEN_CARGO_TARGET_TRIPLE").unwrap_or("unknown");
