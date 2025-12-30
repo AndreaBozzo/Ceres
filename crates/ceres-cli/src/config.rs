@@ -1,12 +1,33 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use once_cell::sync::Lazy;
 use std::path::PathBuf;
+
+static VERSION_INFO: Lazy<String> = Lazy::new(|| {
+    let version = env!("CARGO_PKG_VERSION");
+
+    // Use VERGEN_GIT_SHA for the commit hash
+    let commit = option_env!("VERGEN_GIT_SHA")
+        .unwrap_or("unknown")
+        .get(..7) // optional: shorten to 7 chars
+        .unwrap_or("unknown");
+
+    let built = option_env!("VERGEN_BUILD_DATE").unwrap_or("unknown"); // YYYY-MM-DD
+    let target = option_env!("VERGEN_CARGO_TARGET_TRIPLE").unwrap_or("unknown");
+    let rustc = option_env!("VERGEN_RUSTC_SEMVER").unwrap_or("unknown");
+
+    format!("{version}\ncommit: {commit}\nbuilt: {built}\ntarget: {target}\nrustc: {rustc}")
+});
+
+pub fn version_info() -> &'static str {
+    &VERSION_INFO
+}
 
 /// CLI configuration parsed from command line arguments and environment variables
 #[derive(Parser, Debug)]
 #[command(name = "ceres")]
 #[command(
     author,
-    version,
+    version = version_info(),
     about = "Semantic search engine for open data portals"
 )]
 #[command(after_help = "Examples:
