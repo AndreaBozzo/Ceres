@@ -9,10 +9,10 @@ resolver = "2"
 
 [workspace.package]
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 authors = ["Andrea Bozzo"]
 license = "Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.87"
 repository = "https://github.com/AndreaBozzo/Ceres"
 
 [profile.release]
