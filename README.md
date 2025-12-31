@@ -34,30 +34,34 @@ Ceres solves this by creating a unified semantic index. Search by *meaning*, not
 ```
 $ ceres harvest
 
-INFO [Portal 1/2] milano (https://dati.comune.milano.it)
-INFO Found 2575 existing dataset(s) in database
+INFO [Portal 1/5] milano (https://dati.comune.milano.it)
 INFO Found 2575 dataset(s) on portal
-INFO Progress: 512/2575 (19%) - 0 new, 0 updated, 512 unchanged, 0 failed
-INFO Progress: 1024/2575 (39%) - 0 new, 0 updated, 1024 unchanged, 0 failed
-INFO Progress: 1536/2575 (59%) - 0 new, 0 updated, 1536 unchanged, 0 failed
-INFO Progress: 2048/2575 (79%) - 0 new, 0 updated, 2048 unchanged, 0 failed
 INFO Progress: 2575/2575 (100%) - 0 new, 0 updated, 2575 unchanged, 0 failed
-INFO [Portal 1/2] milano completed: 2575 dataset(s) (0 created, 0 updated, 2575 unchanged)
+INFO [Portal 1/5] milano completed: 2575 dataset(s)
 
-INFO [Portal 2/2] sicilia (https://dati.regione.sicilia.it)
-INFO Found 186 existing dataset(s) in database
+INFO [Portal 2/5] sicilia (https://dati.regione.sicilia.it)
 INFO Found 186 dataset(s) on portal
-INFO Progress: 100/186 (53%) - 2 new, 1 updated, 97 unchanged, 0 failed
-INFO Progress: 186/186 (100%) - 2 new, 1 updated, 183 unchanged, 0 failed
-INFO [Portal 2/2] sicilia completed: 186 dataset(s) (2 created, 1 updated, 183 unchanged)
+INFO [Portal 2/5] sicilia completed: 186 dataset(s)
+
+INFO [Portal 3/5] trentino (https://dati.trentino.it)
+INFO Found 1388 dataset(s) on portal
+INFO [Portal 3/5] trentino completed: 1388 dataset(s) (1388 created)
+
+INFO [Portal 4/5] aragon (https://opendata.aragon.es/ckan)
+INFO Found 2879 dataset(s) on portal
+INFO [Portal 4/5] aragon completed: 2879 dataset(s) (2879 created)
+
+INFO [Portal 5/5] nrw (https://ckan.open.nrw.de)
+INFO Found 10926 dataset(s) on portal
+INFO [Portal 5/5] nrw completed: 10926 dataset(s) (10926 created)
 
 ═══════════════════════════════════════════════════════
 BATCH HARVEST COMPLETE
 ═══════════════════════════════════════════════════════
-  Portals processed:   2
-  Successful:          2
+  Portals processed:   5
+  Successful:          5
   Failed:              0
-  Total datasets:      2761
+  Total datasets:      17954
 ═══════════════════════════════════════════════════════
 ```
 
@@ -89,10 +93,10 @@ $ ceres stats
 
 📊 Database Statistics
 
-  Total datasets:        2761
-  With embeddings:       2761
-  Unique portals:        2
-  Last update:           2025-12-31 12:18:35 UTC
+  Total datasets:        17954
+  With embeddings:       17954
+  Unique portals:        5
+  Last update:           2025-12-31 15:09:48 UTC
 ```
 
 ## Features
@@ -104,6 +108,20 @@ $ ceres stats
 - **Semantic Search** — Find datasets by meaning using Gemini embeddings
 - **Multi-format Export** — Export to JSON, JSON Lines, or CSV
 - **Database Statistics** — Monitor indexed datasets and portals
+
+## Pre-configured Portals
+
+Ceres comes with verified CKAN portals ready to use:
+
+| Portal | Region | Datasets |
+|--------|--------|----------|
+| Milano | Italy | ~2,575 |
+| Sicilia | Italy | ~186 |
+| Trentino | Italy | ~1,388 |
+| Aragón | Spain | ~2,879 |
+| NRW | Germany | ~10,926 |
+
+See [`examples/portals.toml`](examples/portals.toml) for the full list. Want to add more? Check [issue #19](https://github.com/AndreaBozzo/Ceres/issues/19).
 
 ## Cost-Effectiveness
 

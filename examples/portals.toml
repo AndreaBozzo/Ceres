@@ -23,10 +23,45 @@ url = "https://dati.regione.sicilia.it"
 type = "ckan"
 description = "Open data della Regione Siciliana"
 
-# Example disabled portal (won't be harvested in batch mode)
+[[portals]]
+name = "trentino"
+url = "https://dati.trentino.it"
+type = "ckan"
+description = "Open data della Provincia Autonoma di Trento"
+
+[[portals]]
+name = "aragon"
+url = "https://opendata.aragon.es/ckan"
+type = "ckan"
+description = "Open Data Aragón (Spain)"
+
 # [[portals]]
-# name = "disabled-example"
-# url = "https://example.com"
+# name = "ireland"
+# url = "https://data.gov.ie"
 # type = "ckan"
-# enabled = false
-# description = "This portal is disabled and won't be harvested"
+# description = "Irish Government Open Data Portal (disabled: rate limited)"
+
+# [[portals]]
+# name = "switzerland"
+# url = "https://ckan.opendata.swiss"
+# type = "ckan"
+# description = "Swiss Federal Open Government Data (disabled: requires multilingual field support)"
+
+[[portals]]
+name = "nrw"
+url = "https://ckan.open.nrw.de"
+type = "ckan"
+description = "Open Data NRW (Germany)"
+
+# Other verified portals (uncomment to enable)
+# [[portals]]
+# name = "toscana"
+# url = "https://dati.toscana.it"
+# type = "ckan"
+# description = "Open data della Regione Toscana"
+
+# [[portals]]
+# name = "hdx"
+# url = "https://data.humdata.org"
+# type = "ckan"
+# description = "Humanitarian Data Exchange (UN OCHA)"
