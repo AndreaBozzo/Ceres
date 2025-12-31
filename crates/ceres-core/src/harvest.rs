@@ -245,7 +245,6 @@ where
                             match embedding.generate(&combined_text).await {
                                 Ok(emb) => {
                                     new_dataset.embedding = Some(Vector::from(emb));
-                                    stats.record(decision.outcome);
                                 }
                                 Err(e) => {
                                     stats.record(SyncOutcome::Failed);
@@ -258,7 +257,10 @@ where
                     }
 
                     match store.upsert(&new_dataset).await {
-                        Ok(_uuid) => Ok(()),
+                        Ok(_uuid) => {
+                            stats.record(decision.outcome);
+                            Ok(())
+                        }
                         Err(e) => {
                             stats.record(SyncOutcome::Failed);
                             Err(e)

@@ -84,7 +84,7 @@ pub trait PortalClient: Send + Sync + Clone {
 /// Factory for creating portal clients.
 ///
 /// Separate from PortalClient to avoid issues with async trait constructors.
-pub trait PortalClientFactory: Send + Sync {
+pub trait PortalClientFactory: Send + Sync + Clone {
     /// The type of portal client this factory creates.
     type Client: PortalClient;
 
