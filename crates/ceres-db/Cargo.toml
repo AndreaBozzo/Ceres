@@ -24,3 +24,8 @@ serde_json.workspace = true
 # Domain types
 uuid.workspace = true
 chrono.workspace = true
+
+[dev-dependencies]
+testcontainers = "0.26"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+rand = "0.9"
