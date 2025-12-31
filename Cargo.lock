@@ -415,7 +415,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "testcontainers",
- "testcontainers-modules",
  "tokio",
  "uuid",
 ]
@@ -3069,15 +3068,6 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "url",
-]
-
-[[package]]
-name = "testcontainers-modules"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e75e78ff453128a2c7da9a5d5a3325ea34ea214d4bf51eab3417de23a4e5147"
-dependencies = [
- "testcontainers",
 ]
 
 [[package]]

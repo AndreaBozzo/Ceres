@@ -108,12 +108,13 @@ async fn test_search_returns_ordered_by_similarity() {
     let (pool, _container) = setup_test_db().await;
     let repo = DatasetRepository::new(pool);
 
-    // Query vector: all 1.0s (normalized unit vector in 768 dimensions)
+    // Query vector: all 1.0s (uniform values across 768 dimensions)
     let query_vec: Vec<f32> = vec![1.0; 768];
 
     // Dataset A: high similarity (same direction as query)
     let mut ds_a = sample_new_dataset("ds-a", "https://example.com");
     ds_a.title = "High Similarity Dataset".to_string();
+    ds_a.content_hash = NewDataset::compute_content_hash(&ds_a.title, ds_a.description.as_deref());
     ds_a.embedding = Some(Vector::from(vec![1.0_f32; 768]));
     repo.upsert(&ds_a)
         .await
@@ -122,6 +123,7 @@ async fn test_search_returns_ordered_by_similarity() {
     // Dataset B: lower similarity (different direction)
     let mut ds_b = sample_new_dataset("ds-b", "https://example.com");
     ds_b.title = "Low Similarity Dataset".to_string();
+    ds_b.content_hash = NewDataset::compute_content_hash(&ds_b.title, ds_b.description.as_deref());
     // Create a vector pointing in a different direction
     let mut b_vec = vec![0.1_f32; 768];
     b_vec[0] = 0.9; // Mostly different
@@ -133,6 +135,7 @@ async fn test_search_returns_ordered_by_similarity() {
     // Dataset C: no embedding (should be excluded from search)
     let mut ds_c = sample_new_dataset("ds-c", "https://example.com");
     ds_c.title = "No Embedding Dataset".to_string();
+    ds_c.content_hash = NewDataset::compute_content_hash(&ds_c.title, ds_c.description.as_deref());
     ds_c.embedding = None;
     repo.upsert(&ds_c)
         .await

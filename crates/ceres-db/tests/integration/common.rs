@@ -65,6 +65,8 @@ pub async fn setup_test_db() -> (PgPool, ContainerAsync<GenericImage>) {
     let connection_string = format!("postgresql://postgres:postgres@{}:{}/postgres", host, port);
 
     // Create connection pool with retry logic for container startup
+    const MAX_RETRIES: u32 = 30;
+    let mut retries = 0;
     let pool = loop {
         match PgPoolOptions::new()
             .max_connections(5)
@@ -72,7 +74,14 @@ pub async fn setup_test_db() -> (PgPool, ContainerAsync<GenericImage>) {
             .await
         {
             Ok(pool) => break pool,
-            Err(_) => {
+            Err(e) => {
+                retries += 1;
+                if retries >= MAX_RETRIES {
+                    panic!(
+                        "Failed to connect to database after {} retries: {}",
+                        MAX_RETRIES, e
+                    );
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         }
