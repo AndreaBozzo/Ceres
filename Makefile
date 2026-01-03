@@ -59,7 +59,5 @@ migrate: ## Run database migrations
 	done
 	@echo "Migration complete!"
 
-dev: docker-up ## Start development environment
-	@echo "PostgreSQL started. Run 'make migrate' to initialize the database."
 
 all: fmt clippy test ## Run fmt, clippy, and tests
