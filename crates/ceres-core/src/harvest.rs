@@ -15,13 +15,12 @@
 //! - **Flexibility**: Different backends (PostgreSQL, SQLite, different embedding APIs)
 //! - **Decoupling**: Core logic independent of specific implementations
 //!
-//! # Future Improvements
+//! # Features
 //!
-//! TODO(#10): Implement time-based incremental harvesting
-//! Currently we fetch all package IDs and compare hashes. For large portals,
-//! we could use CKAN's `package_search` with `fq=metadata_modified:[NOW-1DAY TO *]`
-//! to only fetch recently modified datasets.
-//! See: <https://github.com/AndreaBozzo/Ceres/issues/10>
+//! - **Incremental Harvesting**: Uses CKAN's `package_search` with `metadata_modified`
+//!   filter to fetch only recently modified datasets (implemented in #10).
+//! - **Fallback**: If incremental sync fails, automatically falls back to full sync.
+//! - **Force Full Sync**: Use `--full-sync` flag to bypass incremental harvesting.
 //!
 //! TODO(robustness): Add circuit breaker pattern for API failures
 //! Currently no backpressure when Gemini/CKAN APIs fail repeatedly.
@@ -52,6 +51,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use chrono::Utc;
 use futures::stream::{self, StreamExt};
 use pgvector::Vector;
 
@@ -62,6 +62,25 @@ use crate::{
     AppError, BatchHarvestSummary, PortalEntry, PortalHarvestResult, SyncConfig, SyncStats,
     needs_reprocessing,
 };
+
+/// Mode of sync operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncMode {
+    /// Full sync: fetch all datasets from portal.
+    Full,
+    /// Incremental sync: fetch only datasets modified since last sync.
+    Incremental,
+}
+
+impl SyncMode {
+    /// Returns the string representation for database storage.
+    fn as_str(&self) -> &'static str {
+        match self {
+            SyncMode::Full => "full",
+            SyncMode::Incremental => "incremental",
+        }
+    }
+}
 
 /// Service for harvesting datasets from open data portals.
 ///
@@ -184,21 +203,46 @@ where
     ///
     /// Same as [`sync_portal`](Self::sync_portal), but emits progress events
     /// through the provided reporter.
+    ///
+    /// # Sync Strategy
+    ///
+    /// 1. If `force_full_sync` is enabled or this is the first sync: full sync
+    /// 2. Otherwise, attempt incremental sync using `metadata_modified` filter
+    /// 3. If incremental fails, fall back to full sync with a warning
     pub async fn sync_portal_with_progress<R: ProgressReporter>(
         &self,
         portal_url: &str,
         reporter: &R,
     ) -> Result<SyncStats, AppError> {
         let portal_client = self.portal_factory.create(portal_url)?;
+        let sync_start = Utc::now();
+
+        // Determine sync mode
+        let (sync_mode, datasets_to_process) = self
+            .determine_sync_mode_and_fetch(portal_url, &portal_client, reporter)
+            .await?;
 
         let existing_hashes = self.store.get_hashes_for_portal(portal_url).await?;
         reporter.report(HarvestEvent::ExistingDatasetsFound {
             count: existing_hashes.len(),
         });
 
-        let ids = portal_client.list_dataset_ids().await?;
-        let total = ids.len();
-        reporter.report(HarvestEvent::PortalDatasetsFound { count: total });
+        let total = datasets_to_process.len();
+        if total == 0 {
+            tracing::info!(
+                portal = portal_url,
+                "No datasets to process (portal up to date)"
+            );
+            // Record successful sync even if no datasets changed
+            if let Err(e) = self
+                .store
+                .record_sync_status(portal_url, sync_start, sync_mode.as_str(), 0)
+                .await
+            {
+                tracing::warn!(error = %e, "Failed to record sync status");
+            }
+            return Ok(SyncStats::default());
+        }
 
         let stats = Arc::new(AtomicSyncStats::new());
         let unchanged_ids: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -208,9 +252,9 @@ where
         // Report progress every 5% or minimum 50 items
         let report_interval = std::cmp::max(total / 20, 50);
 
-        let _results: Vec<_> = stream::iter(ids.into_iter())
-            .map(|id| {
-                let portal_client = portal_client.clone();
+        // Process datasets - for incremental sync we already have full dataset objects
+        let _results: Vec<_> = stream::iter(datasets_to_process.into_iter())
+            .map(|portal_data| {
                 let embedding = self.embedding.clone();
                 let store = self.store.clone();
                 let portal_url = portal_url.to_string();
@@ -219,14 +263,6 @@ where
                 let unchanged_ids = Arc::clone(&unchanged_ids);
 
                 async move {
-                    let portal_data = match portal_client.get_dataset(&id).await {
-                        Ok(data) => data,
-                        Err(e) => {
-                            stats.record(SyncOutcome::Failed);
-                            return Err(e);
-                        }
-                    };
-
                     let mut new_dataset = F::Client::into_new_dataset(portal_data, &portal_url);
                     let decision = needs_reprocessing(
                         existing_hashes.get(&new_dataset.original_id),
@@ -330,7 +366,109 @@ where
             }
         }
 
-        Ok(stats.to_stats())
+        let final_stats = stats.to_stats();
+
+        // Record successful sync
+        if let Err(e) = self
+            .store
+            .record_sync_status(
+                portal_url,
+                sync_start,
+                sync_mode.as_str(),
+                final_stats.total() as i32,
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "Failed to record sync status");
+        }
+
+        Ok(final_stats)
+    }
+
+    /// Determines the sync mode and fetches the datasets to process.
+    ///
+    /// Returns a tuple of (sync_mode, datasets_to_process).
+    async fn determine_sync_mode_and_fetch<R: ProgressReporter>(
+        &self,
+        portal_url: &str,
+        portal_client: &F::Client,
+        reporter: &R,
+    ) -> Result<(SyncMode, Vec<<F::Client as PortalClient>::PortalData>), AppError> {
+        // Check if we should use incremental sync
+        if self.config.force_full_sync {
+            tracing::info!(portal = portal_url, "Force full sync requested");
+            return self.do_full_sync(portal_url, portal_client, reporter).await;
+        }
+
+        // Check last sync time
+        let last_sync = self.store.get_last_sync_time(portal_url).await?;
+
+        match last_sync {
+            Some(since) => {
+                tracing::info!(
+                    portal = portal_url,
+                    last_sync = %since,
+                    "Attempting incremental sync"
+                );
+
+                // Try incremental sync
+                match portal_client.search_modified_since(since).await {
+                    Ok(datasets) => {
+                        let count = datasets.len();
+                        tracing::info!(
+                            portal = portal_url,
+                            modified_count = count,
+                            "Incremental sync: found {} modified datasets",
+                            count
+                        );
+                        reporter.report(HarvestEvent::PortalDatasetsFound { count });
+                        Ok((SyncMode::Incremental, datasets))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            portal = portal_url,
+                            error = %e,
+                            "Incremental sync failed, falling back to full sync"
+                        );
+                        self.do_full_sync(portal_url, portal_client, reporter).await
+                    }
+                }
+            }
+            None => {
+                tracing::info!(portal = portal_url, "First sync, using full sync");
+                self.do_full_sync(portal_url, portal_client, reporter).await
+            }
+        }
+    }
+
+    /// Performs a full sync by fetching all dataset IDs and then each dataset.
+    async fn do_full_sync<R: ProgressReporter>(
+        &self,
+        portal_url: &str,
+        portal_client: &F::Client,
+        reporter: &R,
+    ) -> Result<(SyncMode, Vec<<F::Client as PortalClient>::PortalData>), AppError> {
+        let ids = portal_client.list_dataset_ids().await?;
+        let total = ids.len();
+        reporter.report(HarvestEvent::PortalDatasetsFound { count: total });
+
+        // Fetch all datasets
+        let mut datasets = Vec::with_capacity(total);
+        for id in ids {
+            match portal_client.get_dataset(&id).await {
+                Ok(data) => datasets.push(data),
+                Err(e) => {
+                    tracing::warn!(
+                        portal = portal_url,
+                        dataset_id = id,
+                        error = %e,
+                        "Failed to fetch dataset, skipping"
+                    );
+                }
+            }
+        }
+
+        Ok((SyncMode::Full, datasets))
     }
 
     /// Harvests multiple portals sequentially with error isolation.

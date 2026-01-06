@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use ceres_core::models::NewDataset;
 use ceres_core::traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFactory};
 use ceres_core::{AppError, SearchResult};
+use chrono::{DateTime, Utc};
 use pgvector::Vector;
 use sqlx::types::Json;
 use uuid::Uuid;
@@ -91,6 +92,14 @@ impl PortalClient for MockPortalClient {
             metadata: serde_json::json!({}),
             content_hash,
         }
+    }
+
+    async fn search_modified_since(
+        &self,
+        _since: DateTime<Utc>,
+    ) -> Result<Vec<Self::PortalData>, AppError> {
+        // For testing, return all datasets as "modified"
+        Ok(self.datasets.clone())
     }
 }
 
@@ -273,5 +282,24 @@ impl DatasetStore for MockDatasetStore {
             })
             .collect();
         Ok(results)
+    }
+
+    async fn get_last_sync_time(
+        &self,
+        _portal_url: &str,
+    ) -> Result<Option<DateTime<Utc>>, AppError> {
+        // Always return None to simulate first sync (full sync)
+        Ok(None)
+    }
+
+    async fn record_sync_status(
+        &self,
+        _portal_url: &str,
+        _sync_time: DateTime<Utc>,
+        _sync_mode: &str,
+        _datasets_synced: i32,
+    ) -> Result<(), AppError> {
+        // No-op for mock
+        Ok(())
     }
 }

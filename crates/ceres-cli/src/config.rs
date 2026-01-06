@@ -55,7 +55,8 @@ pub enum Command {
   ceres harvest                               # Harvest all enabled portals from config
   ceres harvest https://dati.comune.milano.it # Harvest single URL (backward compatible)
   ceres harvest --portal milano               # Harvest portal by name from config
-  ceres harvest --config ~/custom.toml        # Use custom config file")]
+  ceres harvest --config ~/custom.toml        # Use custom config file
+  ceres harvest --full-sync                   # Force full sync even if incremental is available")]
     Harvest {
         /// URL of a single CKAN portal to harvest (backward compatible)
         #[arg(value_name = "URL")]
@@ -68,6 +69,10 @@ pub enum Command {
         /// Custom path to portals.toml configuration file
         #[arg(short, long, value_name = "PATH")]
         config: Option<PathBuf>,
+
+        /// Force full sync even if incremental sync is available
+        #[arg(long)]
+        full_sync: bool,
     },
     /// Search indexed datasets using semantic similarity
     #[command(after_help = "Example: ceres search \"trasporto pubblico\" --limit 10")]

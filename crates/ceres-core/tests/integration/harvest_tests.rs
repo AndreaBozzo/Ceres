@@ -30,7 +30,10 @@ async fn test_harvest_creates_new_dataset() {
     let embedding = MockEmbeddingProvider;
     let factory = MockPortalClientFactory::new(datasets);
 
-    let config = SyncConfig { concurrency: 1 };
+    let config = SyncConfig {
+        concurrency: 1,
+        force_full_sync: true, // Force full sync for tests
+    };
     let service = HarvestService::with_config(store.clone(), embedding, factory, config);
 
     // Act
@@ -77,7 +80,10 @@ async fn test_harvest_skips_unchanged_dataset() {
     let embedding = MockEmbeddingProvider;
     let factory = MockPortalClientFactory::new(datasets);
 
-    let config = SyncConfig { concurrency: 1 };
+    let config = SyncConfig {
+        concurrency: 1,
+        force_full_sync: true, // Force full sync for tests
+    };
     let service = HarvestService::with_config(store.clone(), embedding, factory, config);
 
     // First harvest - should create
