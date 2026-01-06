@@ -31,6 +31,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 
+use chrono::{DateTime, Utc};
 use pgvector::Vector;
 use uuid::Uuid;
 
@@ -79,6 +80,24 @@ pub trait PortalClient: Send + Sync + Clone {
     /// * `data` - The raw portal data
     /// * `portal_url` - The portal URL for source tracking
     fn into_new_dataset(data: Self::PortalData, portal_url: &str) -> NewDataset;
+
+    /// Searches for datasets modified since the given timestamp.
+    ///
+    /// Used for incremental harvesting to fetch only recently modified datasets.
+    /// Returns full dataset objects, eliminating the need for separate get_dataset calls.
+    ///
+    /// # Arguments
+    ///
+    /// * `since` - Only return datasets modified after this timestamp
+    ///
+    /// # Returns
+    ///
+    /// A vector of portal-specific dataset objects modified since the given time.
+    /// Returns an error if the portal doesn't support incremental search.
+    fn search_modified_since(
+        &self,
+        since: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Vec<Self::PortalData>, AppError>> + Send;
 }
 
 /// Factory for creating portal clients.
@@ -174,4 +193,39 @@ pub trait DatasetStore: Send + Sync + Clone {
         query_vector: Vector,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<SearchResult>, AppError>> + Send;
+
+    /// Retrieves the last successful sync timestamp for a portal.
+    ///
+    /// Used for incremental harvesting to determine which datasets
+    /// have been modified since the last sync.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_url` - The source portal URL
+    ///
+    /// # Returns
+    ///
+    /// The timestamp of the last successful sync, or None if never synced.
+    fn get_last_sync_time(
+        &self,
+        portal_url: &str,
+    ) -> impl Future<Output = Result<Option<DateTime<Utc>>, AppError>> + Send;
+
+    /// Records a successful sync for a portal.
+    ///
+    /// Called after a successful harvest to update the sync status.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_url` - The source portal URL
+    /// * `sync_time` - The timestamp of this sync
+    /// * `sync_mode` - Either "full" or "incremental"
+    /// * `datasets_synced` - Number of datasets processed
+    fn record_sync_status(
+        &self,
+        portal_url: &str,
+        sync_time: DateTime<Utc>,
+        sync_mode: &str,
+        datasets_synced: i32,
+    ) -> impl Future<Output = Result<(), AppError>> + Send;
 }

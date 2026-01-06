@@ -26,3 +26,6 @@ pgvector.workspace = true
 
 # Async
 tokio.workspace = true
+
+# Date/time
+chrono.workspace = true

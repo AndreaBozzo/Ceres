@@ -397,6 +397,7 @@ name = "ceres-client"
 version = "0.1.1"
 dependencies = [
  "ceres-core",
+ "chrono",
  "pgvector",
  "reqwest",
  "serde",

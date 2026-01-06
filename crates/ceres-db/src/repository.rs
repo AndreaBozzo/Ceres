@@ -279,6 +279,62 @@ impl DatasetRepository {
         Ok(datasets)
     }
 
+    // =========================================================================
+    // Portal Sync Status Methods (for incremental harvesting)
+    // =========================================================================
+
+    /// Retrieves the sync status for a portal.
+    /// Returns None if this portal has never been synced.
+    pub async fn get_sync_status(
+        &self,
+        portal_url: &str,
+    ) -> Result<Option<PortalSyncStatus>, AppError> {
+        let result = sqlx::query_as::<_, PortalSyncStatus>(
+            r#"
+            SELECT portal_url, last_successful_sync, last_sync_mode, datasets_synced, created_at, updated_at
+            FROM portal_sync_status
+            WHERE portal_url = $1
+            "#,
+        )
+        .bind(portal_url)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+        Ok(result)
+    }
+
+    /// Updates or inserts the sync status for a portal after a successful sync.
+    pub async fn upsert_sync_status(
+        &self,
+        portal_url: &str,
+        last_sync: DateTime<Utc>,
+        sync_mode: &str,
+        datasets_synced: i32,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            INSERT INTO portal_sync_status (portal_url, last_successful_sync, last_sync_mode, datasets_synced, updated_at)
+            VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (portal_url)
+            DO UPDATE SET
+                last_successful_sync = EXCLUDED.last_successful_sync,
+                last_sync_mode = EXCLUDED.last_sync_mode,
+                datasets_synced = EXCLUDED.datasets_synced,
+                updated_at = NOW()
+            "#,
+        )
+        .bind(portal_url)
+        .bind(last_sync)
+        .bind(sync_mode)
+        .bind(datasets_synced)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+        Ok(())
+    }
+
     /// Returns aggregated database statistics.
     pub async fn get_stats(&self) -> Result<DatabaseStats, AppError> {
         let row: StatsRow = sqlx::query_as(
@@ -337,6 +393,17 @@ struct HashRow {
     content_hash: Option<String>,
 }
 
+/// Represents the sync status for a portal, used for incremental harvesting.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PortalSyncStatus {
+    pub portal_url: String,
+    pub last_successful_sync: Option<DateTime<Utc>>,
+    pub last_sync_mode: Option<String>,
+    pub datasets_synced: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 // =============================================================================
 // Trait Implementation: DatasetStore
 // =============================================================================
@@ -376,6 +443,31 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
         DatasetRepository::search(self, query_vector, limit).await
+    }
+
+    async fn get_last_sync_time(
+        &self,
+        portal_url: &str,
+    ) -> Result<Option<DateTime<Utc>>, AppError> {
+        let status = DatasetRepository::get_sync_status(self, portal_url).await?;
+        Ok(status.and_then(|s| s.last_successful_sync))
+    }
+
+    async fn record_sync_status(
+        &self,
+        portal_url: &str,
+        sync_time: DateTime<Utc>,
+        sync_mode: &str,
+        datasets_synced: i32,
+    ) -> Result<(), AppError> {
+        DatasetRepository::upsert_sync_status(
+            self,
+            portal_url,
+            sync_time,
+            sync_mode,
+            datasets_synced,
+        )
+        .await
     }
 }
 

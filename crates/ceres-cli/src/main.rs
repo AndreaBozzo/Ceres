@@ -9,8 +9,8 @@ use tracing_subscriber::FmtSubscriber;
 
 use ceres_client::{CkanClientFactory, GeminiClient};
 use ceres_core::{
-    BatchHarvestSummary, Dataset, DbConfig, HarvestService, PortalEntry, SearchService, SyncStats,
-    TracingReporter, load_portals_config,
+    BatchHarvestSummary, Dataset, DbConfig, HarvestService, PortalEntry, SearchService, SyncConfig,
+    SyncStats, TracingReporter, load_portals_config,
 };
 use ceres_db::DatasetRepository;
 use ceres_search::{Command, Config, ExportFormat};
@@ -41,15 +41,27 @@ async fn main() -> anyhow::Result<()> {
 
     // Create services with concrete implementations (dependency injection)
     let ckan_factory = CkanClientFactory::new();
-    let harvest_service = HarvestService::new(repo.clone(), gemini_client.clone(), ckan_factory);
-    let search_service = SearchService::new(repo.clone(), gemini_client);
+    let search_service = SearchService::new(repo.clone(), gemini_client.clone());
 
     match config.command {
         Command::Harvest {
             portal_url,
             portal,
             config: config_path,
+            full_sync,
         } => {
+            // Create HarvestService with appropriate config
+            let sync_config = if full_sync {
+                SyncConfig::default().with_full_sync()
+            } else {
+                SyncConfig::default()
+            };
+            let harvest_service = HarvestService::with_config(
+                repo.clone(),
+                gemini_client.clone(),
+                ckan_factory,
+                sync_config,
+            );
             handle_harvest(&harvest_service, portal_url, portal, config_path).await?;
         }
         Command::Search { query, limit } => {

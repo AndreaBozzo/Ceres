@@ -13,4 +13,4 @@
 
 mod repository;
 
-pub use repository::DatasetRepository;
+pub use repository::{DatasetRepository, PortalSyncStatus};

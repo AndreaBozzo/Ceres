@@ -57,13 +57,27 @@ impl Default for HttpConfig {
 /// Consider auto-tuning based on API response times.
 #[derive(Clone)]
 pub struct SyncConfig {
+    /// Number of concurrent dataset processing tasks.
     pub concurrency: usize,
+    /// Force full sync even if incremental sync is available.
+    pub force_full_sync: bool,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
         // TODO(config): Read from SYNC_CONCURRENCY env var
-        Self { concurrency: 10 }
+        Self {
+            concurrency: 10,
+            force_full_sync: false,
+        }
+    }
+}
+
+impl SyncConfig {
+    /// Creates a new SyncConfig with force_full_sync enabled.
+    pub fn with_full_sync(mut self) -> Self {
+        self.force_full_sync = true;
+        self
     }
 }
 
