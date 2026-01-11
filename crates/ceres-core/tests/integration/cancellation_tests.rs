@@ -1,7 +1,7 @@
 //! Integration tests for cancellation support in HarvestService.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use ceres_core::harvest::HarvestService;
@@ -10,9 +10,7 @@ use ceres_core::{AppError, SyncConfig, SyncStatus};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::integration::common::{
-    MockDatasetStore, MockPortalClientFactory, MockPortalData,
-};
+use crate::integration::common::{MockDatasetStore, MockPortalClientFactory, MockPortalData};
 
 const TEST_PORTAL_URL: &str = "https://test-portal.example.com";
 
@@ -47,7 +45,7 @@ async fn test_cancellation_before_start() {
     let embedding = SlowEmbeddingProvider::new(Duration::from_millis(10));
     let factory = MockPortalClientFactory::new(vec![]);
     let service = HarvestService::new(store.clone(), embedding, factory);
-    
+
     let token = CancellationToken::new();
     token.cancel(); // Cancel immediately
 
@@ -59,7 +57,7 @@ async fn test_cancellation_before_start() {
 
     // Assert
     assert!(
-        result.status.is_cancelled(), 
+        result.status.is_cancelled(),
         "Result status should be Cancelled"
     );
     assert_eq!(result.stats.total(), 0, "Should have processed 0 items");
@@ -84,7 +82,7 @@ async fn test_cancellation_during_processing() {
     let store = MockDatasetStore::new();
     let embedding = SlowEmbeddingProvider::new(Duration::from_millis(50));
     let factory = MockPortalClientFactory::new(datasets);
-    
+
     // Low concurrency to ensure sequential-ish processing and easier cancellation
     let config = SyncConfig {
         concurrency: 2,
@@ -102,17 +100,17 @@ async fn test_cancellation_during_processing() {
     });
 
     // Wait bit to let it start, but not finish (50 items * 50ms / 2 threads = ~1.25s total)
-    sleep(Duration::from_millis(200)).await; 
+    sleep(Duration::from_millis(200)).await;
     token.cancel();
 
     let result = harvest_handle.await.unwrap().unwrap();
 
     // Assert
     assert!(
-        result.status.is_cancelled(), 
+        result.status.is_cancelled(),
         "Result status should be Cancelled"
     );
-    
+
     let processed = result.stats.total();
     assert!(processed > 0, "Should have processed some items");
     assert!(processed < 50, "Should not have processed all items"); // 50 items
@@ -120,7 +118,10 @@ async fn test_cancellation_during_processing() {
     // Verify we stopped processing
     let processing_check = embedding.processed_count.load(Ordering::Relaxed);
     // Allow small margin for in-flight tasks
-    assert!(processing_check < 50, "Embedding provider processed too many items");
+    assert!(
+        processing_check < 50,
+        "Embedding provider processed too many items"
+    );
 
     // Verify DB record
     let history = store.sync_history.lock().unwrap();
@@ -139,34 +140,32 @@ async fn test_batch_harvest_cancellable() {
         title: "T1".to_string(),
         description: None,
     }];
-    
-    // Hack: We can't reuse factory with specific datasets for different URLs easily 
+
+    // Hack: We can't reuse factory with specific datasets for different URLs easily
     // in this mock setup without making a smarter mock factory.
     // For this test, we just want to see that if we cancel, it stops after/during the first portal.
     // So we'll use same datasets for all portals.
     let factory = MockPortalClientFactory::new(datasets1);
     let store = MockDatasetStore::new();
     let embedding = SlowEmbeddingProvider::new(Duration::from_millis(100)); // Slow enough
-    
+
     let service = HarvestService::new(store.clone(), embedding, factory);
     let token = CancellationToken::new();
 
-    let portals = vec![
-        ceres_core::PortalEntry {
-            name: "Portal 1".to_string(),
-            url: "http://p1.com".to_string(),
-            description: None,
-            enabled: true,
-            portal_type: "ckan".to_string(),
-        },
-        ceres_core::PortalEntry {
-            name: "Portal 2".to_string(),
-            url: "http://p2.com".to_string(),
-            description: None,
-            enabled: true,
-            portal_type: "ckan".to_string(),
-        },
-    ];
+    let portals = [ceres_core::PortalEntry {
+             name: "Portal 1".to_string(),
+             url: "http://p1.com".to_string(),
+             description: None,
+             enabled: true,
+             portal_type: "ckan".to_string(),
+         },
+         ceres_core::PortalEntry {
+             name: "Portal 2".to_string(),
+             url: "http://p2.com".to_string(),
+             description: None,
+             enabled: true,
+             portal_type: "ckan".to_string(),
+         }];
 
     // Act
     let token_clone = token.clone();
@@ -183,12 +182,15 @@ async fn test_batch_harvest_cancellable() {
     // Assert
     // We expect the first portal to be cancelled or possibly fail depending on exact timing,
     // but the summary should reflect incomplete work.
-    
+
     let history = store.sync_history.lock().unwrap();
     assert!(!history.is_empty());
     assert_eq!(history[0].sync_status, SyncStatus::Cancelled.as_str());
-    
+
     // Should verify we didn't try to sync the second portal (no history for it)
-    let p2_records = history.iter().filter(|r| r.portal_url == "http://p2.com").count();
+    let p2_records = history
+        .iter()
+        .filter(|r| r.portal_url == "http://p2.com")
+        .count();
     assert_eq!(p2_records, 0, "Should not have attempted second portal");
 }
