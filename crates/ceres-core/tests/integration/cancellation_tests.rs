@@ -152,20 +152,22 @@ async fn test_batch_harvest_cancellable() {
     let service = HarvestService::new(store.clone(), embedding, factory);
     let token = CancellationToken::new();
 
-    let portals = [ceres_core::PortalEntry {
-             name: "Portal 1".to_string(),
-             url: "http://p1.com".to_string(),
-             description: None,
-             enabled: true,
-             portal_type: "ckan".to_string(),
-         },
-         ceres_core::PortalEntry {
-             name: "Portal 2".to_string(),
-             url: "http://p2.com".to_string(),
-             description: None,
-             enabled: true,
-             portal_type: "ckan".to_string(),
-         }];
+    let portals = [
+        ceres_core::PortalEntry {
+            name: "Portal 1".to_string(),
+            url: "http://p1.com".to_string(),
+            description: None,
+            enabled: true,
+            portal_type: "ckan".to_string(),
+        },
+        ceres_core::PortalEntry {
+            name: "Portal 2".to_string(),
+            url: "http://p2.com".to_string(),
+            description: None,
+            enabled: true,
+            portal_type: "ckan".to_string(),
+        },
+    ];
 
     // Act
     let token_clone = token.clone();
