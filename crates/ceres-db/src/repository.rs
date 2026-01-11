@@ -291,7 +291,7 @@ impl DatasetRepository {
     ) -> Result<Option<PortalSyncStatus>, AppError> {
         let result = sqlx::query_as::<_, PortalSyncStatus>(
             r#"
-            SELECT portal_url, last_successful_sync, last_sync_mode, datasets_synced, created_at, updated_at
+            SELECT portal_url, last_successful_sync, last_sync_mode, sync_status, datasets_synced, created_at, updated_at
             FROM portal_sync_status
             WHERE portal_url = $1
             "#,
@@ -304,22 +304,38 @@ impl DatasetRepository {
         Ok(result)
     }
 
-    /// Updates or inserts the sync status for a portal after a successful sync.
+    /// Updates or inserts the sync status for a portal.
+    ///
+    /// The `sync_status` parameter indicates the outcome: "completed" or "cancelled".
+    /// Only updates `last_successful_sync` when status is "completed", preserving
+    /// the last successful sync time for incremental harvesting after cancellations.
     pub async fn upsert_sync_status(
         &self,
         portal_url: &str,
         last_sync: DateTime<Utc>,
         sync_mode: &str,
+        sync_status: &str,
         datasets_synced: i32,
     ) -> Result<(), AppError> {
         sqlx::query(
             r#"
-            INSERT INTO portal_sync_status (portal_url, last_successful_sync, last_sync_mode, datasets_synced, updated_at)
-            VALUES ($1, $2, $3, $4, NOW())
+            INSERT INTO portal_sync_status (portal_url, last_successful_sync, last_sync_mode, sync_status, datasets_synced, updated_at)
+            VALUES (
+                $1,
+                CASE WHEN $4 = 'completed' THEN $2 ELSE NULL END,
+                $3,
+                $4,
+                $5,
+                NOW()
+            )
             ON CONFLICT (portal_url)
             DO UPDATE SET
-                last_successful_sync = EXCLUDED.last_successful_sync,
+                last_successful_sync = CASE
+                    WHEN EXCLUDED.sync_status = 'completed' THEN $2
+                    ELSE portal_sync_status.last_successful_sync
+                END,
                 last_sync_mode = EXCLUDED.last_sync_mode,
+                sync_status = EXCLUDED.sync_status,
                 datasets_synced = EXCLUDED.datasets_synced,
                 updated_at = NOW()
             "#,
@@ -327,6 +343,7 @@ impl DatasetRepository {
         .bind(portal_url)
         .bind(last_sync)
         .bind(sync_mode)
+        .bind(sync_status)
         .bind(datasets_synced)
         .execute(&self.pool)
         .await
@@ -399,6 +416,7 @@ pub struct PortalSyncStatus {
     pub portal_url: String,
     pub last_successful_sync: Option<DateTime<Utc>>,
     pub last_sync_mode: Option<String>,
+    pub sync_status: Option<String>,
     pub datasets_synced: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -458,6 +476,7 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
         portal_url: &str,
         sync_time: DateTime<Utc>,
         sync_mode: &str,
+        sync_status: &str,
         datasets_synced: i32,
     ) -> Result<(), AppError> {
         DatasetRepository::upsert_sync_status(
@@ -465,6 +484,7 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
             portal_url,
             sync_time,
             sync_mode,
+            sync_status,
             datasets_synced,
         )
         .await

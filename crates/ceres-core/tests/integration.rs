@@ -15,6 +15,7 @@
 //! ```
 
 mod integration {
+    pub mod cancellation_tests;
     pub mod common;
     pub mod harvest_tests;
 }

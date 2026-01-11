@@ -211,21 +211,24 @@ pub trait DatasetStore: Send + Sync + Clone {
         portal_url: &str,
     ) -> impl Future<Output = Result<Option<DateTime<Utc>>, AppError>> + Send;
 
-    /// Records a successful sync for a portal.
+    /// Records a sync status for a portal.
     ///
-    /// Called after a successful harvest to update the sync status.
+    /// Called after a harvest operation to update the sync status.
+    /// The `sync_status` parameter indicates the outcome: "completed" or "cancelled".
     ///
     /// # Arguments
     ///
     /// * `portal_url` - The source portal URL
     /// * `sync_time` - The timestamp of this sync
     /// * `sync_mode` - Either "full" or "incremental"
+    /// * `sync_status` - The outcome: "completed" or "cancelled"
     /// * `datasets_synced` - Number of datasets processed
     fn record_sync_status(
         &self,
         portal_url: &str,
         sync_time: DateTime<Utc>,
         sync_mode: &str,
+        sync_status: &str,
         datasets_synced: i32,
     ) -> impl Future<Output = Result<(), AppError>> + Send;
 }

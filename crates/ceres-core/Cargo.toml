@@ -37,6 +37,7 @@ tracing.workspace = true
 
 # Async runtime and utilities (for harvest/search services)
 tokio.workspace = true
+tokio-util.workspace = true
 futures.workspace = true
 
 [dev-dependencies]
