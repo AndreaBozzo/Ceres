@@ -1,5 +1,5 @@
 -- Migration: Add sync_status column to portal_sync_status table
--- This column tracks whether a sync completed, was cancelled, or failed,
+-- This column tracks whether a sync completed or was cancelled,
 -- enabling graceful shutdown support and partial progress tracking.
 
 ALTER TABLE portal_sync_status

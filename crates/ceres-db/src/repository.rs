@@ -320,11 +320,18 @@ impl DatasetRepository {
         sqlx::query(
             r#"
             INSERT INTO portal_sync_status (portal_url, last_successful_sync, last_sync_mode, sync_status, datasets_synced, updated_at)
-            VALUES ($1, $2, $3, $4, $5, NOW())
+            VALUES (
+                $1,
+                CASE WHEN $4 = 'completed' THEN $2 ELSE NULL END,
+                $3,
+                $4,
+                $5,
+                NOW()
+            )
             ON CONFLICT (portal_url)
             DO UPDATE SET
                 last_successful_sync = CASE
-                    WHEN EXCLUDED.sync_status = 'completed' THEN EXCLUDED.last_successful_sync
+                    WHEN EXCLUDED.sync_status = 'completed' THEN $2
                     ELSE portal_sync_status.last_successful_sync
                 END,
                 last_sync_mode = EXCLUDED.last_sync_mode,

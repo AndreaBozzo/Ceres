@@ -17,4 +17,5 @@
 mod integration {
     pub mod common;
     pub mod harvest_tests;
+    pub mod cancellation_tests;
 }

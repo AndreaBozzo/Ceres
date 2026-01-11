@@ -594,13 +594,27 @@ where
         reporter: &R,
         cancel_token: CancellationToken,
     ) -> Result<SyncResult, AppError> {
+        let sync_start = Utc::now();
+
         // Check cancellation before starting
         if cancel_token.is_cancelled() {
+            if let Err(e) = self
+                .store
+                .record_sync_status(
+                    portal_url,
+                    sync_start,
+                    "unknown",
+                    SyncStatus::Cancelled.as_str(),
+                    0,
+                )
+                .await
+            {
+                tracing::warn!(error = %e, "Failed to record cancelled sync status");
+            }
             return Ok(SyncResult::cancelled(SyncStats::default()));
         }
 
         let portal_client = self.portal_factory.create(portal_url)?;
-        let sync_start = Utc::now();
 
         // Determine sync mode and fetch datasets (check cancellation during fetch)
         let (sync_mode, datasets_to_process) = self
@@ -747,10 +761,6 @@ where
                 }
             })
             .buffer_unordered(self.config.concurrency)
-            .take_while(|_| {
-                let is_cancelled = cancel_token.is_cancelled();
-                async move { !is_cancelled }
-            })
             .inspect(|_| {
                 let current = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
                 let last = last_reported.load(Ordering::Relaxed);
@@ -771,6 +781,10 @@ where
                         failed: current_stats.failed,
                     });
                 }
+            })
+            .take_while(|_| {
+                let is_cancelled = cancel_token.is_cancelled();
+                async move { !is_cancelled }
             })
             .collect()
             .await;

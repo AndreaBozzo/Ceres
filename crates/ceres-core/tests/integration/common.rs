@@ -131,6 +131,16 @@ impl PortalClientFactory for MockPortalClientFactory {
 // MockDatasetStore
 // =============================================================================
 
+/// Records a call to record_sync_status
+#[derive(Clone, Debug)]
+pub struct SyncStatusRecord {
+    pub portal_url: String,
+    #[allow(dead_code)]
+    pub sync_mode: String,
+    pub sync_status: String,
+    pub datasets_synced: i32,
+}
+
 /// In-memory dataset store for testing.
 ///
 /// Stores datasets in a `HashMap` and provides full implementation of
@@ -139,6 +149,8 @@ impl PortalClientFactory for MockPortalClientFactory {
 pub struct MockDatasetStore {
     /// Stored datasets keyed by (source_portal, original_id)
     datasets: Arc<Mutex<HashMap<(String, String), StoredDataset>>>,
+    /// History of sync status records
+    pub sync_history: Arc<Mutex<Vec<SyncStatusRecord>>>,
 }
 
 /// Internal representation of a stored dataset.
@@ -152,6 +164,7 @@ impl MockDatasetStore {
     pub fn new() -> Self {
         Self {
             datasets: Arc::new(Mutex::new(HashMap::new())),
+            sync_history: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -294,13 +307,18 @@ impl DatasetStore for MockDatasetStore {
 
     async fn record_sync_status(
         &self,
-        _portal_url: &str,
+        portal_url: &str,
         _sync_time: DateTime<Utc>,
-        _sync_mode: &str,
-        _sync_status: &str,
-        _datasets_synced: i32,
+        sync_mode: &str,
+        sync_status: &str,
+        datasets_synced: i32,
     ) -> Result<(), AppError> {
-        // No-op for mock
+        self.sync_history.lock().unwrap().push(SyncStatusRecord {
+            portal_url: portal_url.to_string(),
+            sync_mode: sync_mode.to_string(),
+            sync_status: sync_status.to_string(),
+            datasets_synced,
+        });
         Ok(())
     }
 }
