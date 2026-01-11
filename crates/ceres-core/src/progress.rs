@@ -86,6 +86,26 @@ pub enum HarvestEvent<'a> {
         /// Aggregated summary of all portal results.
         summary: &'a BatchHarvestSummary,
     },
+
+    /// Single portal harvest was cancelled.
+    PortalCancelled {
+        /// Zero-based index of the current portal.
+        portal_index: usize,
+        /// Total number of portals in batch.
+        total_portals: usize,
+        /// Portal name identifier.
+        portal_name: &'a str,
+        /// Partial statistics at cancellation time.
+        stats: &'a SyncStats,
+    },
+
+    /// Batch harvest was cancelled.
+    BatchCancelled {
+        /// Number of portals completed before cancellation.
+        completed_portals: usize,
+        /// Total number of portals in batch.
+        total_portals: usize,
+    },
 }
 
 /// Trait for reporting harvest progress.
@@ -220,6 +240,32 @@ impl ProgressReporter for TracingReporter {
                     summary.failed_count()
                 );
             }
+            HarvestEvent::PortalCancelled {
+                portal_index,
+                total_portals,
+                portal_name,
+                stats,
+            } => {
+                info!(
+                    "[Portal {}/{}] {} cancelled: {} dataset(s) processed ({} created, {} updated, {} unchanged)",
+                    portal_index + 1,
+                    total_portals,
+                    portal_name,
+                    stats.total(),
+                    stats.created,
+                    stats.updated,
+                    stats.unchanged
+                );
+            }
+            HarvestEvent::BatchCancelled {
+                completed_portals,
+                total_portals,
+            } => {
+                info!(
+                    "Batch cancelled: {}/{} portal(s) completed before cancellation",
+                    completed_portals, total_portals
+                );
+            }
         }
     }
 }
@@ -279,6 +325,18 @@ mod tests {
 
         let summary = BatchHarvestSummary::new();
         reporter.report(HarvestEvent::BatchCompleted { summary: &summary });
+
+        // Test cancellation events
+        reporter.report(HarvestEvent::PortalCancelled {
+            portal_index: 0,
+            total_portals: 2,
+            portal_name: "test",
+            stats: &stats,
+        });
+        reporter.report(HarvestEvent::BatchCancelled {
+            completed_portals: 1,
+            total_portals: 3,
+        });
     }
 
     #[test]

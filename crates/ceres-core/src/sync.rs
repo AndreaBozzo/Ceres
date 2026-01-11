@@ -54,6 +54,80 @@ impl SyncStats {
     }
 }
 
+// =============================================================================
+// Sync Status and Result Types (for cancellation support)
+// =============================================================================
+
+/// Overall status of a sync operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncStatus {
+    /// Sync completed successfully with all datasets processed.
+    Completed,
+    /// Sync was cancelled but partial progress was saved.
+    Cancelled,
+}
+
+impl SyncStatus {
+    /// Returns the string representation for database storage.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SyncStatus::Completed => "completed",
+            SyncStatus::Cancelled => "cancelled",
+        }
+    }
+
+    /// Returns true if the sync was completed successfully.
+    pub fn is_completed(&self) -> bool {
+        matches!(self, SyncStatus::Completed)
+    }
+
+    /// Returns true if the sync was cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, SyncStatus::Cancelled)
+    }
+}
+
+/// Result of a sync operation including status and statistics.
+#[derive(Debug, Clone)]
+pub struct SyncResult {
+    /// The final status of the sync operation.
+    pub status: SyncStatus,
+    /// Statistics about processed datasets.
+    pub stats: SyncStats,
+    /// Optional message providing context (e.g., cancellation reason).
+    pub message: Option<String>,
+}
+
+impl SyncResult {
+    /// Creates a completed sync result.
+    pub fn completed(stats: SyncStats) -> Self {
+        Self {
+            status: SyncStatus::Completed,
+            stats,
+            message: None,
+        }
+    }
+
+    /// Creates a cancelled sync result with partial statistics.
+    pub fn cancelled(stats: SyncStats) -> Self {
+        Self {
+            status: SyncStatus::Cancelled,
+            stats,
+            message: Some("Operation cancelled - partial progress saved".to_string()),
+        }
+    }
+
+    /// Returns true if the sync was fully successful.
+    pub fn is_completed(&self) -> bool {
+        self.status.is_completed()
+    }
+
+    /// Returns true if the sync was cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.status.is_cancelled()
+    }
+}
+
 /// Thread-safe wrapper for [`SyncStats`] using atomic counters.
 ///
 /// This is useful for concurrent harvesting where multiple tasks
@@ -561,5 +635,60 @@ mod tests {
         let stats = AtomicSyncStats::default();
         let result = stats.to_stats();
         assert_eq!(result.total(), 0);
+    }
+
+    // =========================================================================
+    // SyncStatus tests
+    // =========================================================================
+
+    #[test]
+    fn test_sync_status_completed() {
+        let status = SyncStatus::Completed;
+        assert_eq!(status.as_str(), "completed");
+        assert!(status.is_completed());
+        assert!(!status.is_cancelled());
+    }
+
+    #[test]
+    fn test_sync_status_cancelled() {
+        let status = SyncStatus::Cancelled;
+        assert_eq!(status.as_str(), "cancelled");
+        assert!(!status.is_completed());
+        assert!(status.is_cancelled());
+    }
+
+    // =========================================================================
+    // SyncResult tests
+    // =========================================================================
+
+    #[test]
+    fn test_sync_result_completed() {
+        let stats = SyncStats {
+            unchanged: 10,
+            updated: 5,
+            created: 3,
+            failed: 0,
+        };
+        let result = SyncResult::completed(stats);
+        assert!(result.is_completed());
+        assert!(!result.is_cancelled());
+        assert!(result.message.is_none());
+        assert_eq!(result.stats.total(), 18);
+    }
+
+    #[test]
+    fn test_sync_result_cancelled() {
+        let stats = SyncStats {
+            unchanged: 5,
+            updated: 2,
+            created: 1,
+            failed: 0,
+        };
+        let result = SyncResult::cancelled(stats);
+        assert!(!result.is_completed());
+        assert!(result.is_cancelled());
+        assert!(result.message.is_some());
+        assert!(result.message.unwrap().contains("cancelled"));
+        assert_eq!(result.stats.total(), 8);
     }
 }

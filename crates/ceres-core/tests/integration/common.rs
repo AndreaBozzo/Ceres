@@ -297,6 +297,7 @@ impl DatasetStore for MockDatasetStore {
         _portal_url: &str,
         _sync_time: DateTime<Utc>,
         _sync_mode: &str,
+        _sync_status: &str,
         _datasets_synced: i32,
     ) -> Result<(), AppError> {
         // No-op for mock
