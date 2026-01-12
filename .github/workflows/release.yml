@@ -76,7 +76,15 @@ jobs:
         id: changelog
         run: |
           # Extract just the current version's changelog for GitHub Release
-          CHANGELOG=$(git-cliff --current --strip header)
+          if ! CHANGELOG=$(git-cliff --current --strip header); then
+            echo "::error::Failed to extract changelog with git-cliff"
+            exit 1
+          fi
+
+          if [[ -z "${CHANGELOG//[[:space:]]/}" ]]; then
+            echo "::error::git-cliff returned empty changelog content"
+            exit 1
+          fi
 
           # Handle multiline output
           {

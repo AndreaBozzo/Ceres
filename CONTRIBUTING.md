@@ -90,10 +90,10 @@ To preview the changelog locally before releasing:
 cargo install git-cliff
 
 # Preview unreleased changes
-git cliff --unreleased
+git-cliff --unreleased
 
 # Preview full changelog with a hypothetical new version
-git cliff --tag v0.2.0
+git-cliff --tag v0.2.0
 ```
 
 ### Version Format
