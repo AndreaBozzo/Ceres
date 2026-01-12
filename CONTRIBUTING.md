@@ -62,32 +62,39 @@ RUST_LOG=debug cargo run
 
 ## Releasing
 
-Releases are automated via GitHub Actions. To create a new release:
+Releases are automated via GitHub Actions using [git-cliff](https://git-cliff.org) for changelog generation.
 
-1. Update version in `Cargo.toml`:
-   ```toml
-   [workspace.package]
-   version = "X.Y.Z"
-   ```
+### Automated Release Process
 
-2. Update `CHANGELOG.md`:
-   - Move items from `[Unreleased]` to new version section
-   - Add date: `## [X.Y.Z] - YYYY-MM-DD`
+1. Go to **Actions > Prepare Release > Run workflow**
+2. Enter the version number (e.g., `0.2.0`)
+3. Optionally check "Dry run" to preview changes without committing
+4. The workflow will:
+   - Generate `CHANGELOG.md` from conventional commits
+   - Update version in `Cargo.toml`
+   - Commit and push the changes
 
-3. Commit changes:
+5. After the workflow completes, create and push the release tag:
    ```bash
-   git add Cargo.toml CHANGELOG.md
-   git commit -m "chore: prepare release vX.Y.Z"
-   git push
+   git pull && git tag vX.Y.Z && git push origin vX.Y.Z
    ```
 
-4. Create and push tag:
-   ```bash
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
-   ```
+6. Monitor the [Actions tab](https://github.com/AndreaBozzo/Ceres/actions) for the release workflow.
 
-5. Monitor the [Actions tab](https://github.com/AndreaBozzo/Ceres/actions) for the release workflow.
+### Local Changelog Preview
+
+To preview the changelog locally before releasing:
+
+```bash
+# Install git-cliff
+cargo install git-cliff
+
+# Preview unreleased changes
+git-cliff --unreleased
+
+# Preview full changelog with a hypothetical new version
+git-cliff --tag v0.2.0
+```
 
 ### Version Format
 

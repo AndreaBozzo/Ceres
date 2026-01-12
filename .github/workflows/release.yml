@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      changelog: ${{ steps.changelog.outputs.content }}
     steps:
       - name: Validate tag format
         id: version
@@ -40,6 +41,8 @@ jobs:
           echo "Validated version: $VERSION"
 
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Verify Cargo.toml version matches tag
         run: |
@@ -59,9 +62,36 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           if ! grep -q "## \[$VERSION\]" CHANGELOG.md; then
             echo "::error::No CHANGELOG entry found for version $VERSION"
+            echo "::error::Run the 'Prepare Release' workflow first, or manually update CHANGELOG.md"
             exit 1
           fi
           echo "CHANGELOG entry found for $VERSION"
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.7
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          # Extract just the current version's changelog for GitHub Release
+          if ! CHANGELOG=$(git-cliff --current --strip header); then
+            echo "::error::Failed to extract changelog with git-cliff"
+            exit 1
+          fi
+
+          if [[ -z "${CHANGELOG//[[:space:]]/}" ]]; then
+            echo "::error::git-cliff returned empty changelog content"
+            exit 1
+          fi
+
+          # Handle multiline output
+          {
+            echo 'content<<EOF'
+            echo "$CHANGELOG"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
   test:
     name: Test Suite
@@ -185,7 +215,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: publish
+    needs: [validate, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -195,7 +225,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body: ${{ needs.validate.outputs.changelog }}
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

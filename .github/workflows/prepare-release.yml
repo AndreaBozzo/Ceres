@@ -1,0 +1,116 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.2.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (do not commit changes)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version format
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: $VERSION"
+            echo "::error::Expected format: X.Y.Z (e.g., 0.2.0)"
+            exit 1
+          fi
+          echo "Version validated: $VERSION"
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.7
+
+      - name: Generate CHANGELOG
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+
+          # Generate changelog with the new version tag
+          git-cliff --tag "v${VERSION}" -o CHANGELOG.md
+
+          echo "Generated CHANGELOG.md:"
+          head -100 CHANGELOG.md
+
+      - name: Update Cargo.toml versions
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+
+          # Update workspace version
+          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+
+          # Update internal crate dependencies
+          sed -i "s/ceres-core = { version = \".*\"/ceres-core = { version = \"${VERSION}\"/" Cargo.toml
+          sed -i "s/ceres-client = { version = \".*\"/ceres-client = { version = \"${VERSION}\"/" Cargo.toml
+          sed -i "s/ceres-db = { version = \".*\"/ceres-db = { version = \"${VERSION}\"/" Cargo.toml
+
+          # Update Cargo.lock
+          cargo check --quiet 2>/dev/null || true
+
+          echo "Updated versions in Cargo.toml"
+          grep -A5 "\[workspace.package\]" Cargo.toml
+
+      - name: Show changes
+        run: |
+          echo "=== Changes to be committed ==="
+          git diff
+          git status
+
+      - name: Commit and push changes
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+
+          git add CHANGELOG.md Cargo.toml Cargo.lock
+          git commit -m "chore(release): prepare v${VERSION}"
+          git push origin master
+
+          echo ""
+          echo "=========================================="
+          echo "Changes committed and pushed successfully!"
+          echo "=========================================="
+          echo ""
+          echo "Next steps:"
+          echo "1. Review the changes on GitHub"
+          echo "2. Create and push the release tag:"
+          echo ""
+          echo "   git pull && git tag v${VERSION} && git push origin v${VERSION}"
+          echo ""
+
+      - name: Dry run summary
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "DRY RUN - No changes committed"
+          echo "=========================================="
+          echo ""
+          echo "Changes that would be committed:"
+          git diff --stat
