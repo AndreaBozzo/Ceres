@@ -19,7 +19,7 @@ pub enum SyncOutcome {
 }
 
 /// Statistics for a portal sync operation.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SyncStats {
     pub unchanged: usize,
     pub updated: usize,

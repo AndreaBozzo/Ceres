@@ -44,11 +44,14 @@
 pub mod config;
 pub mod error;
 pub mod harvest;
+pub mod job;
+pub mod job_queue;
 pub mod models;
 pub mod progress;
 pub mod search;
 pub mod sync;
 pub mod traits;
+pub mod worker;
 
 // Configuration
 pub use config::{
@@ -77,3 +80,12 @@ pub use traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFact
 // Services (generic over trait implementations)
 pub use harvest::HarvestService;
 pub use search::SearchService;
+
+// Job queue types
+pub use job::{CreateJobRequest, HarvestJob, JobStatus, RetryConfig, WorkerConfig};
+pub use job_queue::JobQueue;
+
+// Worker service
+pub use worker::{
+    SilentWorkerReporter, TracingWorkerReporter, WorkerEvent, WorkerReporter, WorkerService,
+};

@@ -5,12 +5,12 @@
 //!
 //! # Overview
 //!
-//! The main component is [`DatasetRepository`], which provides methods for:
-//! - Upserting datasets
-//! - Retrieving datasets by ID
-//! - Semantic search using vector similarity
-//! - Database statistics
+//! The main components are:
+//! - [`DatasetRepository`] - Dataset persistence with vector embeddings
+//! - [`JobRepository`] - Persistent job queue for harvest tasks
 
+mod job_repository;
 mod repository;
 
+pub use job_repository::JobRepository;
 pub use repository::{DatasetRepository, PortalSyncStatus};

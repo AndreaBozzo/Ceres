@@ -1,5 +1,9 @@
 # Makefile for Ceres
 
+# Load .env file if it exists
+-include .env
+export
+
 .PHONY: help build test fmt clippy clean docker-up docker-down migrate
 
 help: ## Show this help message
