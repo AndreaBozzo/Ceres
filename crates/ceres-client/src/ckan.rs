@@ -2,7 +2,7 @@
 //!
 //! # Future Extensions
 //!
-//! TODO: Add support for other portal types (roadmap v0.2):
+//! TODO: Add support for other portal types (roadmap v0.3+):
 //! - Socrata API (used by many US cities): <https://dev.socrata.com/>
 //! - DCAT-AP harvester for EU portals: <https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe>
 //!
