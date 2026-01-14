@@ -103,7 +103,9 @@ $ ceres stats
 
 - **CKAN Harvester** — Fetch datasets from any CKAN-compatible portal
 - **Multi-portal Batch Harvest** — Configure multiple portals in `portals.toml` and harvest them all at once
-- **Delta Harvesting** — Only regenerate embeddings for changed datasets (99.8% API cost savings)
+- **Delta Detection** — Only regenerate embeddings for changed datasets (99.8% API cost savings)
+- **Persistent Jobs** — Recoverable database-backed job queue with automatic retries and exponential backoff
+- **Graceful Shutdown** — Safely interrupt harvesting to ensure data consistency and release in-progress jobs back to the queue
 - **Real-time Progress** — Live progress reporting during harvest with batch timestamp updates
 - **Semantic Search** — Find datasets by meaning using Gemini embeddings
 - **Multi-format Export** — Export to JSON, JSON Lines, or CSV
@@ -177,16 +179,16 @@ cargo build --release
 # Start PostgreSQL with pgvector
 docker-compose up -d
 
+# Configure environment
+cp .env.example .env
+# Edit .env with your Gemini API key
+
 # Run database migrations
 make migrate
 
 # Or manually with psql if you prefer
 # psql postgresql://ceres_user:password@localhost:5432/ceres_db \
 #   -f migrations/202511290001_init.sql
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your Gemini API key
 ```
 
 > **💡 Tip**: This project includes a Makefile with convenient shortcuts. Run `make help` to see all available commands.
@@ -198,6 +200,7 @@ cp .env.example .env
 ```bash
 ceres harvest https://dati.comune.milano.it
 ```
+> **💡 Tip**: Running the first harvest commands fails and generates a pre-configured portals.toml if you didn't set it up before, now you can just run it again!
 
 ### Search indexed datasets
 
@@ -289,13 +292,16 @@ make help
 
 ### v0.1 — Enhancements ✅
 - Portals configuration from `portals.toml`
-- Delta harvesting
+- Delta detection
 - Improved error handling and retry logic
 
 ### v0.2 — Multi-portal & API
 - Incremental harvesting (time-based metadata filtering)
 - REST API
 - Graceful shutdown
+- Persistent jobs
+- Streaming export/search
+
 ### Future
 - Multilingual embeddings (E5-multilingual)
 - Cross-language search
@@ -305,7 +311,7 @@ make help
 - Switchable embedding providers
 - Schema-level search
 - Data quality scoring
-
+- Multi-tenant
 ## Contributing
 
 Contributions are welcome! This project is in early stages, so there's plenty of room to shape its direction.
