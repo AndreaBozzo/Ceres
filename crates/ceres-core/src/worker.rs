@@ -295,6 +295,7 @@ where
                 &job.portal_url,
                 harvest_reporter,
                 job_cancel.clone(),
+                job.force_full_sync,
             )
             .await;
 
