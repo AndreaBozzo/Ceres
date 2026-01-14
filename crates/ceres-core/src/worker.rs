@@ -291,7 +291,7 @@ where
         // Execute the harvest with cancellation support
         let result = self
             .harvest_service
-            .sync_portal_with_progress_cancellable(
+            .sync_portal_with_progress_cancellable_with_options(
                 &job.portal_url,
                 harvest_reporter,
                 job_cancel.clone(),

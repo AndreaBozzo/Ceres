@@ -580,8 +580,13 @@ where
         portal_url: &str,
         cancel_token: CancellationToken,
     ) -> Result<SyncResult, AppError> {
-        self.sync_portal_with_progress_cancellable(portal_url, &SilentReporter, cancel_token)
-            .await
+        self.sync_portal_with_progress_cancellable_internal(
+            portal_url,
+            &SilentReporter,
+            cancel_token,
+            self.config.force_full_sync,
+        )
+        .await
     }
 
     /// Synchronizes a single portal with progress reporting and cancellation support.
@@ -593,6 +598,41 @@ where
         portal_url: &str,
         reporter: &R,
         cancel_token: CancellationToken,
+    ) -> Result<SyncResult, AppError> {
+        self.sync_portal_with_progress_cancellable_internal(
+            portal_url,
+            reporter,
+            cancel_token,
+            self.config.force_full_sync,
+        )
+        .await
+    }
+
+    /// Synchronizes a single portal with cancellation support, allowing
+    /// a per-call override of the `force_full_sync` flag.
+    pub async fn sync_portal_with_progress_cancellable_with_options<R: ProgressReporter>(
+        &self,
+        portal_url: &str,
+        reporter: &R,
+        cancel_token: CancellationToken,
+        force_full_sync: bool,
+    ) -> Result<SyncResult, AppError> {
+        let force_full_sync = self.config.force_full_sync || force_full_sync;
+        self.sync_portal_with_progress_cancellable_internal(
+            portal_url,
+            reporter,
+            cancel_token,
+            force_full_sync,
+        )
+        .await
+    }
+
+    async fn sync_portal_with_progress_cancellable_internal<R: ProgressReporter>(
+        &self,
+        portal_url: &str,
+        reporter: &R,
+        cancel_token: CancellationToken,
+        force_full_sync: bool,
     ) -> Result<SyncResult, AppError> {
         let sync_start = Utc::now();
 
@@ -623,6 +663,7 @@ where
                 &portal_client,
                 reporter,
                 &cancel_token,
+                force_full_sync,
             )
             .await?;
 
@@ -853,8 +894,9 @@ where
         portal_client: &F::Client,
         reporter: &R,
         cancel_token: &CancellationToken,
+        force_full_sync: bool,
     ) -> Result<(SyncMode, Vec<<F::Client as PortalClient>::PortalData>), AppError> {
-        if self.config.force_full_sync {
+        if force_full_sync {
             tracing::info!(portal = portal_url, "Force full sync requested");
             return self
                 .do_full_sync_cancellable(portal_url, portal_client, reporter, cancel_token)
