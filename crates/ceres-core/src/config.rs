@@ -155,7 +155,7 @@ pub struct PortalEntry {
 
     /// Base URL of the CKAN portal.
     ///
-    /// Example: "https://dati.comune.milano.it"
+    /// Example: "<https://dati.comune.milano.it>"
     pub url: String,
 
     /// Portal type: "ckan", "socrata", or "dcat".
