@@ -7,7 +7,7 @@
     <meta name="description" content="Semantic search engine for open data portals">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -18,7 +18,7 @@
             line-height: 1.6;
         }
 
-        a { color: inherit; }
+        a { color: inherit; text-decoration: none; }
 
         .container {
             max-width: 720px;
@@ -27,34 +27,55 @@
         }
 
         header {
-            padding: 48px 0 32px;
+            padding: 64px 0 48px;
             border-bottom: 1px solid #e5e5e5;
         }
 
         header h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-bottom: 8px;
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #4a5568 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
-        header p {
+        header .tagline {
+            font-size: 1.25rem;
             color: #666;
+            margin-bottom: 32px;
         }
 
         nav {
-            margin-top: 24px;
             display: flex;
-            gap: 24px;
-            font-size: 0.9rem;
+            gap: 32px;
+            font-size: 0.95rem;
         }
 
         nav a {
             color: #666;
-            text-decoration: none;
+            position: relative;
+            transition: color 0.3s ease;
+        }
+
+        nav a::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: #3b82f6;
+            transition: width 0.3s ease;
         }
 
         nav a:hover {
-            color: #1a1a1a;
+            color: #3b82f6;
+        }
+
+        nav a:hover::after {
+            width: 100%;
         }
 
         main {
@@ -62,7 +83,37 @@
         }
 
         section {
-            margin-bottom: 48px;
+            margin-bottom: 64px;
+        }
+
+        @media (prefers-reduced-motion: no-preference) {
+            section {
+                opacity: 0;
+                transform: translateY(20px);
+                animation: fadeInUp 0.6s ease forwards;
+            }
+
+            section:nth-child(1) { animation-delay: 0.1s; }
+            section:nth-child(2) { animation-delay: 0.2s; }
+            section:nth-child(3) { animation-delay: 0.3s; }
+            section:nth-child(4) { animation-delay: 0.4s; }
+            section:nth-child(5) { animation-delay: 0.5s; }
+            section:nth-child(6) { animation-delay: 0.6s; }
+            section:nth-child(7) { animation-delay: 0.7s; }
+
+            @keyframes fadeInUp {
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            section {
+                opacity: 1;
+                transform: none;
+            }
         }
 
         h2 {
@@ -70,8 +121,8 @@
             font-weight: 500;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            color: #999;
-            margin-bottom: 16px;
+            color: #3b82f6;
+            margin-bottom: 20px;
         }
 
         p + p {
@@ -80,10 +131,53 @@
 
         .terminal {
             background: #1a1a1a;
-            border-radius: 6px;
-            padding: 20px;
+            border-radius: 8px;
+            padding: 24px;
             margin: 24px 0;
             overflow-x: auto;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+            position: relative;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .terminal:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 32px rgba(59, 130, 246, 0.15);
+        }
+
+        .terminal::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 32px;
+            background: #2a2a2a;
+            border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid #333;
+        }
+
+        .terminal-dots {
+            position: absolute;
+            top: 12px;
+            left: 16px;
+            display: flex;
+            gap: 8px;
+            z-index: 1;
+        }
+
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .terminal-dot:nth-child(1) { background: #ff5f56; }
+        .terminal-dot:nth-child(2) { background: #ffbd2e; }
+        .terminal-dot:nth-child(3) { background: #27c93f; }
+
+        .terminal-content {
+            margin-top: 32px;
         }
 
         .terminal code {
@@ -91,29 +185,71 @@
             font-size: 0.85rem;
             color: #e5e5e5;
             line-height: 1.8;
+            display: block;
         }
 
         .terminal .prompt { color: #888; }
         .terminal .cmd { color: #fff; }
         .terminal .out { color: #888; }
-        .terminal .hl { color: #7dd3fc; }
-        .terminal .ok { color: #86efac; }
+        .terminal .hl { 
+            color: #7dd3fc;
+            font-weight: 500;
+        }
+        .terminal .ok { 
+            color: #86efac;
+        }
+
+        @media (prefers-reduced-motion: no-preference) {
+            .terminal .ok {
+                animation: pulse 1.5s ease-in-out infinite;
+            }
+
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.6; }
+            }
+        }
+
+        .terminal .typing-line {
+            opacity: 0;
+            animation: typingFade 0.3s ease forwards;
+        }
+
+        @keyframes typingFade {
+            to { opacity: 1; }
+        }
 
         .cols {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 32px;
+            gap: 24px;
             margin: 24px 0;
         }
 
         @media (max-width: 600px) {
             .cols { grid-template-columns: 1fr; }
+            header h1 { font-size: 2rem; }
+        }
+
+        .col {
+            background: white;
+            padding: 24px;
+            border-radius: 8px;
+            border: 1px solid #e5e5e5;
+            transition: all 0.3s ease;
+        }
+
+        .col:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+            transform: translateY(-2px);
         }
 
         .col h3 {
-            font-size: 0.95rem;
+            font-size: 1rem;
             font-weight: 600;
-            margin-bottom: 8px;
+            margin-bottom: 12px;
+            color: #1a1a1a;
         }
 
         .col p, .col ul {
@@ -126,17 +262,18 @@
         }
 
         .col li {
-            margin: 4px 0;
+            margin: 6px 0;
         }
 
         pre {
-            background: #f0f0f0;
-            border-radius: 4px;
-            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 20px;
             font-family: 'IBM Plex Mono', monospace;
             font-size: 0.8rem;
             overflow-x: auto;
             margin: 16px 0;
+            border: 1px solid #e5e5e5;
         }
 
         .arch {
@@ -145,8 +282,14 @@
 
         .arch img {
             max-width: 100%;
-            border-radius: 4px;
+            border-radius: 8px;
             border: 1px solid #e5e5e5;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .arch img:hover {
+            transform: scale(1.02);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
         }
 
         footer {
@@ -158,6 +301,35 @@
 
         footer a {
             color: #666;
+            transition: color 0.3s ease;
+        }
+
+        footer a:hover {
+            color: #3b82f6;
+        }
+
+        .try-demo-btn {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 10px 20px;
+            background: #3b82f6;
+            color: white;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.3s ease;
+        }
+
+        .try-demo-btn:hover {
+            background: #2563eb;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
+        .try-demo-btn:active {
+            transform: translateY(0);
         }
     </style>
 </head>
@@ -165,7 +337,7 @@
     <div class="container">
         <header>
             <h1>Ceres</h1>
-            <p>Semantic search engine for open data portals</p>
+            <p class="tagline">Semantic search engine for open data portals</p>
             <nav>
                 <a href="https://github.com/AndreaBozzo/Ceres">GitHub</a>
                 <a href="https://github.com/AndreaBozzo/Ceres/blob/master/README.md">Docs</a>
@@ -187,17 +359,27 @@
 
             <section>
                 <h2>Demo</h2>
-                <div class="terminal"><code><span class="prompt">$</span> <span class="cmd">ceres harvest https://dati.comune.milano.it</span>
+                <div class="terminal">
+                    <div class="terminal-dots">
+                        <div class="terminal-dot"></div>
+                        <div class="terminal-dot"></div>
+                        <div class="terminal-dot"></div>
+                    </div>
+                    <div class="terminal-content">
+                        <code><span class="prompt">$</span> <span class="cmd">ceres harvest https://dati.comune.milano.it</span>
 
-<span class="out">Fetching package list...</span>
-<span class="out">Found 2575 datasets</span>
-<span class="ok">✓</span> <span class="out">Harvesting complete: 2575 indexed</span>
+<span class="out typing-line">Fetching package list...</span>
+<span class="out typing-line">Found 2575 datasets</span>
+<span class="ok typing-line">✓</span> <span class="out typing-line">Harvesting complete: 2575 indexed</span>
 
 <span class="prompt">$</span> <span class="cmd">ceres search "trasporto pubblico"</span>
 
-<span class="hl">78%</span>  TPL - Percorsi linee di superficie
-<span class="hl">76%</span>  TPL - Fermate linee di superficie  
-<span class="hl">72%</span>  Mobilità: flussi veicolari</code></div>
+<span class="hl typing-line">78%</span>  <span class="typing-line">TPL - Percorsi linee di superficie</span>
+<span class="hl typing-line">76%</span>  <span class="typing-line">TPL - Fermate linee di superficie</span>  
+<span class="hl typing-line">72%</span>  <span class="typing-line">Mobilità: flussi veicolari</span></code>
+                    </div>
+                </div>
+                <button class="try-demo-btn" onclick="animateTerminal()">Run Demo Again</button>
             </section>
 
             <section>
@@ -275,5 +457,19 @@ cargo build --release
             <p>Apache 2.0 · <a href="https://github.com/AndreaBozzo/Ceres">Source</a> · Named after the Roman goddess of harvest</p>
         </footer>
     </div>
+
+    <script>
+        function animateTerminal() {
+            const lines = document.querySelectorAll('.terminal .typing-line');
+            lines.forEach((line, index) => {
+                line.style.animation = 'none';
+                setTimeout(() => {
+                    line.style.animation = '';
+                }, 10);
+            });
+        }
+
+        window.addEventListener('load', animateTerminal);
+    </script>
 </body>
 </html>
