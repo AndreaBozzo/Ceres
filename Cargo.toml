@@ -3,7 +3,7 @@ members = [
     "crates/ceres-cli",
     "crates/ceres-core",
     "crates/ceres-db",
-    "crates/ceres-client",
+    "crates/ceres-client", "crates/ceres-server",
 ]
 resolver = "2"
 
