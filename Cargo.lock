@@ -465,6 +465,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ceres-server"
+version = "0.1.1"
+
+[[package]]
 name = "cesu8"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
