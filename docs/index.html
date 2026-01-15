@@ -84,23 +84,35 @@
 
         section {
             margin-bottom: 64px;
-            opacity: 0;
-            transform: translateY(20px);
-            animation: fadeInUp 0.6s ease forwards;
         }
 
-        section:nth-child(1) { animation-delay: 0.1s; }
-        section:nth-child(2) { animation-delay: 0.2s; }
-        section:nth-child(3) { animation-delay: 0.3s; }
-        section:nth-child(4) { animation-delay: 0.4s; }
-        section:nth-child(5) { animation-delay: 0.5s; }
-        section:nth-child(6) { animation-delay: 0.6s; }
-        section:nth-child(7) { animation-delay: 0.7s; }
+        @media (prefers-reduced-motion: no-preference) {
+            section {
+                opacity: 0;
+                transform: translateY(20px);
+                animation: fadeInUp 0.6s ease forwards;
+            }
 
-        @keyframes fadeInUp {
-            to {
+            section:nth-child(1) { animation-delay: 0.1s; }
+            section:nth-child(2) { animation-delay: 0.2s; }
+            section:nth-child(3) { animation-delay: 0.3s; }
+            section:nth-child(4) { animation-delay: 0.4s; }
+            section:nth-child(5) { animation-delay: 0.5s; }
+            section:nth-child(6) { animation-delay: 0.6s; }
+            section:nth-child(7) { animation-delay: 0.7s; }
+
+            @keyframes fadeInUp {
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            section {
                 opacity: 1;
-                transform: translateY(0);
+                transform: none;
             }
         }
 
@@ -185,12 +197,17 @@
         }
         .terminal .ok { 
             color: #86efac;
-            animation: pulse 1.5s ease-in-out infinite;
         }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
+        @media (prefers-reduced-motion: no-preference) {
+            .terminal .ok {
+                animation: pulse 1.5s ease-in-out infinite;
+            }
+
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.6; }
+            }
         }
 
         .terminal .typing-line {
