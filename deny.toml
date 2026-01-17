@@ -212,6 +212,28 @@ deny = [
 skip = [
     #"ansi_term@0.11.0",
     #{ crate = "ansi_term@0.11.0", reason = "you can specify a reason why it can't be updated/removed" },
+    # These are silenced as they are transitive dependencies with version fragmentation
+    # that cannot be easily unified without breaking core dependencies (like ring, sqlx, or tonic).
+    "core-foundation",
+    "getrandom",
+    "hashbrown",
+    "thiserror",
+    "thiserror-impl",
+    "webpki-roots",
+    "windows-core",
+    "windows-implement",
+    "windows-interface",
+    "windows-result",
+    "windows-targets",
+    "windows-sys",
+    "windows_aarch64_gnullvm",
+    "windows_aarch64_msvc",
+    "windows_i686_gnu",
+    "windows_i686_gnullvm",
+    "windows_i686_msvc",
+    "windows_x86_64_gnu",
+    "windows_x86_64_gnullvm",
+    "windows_x86_64_msvc",
 ]
 # Similarly to `skip` allows you to skip certain crates during duplicate
 # detection. Unlike skip, it also includes the entire tree of transitive
