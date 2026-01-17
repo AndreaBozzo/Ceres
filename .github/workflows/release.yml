@@ -137,9 +137,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ceres_test
 
       - name: Security audit
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
+        uses: EmbarkStudios/cargo-deny-action@v2
 
   dry-run:
     name: Publish Dry Run
