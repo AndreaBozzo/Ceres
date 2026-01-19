@@ -59,6 +59,10 @@ struct SyncStatsJson {
     updated: usize,
     created: usize,
     failed: usize,
+    /// Number of datasets skipped due to circuit breaker.
+    /// Default to 0 for backwards compatibility with old records.
+    #[serde(default)]
+    skipped: usize,
 }
 
 impl From<&SyncStats> for SyncStatsJson {
@@ -68,6 +72,7 @@ impl From<&SyncStats> for SyncStatsJson {
             updated: stats.updated,
             created: stats.created,
             failed: stats.failed,
+            skipped: stats.skipped,
         }
     }
 }
@@ -79,6 +84,7 @@ impl From<SyncStatsJson> for SyncStats {
             updated: json.updated,
             created: json.created,
             failed: json.failed,
+            skipped: json.skipped,
         }
     }
 }
@@ -362,6 +368,7 @@ mod tests {
             updated: 5,
             created: 3,
             failed: 2,
+            skipped: 1,
         };
 
         let json = SyncStatsJson::from(&stats);
@@ -369,12 +376,22 @@ mod tests {
         assert_eq!(json.updated, 5);
         assert_eq!(json.created, 3);
         assert_eq!(json.failed, 2);
+        assert_eq!(json.skipped, 1);
 
         let back: SyncStats = json.into();
         assert_eq!(back.unchanged, stats.unchanged);
         assert_eq!(back.updated, stats.updated);
         assert_eq!(back.created, stats.created);
         assert_eq!(back.failed, stats.failed);
+        assert_eq!(back.skipped, stats.skipped);
+    }
+
+    #[test]
+    fn test_sync_stats_json_backwards_compatibility() {
+        // Test deserialization of old records without skipped field
+        let old_json = r#"{"unchanged":10,"updated":5,"created":3,"failed":2}"#;
+        let json: SyncStatsJson = serde_json::from_str(old_json).unwrap();
+        assert_eq!(json.skipped, 0); // Should default to 0
     }
 
     #[test]

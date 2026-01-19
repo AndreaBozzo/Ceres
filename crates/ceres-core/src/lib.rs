@@ -41,6 +41,7 @@
 //! let results = search.search("climate data", 10).await?;
 //! ```
 
+pub mod circuit_breaker;
 pub mod config;
 pub mod error;
 pub mod harvest;
@@ -52,6 +53,11 @@ pub mod search;
 pub mod sync;
 pub mod traits;
 pub mod worker;
+
+// Circuit breaker
+pub use circuit_breaker::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerStats, CircuitState,
+};
 
 // Configuration
 pub use config::{

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::circuit_breaker::CircuitBreakerConfig;
 use crate::error::AppError;
 
 /// Database connection pool configuration.
@@ -61,6 +62,8 @@ pub struct SyncConfig {
     pub concurrency: usize,
     /// Force full sync even if incremental sync is available.
     pub force_full_sync: bool,
+    /// Circuit breaker configuration for API resilience.
+    pub circuit_breaker: CircuitBreakerConfig,
 }
 
 impl Default for SyncConfig {
@@ -69,6 +72,7 @@ impl Default for SyncConfig {
         Self {
             concurrency: 10,
             force_full_sync: false,
+            circuit_breaker: CircuitBreakerConfig::default(),
         }
     }
 }
@@ -77,6 +81,12 @@ impl SyncConfig {
     /// Creates a new SyncConfig with force_full_sync enabled.
     pub fn with_full_sync(mut self) -> Self {
         self.force_full_sync = true;
+        self
+    }
+
+    /// Creates a new SyncConfig with custom circuit breaker configuration.
+    pub fn with_circuit_breaker(mut self, config: CircuitBreakerConfig) -> Self {
+        self.circuit_breaker = config;
         self
     }
 }

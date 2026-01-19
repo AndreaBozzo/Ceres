@@ -22,11 +22,14 @@
 //! - **Fallback**: If incremental sync fails, automatically falls back to full sync.
 //! - **Force Full Sync**: Use `--full-sync` flag to bypass incremental harvesting.
 //!
-//! TODO(robustness): Add circuit breaker pattern for API failures
-//! Currently no backpressure when Gemini/CKAN APIs fail repeatedly.
-//! Consider: (1) Stop after N consecutive failures
-//! (2) Exponential backoff on rate limits
-//! (3) Health check before continuing after failure spike
+//! # Circuit Breaker
+//!
+//! The service uses a circuit breaker pattern to protect against cascading failures
+//! when external APIs (Gemini for embeddings) experience issues. The circuit breaker:
+//! - Opens after N consecutive failures (configurable via `CircuitBreakerConfig`)
+//! - Applies exponential backoff on rate limits (HTTP 429)
+//! - Transitions through Closed -> Open -> HalfOpen -> Closed states
+//! - Skips datasets when open (recorded as `SyncOutcome::Skipped`)
 //!
 //! TODO(performance): Batch embedding API calls
 //! Each dataset embedding is generated individually. Gemini API may support
@@ -61,6 +64,7 @@ use pgvector::Vector;
 
 use tokio_util::sync::CancellationToken;
 
+use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError, CircuitState};
 use crate::progress::{HarvestEvent, ProgressReporter, SilentReporter};
 use crate::sync::{AtomicSyncStats, SyncOutcome, SyncResult, SyncStatus};
 use crate::traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFactory};
@@ -261,6 +265,22 @@ where
         let processed_count = Arc::new(AtomicUsize::new(0));
         let last_reported = Arc::new(AtomicUsize::new(0));
 
+        // Create circuit breaker for embedding API resilience
+        let circuit_breaker = CircuitBreaker::new("gemini", self.config.circuit_breaker.clone());
+
+        // Check if circuit breaker is already open from a previous run
+        if circuit_breaker.state() == CircuitState::Open {
+            let cb_stats = circuit_breaker.stats();
+            reporter.report(HarvestEvent::CircuitBreakerOpen {
+                service: "gemini",
+                retry_after: cb_stats.time_until_half_open.unwrap_or_default(),
+            });
+            tracing::warn!(
+                portal = portal_url,
+                "Embedding service circuit breaker is already open"
+            );
+        }
+
         // Report progress every 5% or minimum 50 items
         let report_interval = std::cmp::max(total / 20, 50);
 
@@ -273,6 +293,7 @@ where
                 let existing_hashes = existing_hashes.clone();
                 let stats = Arc::clone(&stats);
                 let unchanged_ids = Arc::clone(&unchanged_ids);
+                let circuit_breaker = circuit_breaker.clone();
 
                 async move {
                     let mut new_dataset = F::Client::into_new_dataset(portal_data, &portal_url);
@@ -293,8 +314,8 @@ where
                         SyncOutcome::Updated | SyncOutcome::Created => {
                             // Continue to embedding generation
                         }
-                        SyncOutcome::Failed => {
-                            unreachable!("needs_reprocessing never returns Failed")
+                        SyncOutcome::Failed | SyncOutcome::Skipped => {
+                            unreachable!("needs_reprocessing never returns Failed or Skipped")
                         }
                     }
 
@@ -306,11 +327,25 @@ where
                         );
 
                         if !combined_text.trim().is_empty() {
-                            match embedding.generate(&combined_text).await {
+                            // Use circuit breaker to protect embedding generation
+                            match circuit_breaker
+                                .call(|| embedding.generate(&combined_text))
+                                .await
+                            {
                                 Ok(emb) => {
                                     new_dataset.embedding = Some(Vector::from(emb));
                                 }
-                                Err(e) => {
+                                Err(CircuitBreakerError::Open { retry_after, .. }) => {
+                                    // Circuit is open - skip this dataset
+                                    tracing::debug!(
+                                        dataset_id = %new_dataset.original_id,
+                                        retry_after_secs = retry_after.as_secs(),
+                                        "Skipping dataset - circuit breaker open"
+                                    );
+                                    stats.record(SyncOutcome::Skipped);
+                                    return Ok(());
+                                }
+                                Err(CircuitBreakerError::Inner(e)) => {
                                     stats.record(SyncOutcome::Failed);
                                     return Err(AppError::Generic(format!(
                                         "Failed to generate embedding: {e}"
@@ -352,6 +387,7 @@ where
                         updated: current_stats.updated,
                         unchanged: current_stats.unchanged,
                         failed: current_stats.failed,
+                        skipped: current_stats.skipped,
                     });
                 }
             })
@@ -718,6 +754,9 @@ where
         let last_reported = Arc::new(AtomicUsize::new(0));
         let was_cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+        // Create circuit breaker for embedding API resilience
+        let circuit_breaker = CircuitBreaker::new("gemini", self.config.circuit_breaker.clone());
+
         let report_interval = std::cmp::max(total / 20, 50);
 
         // Process datasets with cancellation checks
@@ -731,6 +770,7 @@ where
                 let unchanged_ids = Arc::clone(&unchanged_ids);
                 let cancel_token = cancel_token.clone();
                 let was_cancelled = Arc::clone(&was_cancelled);
+                let circuit_breaker = circuit_breaker.clone();
 
                 async move {
                     // Check cancellation before processing each item
@@ -756,8 +796,8 @@ where
                         SyncOutcome::Updated | SyncOutcome::Created => {
                             // Continue to embedding generation
                         }
-                        SyncOutcome::Failed => {
-                            unreachable!("needs_reprocessing never returns Failed")
+                        SyncOutcome::Failed | SyncOutcome::Skipped => {
+                            unreachable!("needs_reprocessing never returns Failed or Skipped")
                         }
                     }
 
@@ -775,11 +815,25 @@ where
                         );
 
                         if !combined_text.trim().is_empty() {
-                            match embedding.generate(&combined_text).await {
+                            // Use circuit breaker to protect embedding generation
+                            match circuit_breaker
+                                .call(|| embedding.generate(&combined_text))
+                                .await
+                            {
                                 Ok(emb) => {
                                     new_dataset.embedding = Some(Vector::from(emb));
                                 }
-                                Err(e) => {
+                                Err(CircuitBreakerError::Open { retry_after, .. }) => {
+                                    // Circuit is open - skip this dataset
+                                    tracing::debug!(
+                                        dataset_id = %new_dataset.original_id,
+                                        retry_after_secs = retry_after.as_secs(),
+                                        "Skipping dataset - circuit breaker open"
+                                    );
+                                    stats.record(SyncOutcome::Skipped);
+                                    return Ok(());
+                                }
+                                Err(CircuitBreakerError::Inner(e)) => {
                                     stats.record(SyncOutcome::Failed);
                                     return Err(AppError::Generic(format!(
                                         "Failed to generate embedding: {e}"
@@ -820,6 +874,7 @@ where
                         updated: current_stats.updated,
                         unchanged: current_stats.unchanged,
                         failed: current_stats.failed,
+                        skipped: current_stats.skipped,
                     });
                 }
             })

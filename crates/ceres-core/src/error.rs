@@ -278,6 +278,64 @@ impl AppError {
             _ => false,
         }
     }
+
+    /// Returns true if this error should trip the circuit breaker.
+    ///
+    /// Transient errors (network issues, timeouts, rate limits, server errors)
+    /// should trip the circuit breaker. Non-transient errors (authentication,
+    /// quota exceeded, invalid data) should NOT trip the circuit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ceres_core::error::{AppError, GeminiErrorKind, GeminiErrorDetails};
+    ///
+    /// // Network errors trip the circuit
+    /// let err = AppError::NetworkError("connection reset".to_string());
+    /// assert!(err.should_trip_circuit());
+    ///
+    /// // Authentication errors do NOT trip the circuit
+    /// let err = AppError::GeminiError(GeminiErrorDetails::new(
+    ///     GeminiErrorKind::Authentication,
+    ///     "Invalid API key".to_string(),
+    ///     401,
+    /// ));
+    /// assert!(!err.should_trip_circuit());
+    /// ```
+    pub fn should_trip_circuit(&self) -> bool {
+        match self {
+            // Transient errors - should trip circuit
+            AppError::NetworkError(_) | AppError::Timeout(_) | AppError::RateLimitExceeded => true,
+
+            // Client errors are often transient (timeouts, connection issues)
+            AppError::ClientError(msg) => {
+                msg.contains("timeout")
+                    || msg.contains("timed out")
+                    || msg.contains("connect")
+                    || msg.contains("connection")
+            }
+
+            // Gemini errors - only transient ones
+            AppError::GeminiError(details) => matches!(
+                details.kind,
+                GeminiErrorKind::RateLimit
+                    | GeminiErrorKind::NetworkError
+                    | GeminiErrorKind::ServerError
+            ),
+
+            // Non-transient errors - should NOT trip circuit
+            // Authentication, quota, validation errors indicate configuration
+            // problems, not temporary service issues
+            AppError::DatabaseError(_)
+            | AppError::SerializationError(_)
+            | AppError::InvalidUrl(_)
+            | AppError::DatasetNotFound(_)
+            | AppError::InvalidPortalUrl(_)
+            | AppError::EmptyResponse
+            | AppError::ConfigError(_)
+            | AppError::Generic(_) => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -411,5 +469,77 @@ mod tests {
     fn test_timeout_error() {
         let err = AppError::Timeout(30);
         assert_eq!(err.to_string(), "Request timed out after 30 seconds");
+    }
+
+    #[test]
+    fn test_should_trip_circuit_transient_errors() {
+        // Transient errors should trip the circuit
+        assert!(AppError::NetworkError("connection reset".to_string()).should_trip_circuit());
+        assert!(AppError::Timeout(30).should_trip_circuit());
+        assert!(AppError::RateLimitExceeded.should_trip_circuit());
+    }
+
+    #[test]
+    fn test_should_trip_circuit_client_errors() {
+        // Client errors with transient keywords should trip
+        assert!(AppError::ClientError("connection refused".to_string()).should_trip_circuit());
+        assert!(AppError::ClientError("request timed out".to_string()).should_trip_circuit());
+
+        // Client errors without transient keywords should NOT trip
+        assert!(!AppError::ClientError("invalid json".to_string()).should_trip_circuit());
+    }
+
+    #[test]
+    fn test_should_trip_circuit_gemini_errors() {
+        // Rate limit should trip
+        let rate_limit = AppError::GeminiError(GeminiErrorDetails::new(
+            GeminiErrorKind::RateLimit,
+            "Rate limit exceeded".to_string(),
+            429,
+        ));
+        assert!(rate_limit.should_trip_circuit());
+
+        // Server error should trip
+        let server_error = AppError::GeminiError(GeminiErrorDetails::new(
+            GeminiErrorKind::ServerError,
+            "Internal server error".to_string(),
+            500,
+        ));
+        assert!(server_error.should_trip_circuit());
+
+        // Network error should trip
+        let network_error = AppError::GeminiError(GeminiErrorDetails::new(
+            GeminiErrorKind::NetworkError,
+            "Connection failed".to_string(),
+            0,
+        ));
+        assert!(network_error.should_trip_circuit());
+
+        // Authentication should NOT trip
+        let auth_error = AppError::GeminiError(GeminiErrorDetails::new(
+            GeminiErrorKind::Authentication,
+            "Invalid API key".to_string(),
+            401,
+        ));
+        assert!(!auth_error.should_trip_circuit());
+
+        // Quota exceeded should NOT trip
+        let quota_error = AppError::GeminiError(GeminiErrorDetails::new(
+            GeminiErrorKind::QuotaExceeded,
+            "Insufficient quota".to_string(),
+            429,
+        ));
+        assert!(!quota_error.should_trip_circuit());
+    }
+
+    #[test]
+    fn test_should_trip_circuit_non_transient_errors() {
+        // These should NOT trip the circuit
+        assert!(!AppError::InvalidPortalUrl("bad url".to_string()).should_trip_circuit());
+        assert!(!AppError::DatasetNotFound("missing".to_string()).should_trip_circuit());
+        assert!(!AppError::InvalidUrl("bad".to_string()).should_trip_circuit());
+        assert!(!AppError::EmptyResponse.should_trip_circuit());
+        assert!(!AppError::ConfigError("bad config".to_string()).should_trip_circuit());
+        assert!(!AppError::Generic("something".to_string()).should_trip_circuit());
     }
 }
