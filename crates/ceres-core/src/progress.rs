@@ -5,7 +5,6 @@
 
 use std::time::Duration;
 
-use crate::circuit_breaker::CircuitState;
 use crate::{BatchHarvestSummary, SyncStats};
 
 /// Events emitted during harvesting operations.
@@ -112,30 +111,12 @@ pub enum HarvestEvent<'a> {
         total_portals: usize,
     },
 
-    /// Circuit breaker state changed.
-    CircuitBreakerStateChanged {
-        /// Service name (e.g., "gemini", "ckan").
-        service: &'a str,
-        /// Previous state.
-        from_state: CircuitState,
-        /// New state.
-        to_state: CircuitState,
-    },
-
     /// Circuit breaker is open, harvest pausing/failing.
     CircuitBreakerOpen {
         /// Service name.
         service: &'a str,
         /// Time until recovery attempt.
         retry_after: Duration,
-    },
-
-    /// Dataset skipped due to circuit breaker being open.
-    DatasetSkipped {
-        /// Dataset ID.
-        dataset_id: &'a str,
-        /// Reason for skipping.
-        reason: &'a str,
     },
 }
 
@@ -305,17 +286,6 @@ impl ProgressReporter for TracingReporter {
                     completed_portals, total_portals
                 );
             }
-            HarvestEvent::CircuitBreakerStateChanged {
-                service,
-                from_state,
-                to_state,
-            } => {
-                use tracing::warn;
-                warn!(
-                    "Circuit breaker '{}' state changed: {} -> {}",
-                    service, from_state, to_state
-                );
-            }
             HarvestEvent::CircuitBreakerOpen {
                 service,
                 retry_after,
@@ -326,10 +296,6 @@ impl ProgressReporter for TracingReporter {
                     service,
                     retry_after.as_secs()
                 );
-            }
-            HarvestEvent::DatasetSkipped { dataset_id, reason } => {
-                use tracing::warn;
-                warn!("Dataset '{}' skipped: {}", dataset_id, reason);
             }
         }
     }
@@ -406,18 +372,9 @@ mod tests {
         });
 
         // Test circuit breaker events
-        reporter.report(HarvestEvent::CircuitBreakerStateChanged {
-            service: "gemini",
-            from_state: CircuitState::Closed,
-            to_state: CircuitState::Open,
-        });
         reporter.report(HarvestEvent::CircuitBreakerOpen {
             service: "gemini",
             retry_after: Duration::from_secs(30),
-        });
-        reporter.report(HarvestEvent::DatasetSkipped {
-            dataset_id: "test-dataset-123",
-            reason: "circuit breaker open",
         });
     }
 

@@ -13,6 +13,13 @@
 //! CLOSED <---------------------------[success]----------------------------+
 //! ```
 //!
+//! # Concurrent Usage
+//!
+//! This circuit breaker is designed for batch processing scenarios where multiple
+//! concurrent requests may be in-flight. In HalfOpen state, all concurrent requests
+//! are allowed to proceed (no probe limiting). The first failure will immediately
+//! re-open the circuit.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -21,7 +28,7 @@
 //! let cb = CircuitBreaker::new("gemini", CircuitBreakerConfig::default());
 //!
 //! // Wrap API calls
-//! match cb.call(|| client.get_embeddings(text)).await {
+//! match cb.call(|| async { client.get_embeddings(text).await }).await {
 //!     Ok(embedding) => { /* success */ }
 //!     Err(CircuitBreakerError::Open { .. }) => { /* circuit is open, skip */ }
 //!     Err(CircuitBreakerError::Inner(e)) => { /* actual API error */ }
@@ -104,7 +111,16 @@ impl CircuitBreakerConfig {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(30),
             ),
-            ..Default::default()
+            rate_limit_backoff_multiplier: std::env::var("CB_RATE_LIMIT_BACKOFF_MULTIPLIER")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2.0),
+            max_recovery_timeout: Duration::from_secs(
+                std::env::var("CB_MAX_RECOVERY_TIMEOUT_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(300),
+            ),
         }
     }
 }
@@ -249,6 +265,13 @@ impl CircuitBreaker {
     /// - If circuit is Closed: executes operation, tracks success/failure
     /// - If circuit is Open: returns `CircuitBreakerError::Open` immediately
     /// - If circuit is HalfOpen: executes operation, transitions based on result
+    ///
+    /// # Concurrency in HalfOpen State
+    ///
+    /// When used with concurrent processing (e.g., `buffer_unordered`), multiple
+    /// requests may pass through while in HalfOpen state before results are recorded.
+    /// This is by design for batch processing scenarios - a single failure will
+    /// immediately re-open the circuit, while successful probes contribute to recovery.
     pub async fn call<F, T, Fut>(&self, operation: F) -> Result<T, CircuitBreakerError>
     where
         F: FnOnce() -> Fut,
