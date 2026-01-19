@@ -16,6 +16,8 @@ pub enum SyncOutcome {
     Created,
     /// Processing failed for this dataset
     Failed,
+    /// Dataset skipped due to circuit breaker being open
+    Skipped,
 }
 
 /// Statistics for a portal sync operation.
@@ -25,6 +27,9 @@ pub struct SyncStats {
     pub updated: usize,
     pub created: usize,
     pub failed: usize,
+    /// Number of datasets skipped due to circuit breaker being open.
+    #[serde(default)]
+    pub skipped: usize,
 }
 
 impl SyncStats {
@@ -40,12 +45,13 @@ impl SyncStats {
             SyncOutcome::Updated => self.updated += 1,
             SyncOutcome::Created => self.created += 1,
             SyncOutcome::Failed => self.failed += 1,
+            SyncOutcome::Skipped => self.skipped += 1,
         }
     }
 
     /// Returns the total number of processed datasets.
     pub fn total(&self) -> usize {
-        self.unchanged + self.updated + self.created + self.failed
+        self.unchanged + self.updated + self.created + self.failed + self.skipped
     }
 
     /// Returns the number of successfully processed datasets.
@@ -153,6 +159,7 @@ pub struct AtomicSyncStats {
     updated: AtomicUsize,
     created: AtomicUsize,
     failed: AtomicUsize,
+    skipped: AtomicUsize,
 }
 
 impl AtomicSyncStats {
@@ -163,6 +170,7 @@ impl AtomicSyncStats {
             updated: AtomicUsize::new(0),
             created: AtomicUsize::new(0),
             failed: AtomicUsize::new(0),
+            skipped: AtomicUsize::new(0),
         }
     }
 
@@ -173,6 +181,7 @@ impl AtomicSyncStats {
             SyncOutcome::Updated => self.updated.fetch_add(1, Ordering::Relaxed),
             SyncOutcome::Created => self.created.fetch_add(1, Ordering::Relaxed),
             SyncOutcome::Failed => self.failed.fetch_add(1, Ordering::Relaxed),
+            SyncOutcome::Skipped => self.skipped.fetch_add(1, Ordering::Relaxed),
         };
     }
 
@@ -183,6 +192,7 @@ impl AtomicSyncStats {
             updated: self.updated.load(Ordering::Relaxed),
             created: self.created.load(Ordering::Relaxed),
             failed: self.failed.load(Ordering::Relaxed),
+            skipped: self.skipped.load(Ordering::Relaxed),
         }
     }
 }
@@ -354,6 +364,7 @@ mod tests {
         assert_eq!(stats.updated, 0);
         assert_eq!(stats.created, 0);
         assert_eq!(stats.failed, 0);
+        assert_eq!(stats.skipped, 0);
     }
 
     #[test]
@@ -363,11 +374,13 @@ mod tests {
         stats.record(SyncOutcome::Updated);
         stats.record(SyncOutcome::Created);
         stats.record(SyncOutcome::Failed);
+        stats.record(SyncOutcome::Skipped);
 
         assert_eq!(stats.unchanged, 1);
         assert_eq!(stats.updated, 1);
         assert_eq!(stats.created, 1);
         assert_eq!(stats.failed, 1);
+        assert_eq!(stats.skipped, 1);
     }
 
     #[test]
@@ -377,8 +390,9 @@ mod tests {
         stats.updated = 5;
         stats.created = 3;
         stats.failed = 2;
+        stats.skipped = 1;
 
-        assert_eq!(stats.total(), 20);
+        assert_eq!(stats.total(), 21);
     }
 
     #[test]
@@ -388,7 +402,9 @@ mod tests {
         stats.updated = 5;
         stats.created = 3;
         stats.failed = 2;
+        stats.skipped = 1;
 
+        // successful does not include failed or skipped
         assert_eq!(stats.successful(), 18);
     }
 
@@ -464,6 +480,7 @@ mod tests {
             updated: 3,
             created: 2,
             failed: 0,
+            skipped: 0,
         };
         let result = PortalHarvestResult::success(
             "test".to_string(),
@@ -511,6 +528,7 @@ mod tests {
             updated: 5,
             created: 3,
             failed: 2,
+            skipped: 0,
         };
         summary.add(PortalHarvestResult::success(
             "a".into(),
@@ -529,6 +547,7 @@ mod tests {
             updated: 0,
             created: 0,
             failed: 0,
+            skipped: 0,
         };
         summary.add(PortalHarvestResult::success(
             "c".into(),
@@ -551,6 +570,7 @@ mod tests {
             updated: 0,
             created: 5,
             failed: 0,
+            skipped: 0,
         };
         summary.add(PortalHarvestResult::success(
             "portal1".into(),
@@ -596,6 +616,7 @@ mod tests {
         assert_eq!(result.updated, 0);
         assert_eq!(result.created, 0);
         assert_eq!(result.failed, 0);
+        assert_eq!(result.skipped, 0);
     }
 
     #[test]
@@ -605,12 +626,14 @@ mod tests {
         stats.record(SyncOutcome::Updated);
         stats.record(SyncOutcome::Created);
         stats.record(SyncOutcome::Failed);
+        stats.record(SyncOutcome::Skipped);
 
         let result = stats.to_stats();
         assert_eq!(result.unchanged, 1);
         assert_eq!(result.updated, 1);
         assert_eq!(result.created, 1);
         assert_eq!(result.failed, 1);
+        assert_eq!(result.skipped, 1);
     }
 
     #[test]
@@ -668,6 +691,7 @@ mod tests {
             updated: 5,
             created: 3,
             failed: 0,
+            skipped: 0,
         };
         let result = SyncResult::completed(stats);
         assert!(result.is_completed());
@@ -683,6 +707,7 @@ mod tests {
             updated: 2,
             created: 1,
             failed: 0,
+            skipped: 0,
         };
         let result = SyncResult::cancelled(stats);
         assert!(!result.is_completed());

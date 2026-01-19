@@ -3,6 +3,8 @@
 //! This module provides a trait-based abstraction for reporting progress during
 //! harvest operations, enabling decoupled logging and UI updates.
 
+use std::time::Duration;
+
 use crate::{BatchHarvestSummary, SyncStats};
 
 /// Events emitted during harvesting operations.
@@ -55,6 +57,8 @@ pub enum HarvestEvent<'a> {
         unchanged: usize,
         /// Number of failed datasets.
         failed: usize,
+        /// Number of datasets skipped due to circuit breaker.
+        skipped: usize,
     },
 
     /// Single portal harvest completed successfully.
@@ -105,6 +109,14 @@ pub enum HarvestEvent<'a> {
         completed_portals: usize,
         /// Total number of portals in batch.
         total_portals: usize,
+    },
+
+    /// Circuit breaker is open, harvest pausing/failing.
+    CircuitBreakerOpen {
+        /// Service name.
+        service: &'a str,
+        /// Time until recovery attempt.
+        retry_after: Duration,
     },
 }
 
@@ -193,12 +205,20 @@ impl ProgressReporter for TracingReporter {
                 updated,
                 unchanged,
                 failed,
+                skipped,
             } => {
                 let pct = (current as f64 / total as f64 * 100.0) as u8;
-                info!(
-                    "Progress: {}/{} ({}%) - {} new, {} updated, {} unchanged, {} failed",
-                    current, total, pct, created, updated, unchanged, failed
-                );
+                if skipped > 0 {
+                    info!(
+                        "Progress: {}/{} ({}%) - {} new, {} updated, {} unchanged, {} failed, {} skipped",
+                        current, total, pct, created, updated, unchanged, failed, skipped
+                    );
+                } else {
+                    info!(
+                        "Progress: {}/{} ({}%) - {} new, {} updated, {} unchanged, {} failed",
+                        current, total, pct, created, updated, unchanged, failed
+                    );
+                }
             }
             HarvestEvent::PortalCompleted {
                 portal_index,
@@ -266,6 +286,17 @@ impl ProgressReporter for TracingReporter {
                     completed_portals, total_portals
                 );
             }
+            HarvestEvent::CircuitBreakerOpen {
+                service,
+                retry_after,
+            } => {
+                use tracing::warn;
+                warn!(
+                    "Circuit breaker '{}' is open. Retry after {} seconds.",
+                    service,
+                    retry_after.as_secs()
+                );
+            }
         }
     }
 }
@@ -302,6 +333,7 @@ mod tests {
             updated: 3,
             unchanged: 5,
             failed: 0,
+            skipped: 0,
         });
 
         let stats = SyncStats {
@@ -309,6 +341,7 @@ mod tests {
             updated: 3,
             created: 2,
             failed: 0,
+            skipped: 0,
         };
         reporter.report(HarvestEvent::PortalCompleted {
             portal_index: 0,
@@ -336,6 +369,12 @@ mod tests {
         reporter.report(HarvestEvent::BatchCancelled {
             completed_portals: 1,
             total_portals: 3,
+        });
+
+        // Test circuit breaker events
+        reporter.report(HarvestEvent::CircuitBreakerOpen {
+            service: "gemini",
+            retry_after: Duration::from_secs(30),
         });
     }
 

@@ -406,6 +406,7 @@ mod tests {
             updated: 3,
             unchanged: 10,
             failed: 1,
+            skipped: 0,
         };
         reporter.report(WorkerEvent::JobCompleted {
             job_id: Uuid::new_v4(),

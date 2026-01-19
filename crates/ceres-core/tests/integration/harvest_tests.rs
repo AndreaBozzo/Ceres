@@ -33,6 +33,7 @@ async fn test_harvest_creates_new_dataset() {
     let config = SyncConfig {
         concurrency: 1,
         force_full_sync: true, // Force full sync for tests
+        ..Default::default()
     };
     let service = HarvestService::with_config(store.clone(), embedding, factory, config);
 
@@ -83,6 +84,7 @@ async fn test_harvest_skips_unchanged_dataset() {
     let config = SyncConfig {
         concurrency: 1,
         force_full_sync: true, // Force full sync for tests
+        ..Default::default()
     };
     let service = HarvestService::with_config(store.clone(), embedding, factory, config);
 

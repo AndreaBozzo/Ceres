@@ -87,6 +87,7 @@ async fn test_cancellation_during_processing() {
     let config = SyncConfig {
         concurrency: 2,
         force_full_sync: true,
+        ..Default::default()
     };
     let service = HarvestService::with_config(store.clone(), embedding.clone(), factory, config);
     let token = CancellationToken::new();
