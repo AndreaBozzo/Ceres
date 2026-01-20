@@ -222,19 +222,31 @@ impl CircuitBreaker {
         &self.name
     }
 
+    /// Acquires the inner mutex lock, recovering from poison if necessary.
+    ///
+    /// If a thread panicked while holding the lock, this clears the poison
+    /// and returns the inner state. This is acceptable because circuit breaker
+    /// state (counters, timestamps) is not critical enough to warrant panicking.
+    fn lock_inner(&self) -> std::sync::MutexGuard<'_, CircuitBreakerInner> {
+        self.inner.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!(circuit = %self.name, "Recovered from poisoned mutex");
+            poisoned.into_inner()
+        })
+    }
+
     /// Returns the current state of the circuit.
     ///
     /// Note: This also handles lazy state transitions from Open to HalfOpen
     /// when the recovery timeout has elapsed.
     pub fn state(&self) -> CircuitState {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
         self.maybe_transition_to_half_open(&mut inner);
         inner.state
     }
 
     /// Returns circuit breaker statistics for monitoring.
     pub fn stats(&self) -> CircuitBreakerStats {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
         self.maybe_transition_to_half_open(&mut inner);
 
         let time_until_half_open = if inner.state == CircuitState::Open {
@@ -279,7 +291,7 @@ impl CircuitBreaker {
     {
         // Check if we should allow the request
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.lock_inner();
             self.maybe_transition_to_half_open(&mut inner);
 
             if inner.state == CircuitState::Open {
@@ -320,7 +332,7 @@ impl CircuitBreaker {
 
     /// Records a successful operation.
     pub fn record_success(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
 
         match inner.state {
             CircuitState::HalfOpen => {
@@ -352,7 +364,7 @@ impl CircuitBreaker {
 
     /// Records a failed operation.
     pub fn record_failure(&self, error: &AppError) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
 
         // Check if this is a rate limit error
         let is_rate_limit = matches!(error, AppError::RateLimitExceeded)
@@ -427,7 +439,7 @@ impl CircuitBreaker {
 
     /// Manually resets the circuit breaker to closed state.
     pub fn reset(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
         tracing::info!(circuit = %self.name, "Circuit breaker manually reset");
         inner.state = CircuitState::Closed;
         inner.failure_count = 0;
