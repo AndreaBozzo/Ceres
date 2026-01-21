@@ -4,7 +4,7 @@
 //!
 //! - **Domain models**: [`Dataset`], [`SearchResult`], [`Portal`], etc.
 //! - **Business logic**: Delta detection, statistics tracking
-//! - **Services**: [`HarvestService`] for portal synchronization, [`SearchService`] for semantic search
+//! - **Services**: [`HarvestService`] for portal synchronization, [`SearchService`] for semantic search, [`ExportService`] for streaming exports
 //! - **Traits**: [`EmbeddingProvider`], [`DatasetStore`], [`PortalClient`] for dependency injection
 //! - **Progress reporting**: [`ProgressReporter`] trait for decoupled logging/UI
 //!
@@ -44,6 +44,7 @@
 pub mod circuit_breaker;
 pub mod config;
 pub mod error;
+pub mod export;
 pub mod harvest;
 pub mod job;
 pub mod job_queue;
@@ -84,6 +85,7 @@ pub use progress::{HarvestEvent, ProgressReporter, SilentReporter, TracingReport
 pub use traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFactory};
 
 // Services (generic over trait implementations)
+pub use export::{ExportFormat, ExportService};
 pub use harvest::HarvestService;
 pub use search::SearchService;
 

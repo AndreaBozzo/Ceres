@@ -1,3 +1,4 @@
+use std::io;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -9,8 +10,8 @@ use tracing_subscriber::FmtSubscriber;
 
 use ceres_client::{CkanClientFactory, GeminiClient};
 use ceres_core::{
-    BatchHarvestSummary, Dataset, DbConfig, HarvestService, PortalEntry, SearchService, SyncConfig,
-    SyncStats, TracingReporter, load_portals_config,
+    BatchHarvestSummary, DbConfig, ExportFormat as CoreExportFormat, ExportService, HarvestService,
+    PortalEntry, SearchService, SyncConfig, SyncStats, TracingReporter, load_portals_config,
 };
 use ceres_db::DatasetRepository;
 use ceres_search::{Command, Config, ExportFormat};
@@ -72,7 +73,8 @@ async fn main() -> anyhow::Result<()> {
             portal,
             limit,
         } => {
-            export(&repo, format, portal.as_deref(), limit).await?;
+            let export_service = ExportService::new(repo.clone());
+            export(&export_service, format, portal.as_deref(), limit).await?;
         }
         Command::Stats => {
             show_stats(&repo).await?;
@@ -291,105 +293,34 @@ async fn show_stats(repo: &DatasetRepository) -> anyhow::Result<()> {
     Ok(())
 }
 
-// TODO(performance): Implement streaming export for large datasets
-// Currently loads all datasets into memory before writing.
-// For databases with millions of records, this causes OOM.
-// Consider: (1) Cursor-based pagination, (2) Streaming writes as records arrive
 async fn export(
-    repo: &DatasetRepository,
+    export_service: &ExportService<DatasetRepository>,
     format: ExportFormat,
     portal_filter: Option<&str>,
     limit: Option<usize>,
 ) -> anyhow::Result<()> {
-    info!("Exporting datasets...");
+    info!("Exporting datasets (streaming mode)...");
 
-    // TODO(performance): Stream results instead of loading all into Vec
-    let datasets = repo.list_all(portal_filter, limit).await?;
+    let core_format = match format {
+        ExportFormat::Jsonl => CoreExportFormat::Jsonl,
+        ExportFormat::Json => CoreExportFormat::Json,
+        ExportFormat::Csv => CoreExportFormat::Csv,
+    };
 
-    if datasets.is_empty() {
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+
+    let count = export_service
+        .export_to_writer(&mut writer, core_format, portal_filter, limit)
+        .await?;
+
+    if count == 0 {
         eprintln!("No datasets found to export.");
-        return Ok(());
-    }
-
-    info!("Found {} datasets to export", datasets.len());
-
-    match format {
-        ExportFormat::Jsonl => {
-            export_jsonl(&datasets)?;
-        }
-        ExportFormat::Json => {
-            export_json(&datasets)?;
-        }
-        ExportFormat::Csv => {
-            export_csv(&datasets)?;
-        }
-    }
-
-    info!("Export complete: {} datasets", datasets.len());
-    Ok(())
-}
-
-fn export_jsonl(datasets: &[Dataset]) -> anyhow::Result<()> {
-    for dataset in datasets {
-        let export_record = create_export_record(dataset);
-        let json = serde_json::to_string(&export_record)?;
-        println!("{}", json);
-    }
-    Ok(())
-}
-
-fn export_json(datasets: &[Dataset]) -> anyhow::Result<()> {
-    let export_records: Vec<_> = datasets.iter().map(create_export_record).collect();
-    let json = serde_json::to_string_pretty(&export_records)?;
-    println!("{}", json);
-    Ok(())
-}
-
-fn export_csv(datasets: &[Dataset]) -> anyhow::Result<()> {
-    println!("id,original_id,source_portal,url,title,description,first_seen_at,last_updated_at");
-
-    for dataset in datasets {
-        let description = dataset
-            .description
-            .as_ref()
-            .map(|d| escape_csv(d))
-            .unwrap_or_default();
-
-        println!(
-            "{},{},{},{},{},{},{},{}",
-            dataset.id,
-            escape_csv(&dataset.original_id),
-            escape_csv(&dataset.source_portal),
-            escape_csv(&dataset.url),
-            escape_csv(&dataset.title),
-            description,
-            dataset.first_seen_at.format("%Y-%m-%dT%H:%M:%SZ"),
-            dataset.last_updated_at.format("%Y-%m-%dT%H:%M:%SZ"),
-        );
-    }
-    Ok(())
-}
-
-fn create_export_record(dataset: &Dataset) -> serde_json::Value {
-    serde_json::json!({
-        "id": dataset.id,
-        "original_id": dataset.original_id,
-        "source_portal": dataset.source_portal,
-        "url": dataset.url,
-        "title": dataset.title,
-        "description": dataset.description,
-        "metadata": dataset.metadata,
-        "first_seen_at": dataset.first_seen_at,
-        "last_updated_at": dataset.last_updated_at
-    })
-}
-
-fn escape_csv(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
-        format!("\"{}\"", s.replace('"', "\"\""))
     } else {
-        s.to_string()
+        info!("Export complete: {} datasets", count);
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -433,25 +364,5 @@ mod tests {
         let text = "Line 1\nLine 2\nLine 3";
         let result = truncate_text(text, 50);
         assert_eq!(result, "Line 1 Line 2 Line 3");
-    }
-
-    #[test]
-    fn test_escape_csv_simple() {
-        assert_eq!(escape_csv("simple"), "simple");
-    }
-
-    #[test]
-    fn test_escape_csv_with_comma() {
-        assert_eq!(escape_csv("hello, world"), "\"hello, world\"");
-    }
-
-    #[test]
-    fn test_escape_csv_with_quotes() {
-        assert_eq!(escape_csv("say \"hello\""), "\"say \"\"hello\"\"\"");
-    }
-
-    #[test]
-    fn test_escape_csv_with_newline() {
-        assert_eq!(escape_csv("line1\nline2"), "\"line1\nline2\"");
     }
 }

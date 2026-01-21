@@ -32,10 +32,11 @@ use std::collections::HashMap;
 use std::future::Future;
 
 use chrono::{DateTime, Utc};
+use futures::stream::BoxStream;
 use pgvector::Vector;
 use uuid::Uuid;
 
-use crate::{AppError, NewDataset, SearchResult};
+use crate::{AppError, Dataset, NewDataset, SearchResult};
 
 /// Provider for generating text embeddings.
 ///
@@ -193,6 +194,22 @@ pub trait DatasetStore: Send + Sync + Clone {
         query_vector: Vector,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<SearchResult>, AppError>> + Send;
+
+    /// Lists datasets as a stream with optional filtering.
+    ///
+    /// This method returns a stream of datasets for memory-efficient
+    /// processing of large result sets. Unlike batch methods, it streams
+    /// results directly from the database without loading everything into memory.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_filter` - Optional portal URL to filter by
+    /// * `limit` - Optional maximum number of records
+    fn list_stream<'a>(
+        &'a self,
+        portal_filter: Option<&'a str>,
+        limit: Option<usize>,
+    ) -> BoxStream<'a, Result<Dataset, AppError>>;
 
     /// Retrieves the last successful sync timestamp for a portal.
     ///

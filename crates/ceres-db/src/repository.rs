@@ -17,6 +17,8 @@
 use ceres_core::error::AppError;
 use ceres_core::models::{DatabaseStats, Dataset, NewDataset, SearchResult};
 use chrono::{DateTime, Utc};
+use futures::StreamExt;
+use futures::stream::BoxStream;
 use pgvector::Vector;
 use sqlx::types::Json;
 use sqlx::{PgPool, Pool, Postgres};
@@ -26,6 +28,12 @@ use uuid::Uuid;
 /// Column list for SELECT queries. Must remain a const literal to ensure SQL safety
 /// since format!() bypasses sqlx compile-time validation.
 const DATASET_COLUMNS: &str = "id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash";
+
+// Static queries for list_all_stream to avoid lifetime issues with BoxStream
+const LIST_ALL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash FROM datasets ORDER BY last_updated_at DESC";
+const LIST_ALL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash FROM datasets ORDER BY last_updated_at DESC LIMIT $1";
+const LIST_ALL_PORTAL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC";
+const LIST_ALL_PORTAL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2";
 
 /// Repository for dataset persistence in PostgreSQL with pgvector.
 ///
@@ -239,12 +247,10 @@ impl DatasetRepository {
 
     /// Lists datasets with optional portal filter and limit.
     ///
-    /// TODO(config): Make default limit configurable via DEFAULT_EXPORT_LIMIT env var
-    /// Currently hardcoded to 10000. For large exports, consider streaming instead.
+    /// For memory-efficient exports of large datasets, use [`list_all_stream`] instead.
     ///
-    /// TODO(performance): Implement streaming/pagination for memory efficiency
-    /// Loading all datasets into memory doesn't scale. Consider returning
-    /// `impl Stream<Item = Result<Dataset, AppError>>` or cursor-based pagination.
+    /// TODO(config): Make default limit configurable via DEFAULT_EXPORT_LIMIT env var
+    /// Currently hardcoded to 10000.
     pub async fn list_all(
         &self,
         portal_filter: Option<&str>,
@@ -277,6 +283,48 @@ impl DatasetRepository {
         };
 
         Ok(datasets)
+    }
+
+    /// Lists datasets as a stream with optional portal filter.
+    ///
+    /// Unlike [`list_all`], this method streams results directly from the database
+    /// without loading everything into memory. Suitable for large exports.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_filter` - Optional portal URL to filter by
+    /// * `limit` - Optional maximum number of records (no default limit for streaming)
+    pub fn list_all_stream<'a>(
+        &'a self,
+        portal_filter: Option<&'a str>,
+        limit: Option<usize>,
+    ) -> BoxStream<'a, Result<Dataset, AppError>> {
+        match (portal_filter, limit) {
+            (Some(portal), Some(lim)) => Box::pin(
+                sqlx::query_as::<_, Dataset>(LIST_ALL_PORTAL_LIMIT_QUERY)
+                    .bind(portal)
+                    .bind(lim as i64)
+                    .fetch(&self.pool)
+                    .map(|r| r.map_err(AppError::DatabaseError)),
+            ),
+            (Some(portal), None) => Box::pin(
+                sqlx::query_as::<_, Dataset>(LIST_ALL_PORTAL_QUERY)
+                    .bind(portal)
+                    .fetch(&self.pool)
+                    .map(|r| r.map_err(AppError::DatabaseError)),
+            ),
+            (None, Some(lim)) => Box::pin(
+                sqlx::query_as::<_, Dataset>(LIST_ALL_LIMIT_QUERY)
+                    .bind(lim as i64)
+                    .fetch(&self.pool)
+                    .map(|r| r.map_err(AppError::DatabaseError)),
+            ),
+            (None, None) => Box::pin(
+                sqlx::query_as::<_, Dataset>(LIST_ALL_QUERY)
+                    .fetch(&self.pool)
+                    .map(|r| r.map_err(AppError::DatabaseError)),
+            ),
+        }
     }
 
     // =========================================================================
@@ -461,6 +509,14 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
         DatasetRepository::search(self, query_vector, limit).await
+    }
+
+    fn list_stream<'a>(
+        &'a self,
+        portal_filter: Option<&'a str>,
+        limit: Option<usize>,
+    ) -> BoxStream<'a, Result<Dataset, AppError>> {
+        DatasetRepository::list_all_stream(self, portal_filter, limit)
     }
 
     async fn get_last_sync_time(
