@@ -16,6 +16,9 @@
 //!     .await?;
 //! println!("Exported {} datasets", count);
 //! ```
+//!
+//! Note: This example uses `ignore` because it requires a concrete
+//! [`DatasetStore`] implementation which cannot be easily provided in a doctest.
 
 use std::io::Write;
 
