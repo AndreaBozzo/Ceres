@@ -207,6 +207,28 @@ impl Default for MockDatasetStore {
 }
 
 impl DatasetStore for MockDatasetStore {
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<Dataset>, AppError> {
+        let datasets = self.datasets.lock().unwrap();
+        for stored in datasets.values() {
+            if stored.id == id {
+                return Ok(Some(Dataset {
+                    id: stored.id,
+                    original_id: stored.dataset.original_id.clone(),
+                    source_portal: stored.dataset.source_portal.clone(),
+                    url: stored.dataset.url.clone(),
+                    title: stored.dataset.title.clone(),
+                    description: stored.dataset.description.clone(),
+                    embedding: stored.dataset.embedding.clone(),
+                    metadata: Json(stored.dataset.metadata.clone()),
+                    first_seen_at: chrono::Utc::now(),
+                    last_updated_at: chrono::Utc::now(),
+                    content_hash: Some(stored.dataset.content_hash.clone()),
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     async fn get_hashes_for_portal(
         &self,
         portal_url: &str,

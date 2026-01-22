@@ -120,6 +120,18 @@ pub trait PortalClientFactory: Send + Sync + Clone {
 ///
 /// Implementations handle database operations for datasets.
 pub trait DatasetStore: Send + Sync + Clone {
+    /// Retrieves a dataset by its unique ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The dataset's UUID
+    ///
+    /// # Returns
+    ///
+    /// The dataset if found, or None if not exists.
+    fn get_by_id(&self, id: Uuid)
+    -> impl Future<Output = Result<Option<Dataset>, AppError>> + Send;
+
     /// Retrieves content hashes for all datasets from a specific portal.
     ///
     /// Used for delta detection to determine which datasets need reprocessing.

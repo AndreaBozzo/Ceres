@@ -475,6 +475,10 @@ pub struct PortalSyncStatus {
 // =============================================================================
 
 impl ceres_core::traits::DatasetStore for DatasetRepository {
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<Dataset>, AppError> {
+        DatasetRepository::get(self, id).await
+    }
+
     async fn get_hashes_for_portal(
         &self,
         portal_url: &str,
