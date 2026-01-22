@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex};
 
 use ceres_core::models::NewDataset;
 use ceres_core::traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFactory};
-use ceres_core::{AppError, SearchResult};
+use ceres_core::{AppError, Dataset, SearchResult};
 use chrono::{DateTime, Utc};
+use futures::stream::BoxStream;
 use pgvector::Vector;
 use sqlx::types::Json;
 use uuid::Uuid;
@@ -295,6 +296,36 @@ impl DatasetStore for MockDatasetStore {
             })
             .collect();
         Ok(results)
+    }
+
+    fn list_stream<'a>(
+        &'a self,
+        portal_filter: Option<&'a str>,
+        limit: Option<usize>,
+    ) -> BoxStream<'a, Result<Dataset, AppError>> {
+        // Simple mock: collect all matching datasets and stream them
+        let datasets = self.datasets.lock().unwrap();
+        let results: Vec<Result<Dataset, AppError>> = datasets
+            .iter()
+            .filter(|((portal, _), _)| portal_filter.is_none_or(|filter| portal == filter))
+            .take(limit.unwrap_or(usize::MAX))
+            .map(|((_, _), stored)| {
+                Ok(Dataset {
+                    id: stored.id,
+                    original_id: stored.dataset.original_id.clone(),
+                    source_portal: stored.dataset.source_portal.clone(),
+                    url: stored.dataset.url.clone(),
+                    title: stored.dataset.title.clone(),
+                    description: stored.dataset.description.clone(),
+                    embedding: stored.dataset.embedding.clone(),
+                    metadata: Json(stored.dataset.metadata.clone()),
+                    first_seen_at: chrono::Utc::now(),
+                    last_updated_at: chrono::Utc::now(),
+                    content_hash: Some(stored.dataset.content_hash.clone()),
+                })
+            })
+            .collect();
+        Box::pin(futures::stream::iter(results))
     }
 
     async fn get_last_sync_time(

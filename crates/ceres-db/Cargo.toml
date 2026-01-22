@@ -17,6 +17,9 @@ ceres-core.workspace = true
 sqlx.workspace = true
 pgvector.workspace = true
 
+# Async utilities
+futures.workspace = true
+
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
