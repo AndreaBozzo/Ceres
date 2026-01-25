@@ -53,6 +53,17 @@ where
     store: S,
 }
 
+impl<S> Clone for ExportService<S>
+where
+    S: DatasetStore + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+        }
+    }
+}
+
 impl<S> ExportService<S>
 where
     S: DatasetStore,

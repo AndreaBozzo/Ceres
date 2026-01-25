@@ -6,5 +6,51 @@ authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+description = "REST API server for Ceres semantic search"
+
+[[bin]]
+name = "ceres-server"
+path = "src/main.rs"
 
 [dependencies]
+# Internal crates
+ceres-core.workspace = true
+ceres-db.workspace = true
+ceres-client.workspace = true
+
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tower = { version = "0.4", features = ["util", "timeout"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
+
+# Async runtime
+tokio = { workspace = true, features = ["full", "signal"] }
+tokio-util.workspace = true
+futures.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# OpenAPI documentation
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "8", features = ["axum"] }
+
+# Database
+sqlx.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging/Tracing
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Configuration
+clap.workspace = true
+dotenvy.workspace = true
+
+# Utilities
+uuid.workspace = true
+chrono.workspace = true
