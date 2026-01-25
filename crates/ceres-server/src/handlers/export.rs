@@ -5,7 +5,6 @@ use axum::{
     extract::{Query, State},
     http::{Response, StatusCode, header},
 };
-use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 
 use ceres_core::ExportFormat;
@@ -17,6 +16,8 @@ use crate::state::AppState;
 /// Export datasets in various formats.
 ///
 /// Streams datasets to the response for memory-efficient export of large datasets.
+/// Data is written directly to the response stream without buffering the entire
+/// dataset in memory.
 #[utoipa::path(
     get,
     path = "/api/v1/export",
@@ -37,6 +38,7 @@ pub async fn export_datasets(
     let file_extension = extension_for_format(&format);
 
     // Create a duplex channel for streaming
+    // Data flows: export_service -> writer -> reader -> HTTP response
     let (writer, reader) = tokio::io::duplex(64 * 1024);
 
     // Clone what we need for the spawned task
@@ -44,29 +46,17 @@ pub async fn export_datasets(
     let portal_filter = params.portal.clone();
     let limit = params.limit;
 
-    // Spawn a task to write the export data
+    // Spawn a task to write export data directly to the stream
     tokio::spawn(async move {
         let mut buf_writer = tokio::io::BufWriter::new(writer);
 
-        // We need to use a sync writer adapter since export_to_writer expects std::io::Write
-        // For now, we'll collect the data and write it in chunks
-        let mut output = Vec::new();
+        // Use the async writer method that streams data directly without buffering
         let result = export_service
-            .export_to_writer(&mut output, format, portal_filter.as_deref(), limit)
+            .export_to_async_writer(&mut buf_writer, format, portal_filter.as_deref(), limit)
             .await;
 
         if let Err(e) = result {
             tracing::error!("Export error: {}", e);
-            return;
-        }
-
-        if let Err(e) = buf_writer.write_all(&output).await {
-            tracing::error!("Write error: {}", e);
-            return;
-        }
-
-        if let Err(e) = buf_writer.flush().await {
-            tracing::error!("Flush error: {}", e);
         }
     });
 

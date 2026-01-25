@@ -17,7 +17,9 @@ use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
 use ceres_client::GeminiClient;
-use ceres_core::load_portals_config;
+use ceres_core::{
+    TracingReporter, TracingWorkerReporter, WorkerConfig, WorkerService, load_portals_config,
+};
 
 use ceres_server::{AppState, ServerConfig, create_router};
 
@@ -68,8 +70,28 @@ async fn main() -> anyhow::Result<()> {
     // Create application state
     let app_state = AppState::new(pool, gemini_client, portals_config, shutdown_token.clone());
 
-    // Build router
-    let app = create_router(app_state);
+    // Build router with rate limiting and CORS configuration
+    let app = create_router(app_state.clone(), &config);
+
+    // Start background worker for processing harvest jobs
+    let worker_shutdown = shutdown_token.clone();
+    let worker_handle = {
+        let worker = WorkerService::new(
+            app_state.job_repo.clone(),
+            app_state.harvest_service.clone(),
+            WorkerConfig::default(),
+        );
+        tokio::spawn(async move {
+            info!("Starting background worker for harvest jobs");
+            if let Err(e) = worker
+                .run(worker_shutdown, &TracingWorkerReporter, &TracingReporter)
+                .await
+            {
+                tracing::error!("Worker error: {}", e);
+            }
+            info!("Background worker stopped");
+        })
+    };
 
     // Bind to address
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
@@ -82,12 +104,23 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting Ceres API server on http://{}", addr);
     info!("Swagger UI available at http://{}/swagger-ui", addr);
+    info!(
+        "Rate limiting: {} req/s, burst size {}",
+        config.rate_limit_rps, config.rate_limit_burst
+    );
 
     // Start server with graceful shutdown
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(shutdown_token))
-        .await
-        .context("Server error")?;
+    // Use into_make_service_with_connect_info to enable peer IP extraction for rate limiting
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(shutdown_token))
+    .await
+    .context("Server error")?;
+
+    // Wait for worker to finish
+    let _ = worker_handle.await;
 
     info!("Server shutdown complete");
     Ok(())
@@ -119,9 +152,9 @@ async fn shutdown_signal(shutdown_token: CancellationToken) {
 
     info!("Shutdown signal received, starting graceful shutdown...");
 
-    // Cancel the shutdown token to signal workers
+    // Cancel the shutdown token to signal the background worker
     shutdown_token.cancel();
 
-    // Give workers time to finish current jobs
+    // Allow time for in-flight HTTP requests and worker jobs to complete
     tokio::time::sleep(Duration::from_secs(2)).await;
 }

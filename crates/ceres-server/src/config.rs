@@ -25,4 +25,17 @@ pub struct ServerConfig {
     /// Path to portals.toml configuration file
     #[arg(long, env = "PORTALS_CONFIG")]
     pub portals_config: Option<PathBuf>,
+
+    /// Allowed CORS origins (comma-separated). Use "*" for any origin (dev only).
+    /// Example: "https://example.com,https://app.example.com"
+    #[arg(long, env = "CORS_ALLOWED_ORIGINS", default_value = "*")]
+    pub cors_origins: String,
+
+    /// Rate limit: maximum requests per second per IP
+    #[arg(long, env = "RATE_LIMIT_RPS", default_value = "10")]
+    pub rate_limit_rps: u32,
+
+    /// Rate limit: burst size (max requests allowed in a burst)
+    #[arg(long, env = "RATE_LIMIT_BURST", default_value = "30")]
+    pub rate_limit_burst: u32,
 }

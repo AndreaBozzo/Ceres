@@ -24,6 +24,7 @@ use std::io::Write;
 
 use futures::StreamExt;
 use serde::Serialize;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::error::AppError;
 use crate::models::Dataset;
@@ -151,6 +152,109 @@ where
             .map_err(|e| AppError::Generic(e.to_string()))?;
         Ok(count)
     }
+
+    /// Exports datasets to an async writer in streaming mode.
+    ///
+    /// This method writes directly to the async writer without buffering the entire
+    /// dataset in memory, making it suitable for HTTP streaming responses.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The async output writer
+    /// * `format` - The export format (JSONL, JSON, or CSV)
+    /// * `portal_filter` - Optional portal URL to filter by
+    /// * `limit` - Optional maximum number of records
+    ///
+    /// # Returns
+    ///
+    /// The number of datasets exported.
+    pub async fn export_to_async_writer<W: AsyncWrite + Unpin>(
+        &self,
+        writer: &mut W,
+        format: ExportFormat,
+        portal_filter: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<u64, AppError> {
+        let mut stream = self.store.list_stream(portal_filter, limit);
+        let mut count = 0u64;
+
+        match format {
+            ExportFormat::Jsonl => {
+                while let Some(result) = stream.next().await {
+                    let dataset = result?;
+                    let record = create_export_record(&dataset);
+                    let mut json = serde_json::to_string(&record)
+                        .map_err(|e| AppError::Generic(e.to_string()))?;
+                    json.push('\n');
+                    writer
+                        .write_all(json.as_bytes())
+                        .await
+                        .map_err(|e| AppError::Generic(e.to_string()))?;
+                    count += 1;
+                }
+            }
+            ExportFormat::Json => {
+                writer
+                    .write_all(b"[\n")
+                    .await
+                    .map_err(|e| AppError::Generic(e.to_string()))?;
+                let mut first = true;
+
+                while let Some(result) = stream.next().await {
+                    let dataset = result?;
+                    let record = create_export_record(&dataset);
+
+                    if !first {
+                        writer
+                            .write_all(b",\n")
+                            .await
+                            .map_err(|e| AppError::Generic(e.to_string()))?;
+                    }
+                    first = false;
+
+                    let json = serde_json::to_string_pretty(&record)
+                        .map_err(|e| AppError::Generic(e.to_string()))?;
+                    // Indent each line for proper formatting
+                    for line in json.lines() {
+                        writer
+                            .write_all(format!("  {}\n", line).as_bytes())
+                            .await
+                            .map_err(|e| AppError::Generic(e.to_string()))?;
+                    }
+                    count += 1;
+                }
+
+                writer
+                    .write_all(b"]\n")
+                    .await
+                    .map_err(|e| AppError::Generic(e.to_string()))?;
+            }
+            ExportFormat::Csv => {
+                writer
+                    .write_all(
+                        b"id,original_id,source_portal,url,title,description,first_seen_at,last_updated_at\n",
+                    )
+                    .await
+                    .map_err(|e| AppError::Generic(e.to_string()))?;
+
+                while let Some(result) = stream.next().await {
+                    let dataset = result?;
+                    let row = format_csv_row(&dataset);
+                    writer
+                        .write_all(row.as_bytes())
+                        .await
+                        .map_err(|e| AppError::Generic(e.to_string()))?;
+                    count += 1;
+                }
+            }
+        }
+
+        writer
+            .flush()
+            .await
+            .map_err(|e| AppError::Generic(e.to_string()))?;
+        Ok(count)
+    }
 }
 
 /// Record structure for JSON/JSONL export.
@@ -182,15 +286,22 @@ fn create_export_record(dataset: &Dataset) -> ExportRecord {
 }
 
 fn write_csv_row<W: Write>(writer: &mut W, dataset: &Dataset) -> Result<(), AppError> {
+    let row = format_csv_row(dataset);
+    writer
+        .write_all(row.as_bytes())
+        .map_err(|e| AppError::Generic(e.to_string()))?;
+    Ok(())
+}
+
+fn format_csv_row(dataset: &Dataset) -> String {
     let description = dataset
         .description
         .as_ref()
         .map(|d| escape_csv(d))
         .unwrap_or_default();
 
-    writeln!(
-        writer,
-        "{},{},{},{},{},{},{},{}",
+    format!(
+        "{},{},{},{},{},{},{},{}\n",
         dataset.id,
         escape_csv(&dataset.original_id),
         escape_csv(&dataset.source_portal),
@@ -200,9 +311,6 @@ fn write_csv_row<W: Write>(writer: &mut W, dataset: &Dataset) -> Result<(), AppE
         dataset.first_seen_at.format("%Y-%m-%dT%H:%M:%SZ"),
         dataset.last_updated_at.format("%Y-%m-%dT%H:%M:%SZ"),
     )
-    .map_err(|e| AppError::Generic(e.to_string()))?;
-
-    Ok(())
 }
 
 fn escape_csv(s: &str) -> String {
