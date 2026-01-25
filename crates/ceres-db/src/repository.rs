@@ -400,6 +400,15 @@ impl DatasetRepository {
         Ok(())
     }
 
+    /// Checks database connectivity by executing a simple query.
+    pub async fn health_check(&self) -> Result<(), AppError> {
+        sqlx::query("SELECT 1")
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::DatabaseError)?;
+        Ok(())
+    }
+
     /// Returns aggregated database statistics.
     pub async fn get_stats(&self) -> Result<DatabaseStats, AppError> {
         let row: StatsRow = sqlx::query_as(
@@ -548,6 +557,10 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
             datasets_synced,
         )
         .await
+    }
+
+    async fn health_check(&self) -> Result<(), AppError> {
+        DatasetRepository::health_check(self).await
     }
 }
 

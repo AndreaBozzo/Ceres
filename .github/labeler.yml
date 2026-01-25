@@ -8,6 +8,11 @@
       - any-glob-to-any-file:
           - crates/ceres-core/**
 
+"area: server":
+  - changed-files:
+      - any-glob-to-any-file:
+          - crates/ceres-server/**
+
 "area: db":
   - changed-files:
       - any-glob-to-any-file:
