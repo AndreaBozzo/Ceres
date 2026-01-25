@@ -5,7 +5,7 @@ use utoipa::OpenApi;
 use crate::dto::{
     DatasetResponse, ExportQuery, HarvestJobResponse, HarvestStatusResponse, HealthResponse,
     PortalInfoResponse, PortalStatsResponse, SearchQuery, SearchResponse, SearchResultDto,
-    StatsResponse, SyncStatsDto, TriggerHarvestRequest,
+    ServiceStatus, StatsResponse, SyncStatsDto, TriggerHarvestRequest,
 };
 use crate::handlers::{datasets, export, harvest, health, portals, search, stats};
 
@@ -65,6 +65,7 @@ semantic search capabilities using vector embeddings.
             TriggerHarvestRequest,
             // Response types
             HealthResponse,
+            ServiceStatus,
             StatsResponse,
             SearchResponse,
             SearchResultDto,

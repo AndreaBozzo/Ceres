@@ -3,10 +3,13 @@
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
+/// Maximum allowed search query length.
+pub const MAX_SEARCH_QUERY_LENGTH: usize = 2000;
+
 /// Query parameters for semantic search.
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
 pub struct SearchQuery {
-    /// The search query text
+    /// The search query text (max: 2000 characters)
     #[param(example = "air quality monitoring")]
     pub q: String,
 
@@ -14,6 +17,9 @@ pub struct SearchQuery {
     #[param(example = 10)]
     pub limit: Option<usize>,
 }
+
+/// Maximum allowed export limit to prevent resource exhaustion.
+pub const MAX_EXPORT_LIMIT: usize = 1_000_000;
 
 /// Query parameters for dataset export.
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
@@ -26,7 +32,7 @@ pub struct ExportQuery {
     #[param(example = "https://dati.comune.milano.it")]
     pub portal: Option<String>,
 
-    /// Maximum number of records to export
+    /// Maximum number of records to export (max: 1,000,000)
     #[param(example = 1000)]
     pub limit: Option<usize>,
 }

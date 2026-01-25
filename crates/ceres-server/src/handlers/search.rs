@@ -5,7 +5,7 @@ use axum::{
     extract::{Query, State},
 };
 
-use crate::dto::{SearchQuery, SearchResponse, SearchResultDto};
+use crate::dto::{MAX_SEARCH_QUERY_LENGTH, SearchQuery, SearchResponse, SearchResultDto};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -32,6 +32,13 @@ pub async fn search(
 
     if params.q.trim().is_empty() {
         return Err(ApiError::BadRequest("Query cannot be empty".to_string()));
+    }
+
+    if params.q.len() > MAX_SEARCH_QUERY_LENGTH {
+        return Err(ApiError::BadRequest(format!(
+            "Query exceeds maximum length of {} characters",
+            MAX_SEARCH_QUERY_LENGTH
+        )));
     }
 
     let results = state

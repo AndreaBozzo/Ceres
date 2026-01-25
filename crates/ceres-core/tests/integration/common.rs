@@ -374,4 +374,9 @@ impl DatasetStore for MockDatasetStore {
         });
         Ok(())
     }
+
+    async fn health_check(&self) -> Result<(), AppError> {
+        // Mock is always healthy
+        Ok(())
+    }
 }

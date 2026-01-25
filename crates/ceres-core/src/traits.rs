@@ -260,4 +260,10 @@ pub trait DatasetStore: Send + Sync + Clone {
         sync_status: &str,
         datasets_synced: i32,
     ) -> impl Future<Output = Result<(), AppError>> + Send;
+
+    /// Checks database connectivity.
+    ///
+    /// Performs a simple query to verify the database is reachable and responsive.
+    /// Used by health check endpoints.
+    fn health_check(&self) -> impl Future<Output = Result<(), AppError>> + Send;
 }

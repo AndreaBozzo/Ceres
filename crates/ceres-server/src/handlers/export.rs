@@ -9,7 +9,7 @@ use tokio_util::io::ReaderStream;
 
 use ceres_core::ExportFormat;
 
-use crate::dto::ExportQuery;
+use crate::dto::{ExportQuery, MAX_EXPORT_LIMIT};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -33,6 +33,17 @@ pub async fn export_datasets(
     State(state): State<AppState>,
     Query(params): Query<ExportQuery>,
 ) -> Result<Response<Body>, ApiError> {
+    // Validate and cap the limit
+    let limit = match params.limit {
+        Some(l) if l > MAX_EXPORT_LIMIT => {
+            return Err(ApiError::BadRequest(format!(
+                "Limit exceeds maximum allowed value of {}",
+                MAX_EXPORT_LIMIT
+            )));
+        }
+        other => other,
+    };
+
     let format = parse_format(params.format.as_deref())?;
     let content_type = content_type_for_format(&format);
     let file_extension = extension_for_format(&format);
@@ -44,7 +55,6 @@ pub async fn export_datasets(
     // Clone what we need for the spawned task
     let export_service = state.export_service.clone();
     let portal_filter = params.portal.clone();
-    let limit = params.limit;
 
     // Spawn a task to write export data directly to the stream
     tokio::spawn(async move {

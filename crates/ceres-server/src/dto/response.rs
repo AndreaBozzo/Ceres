@@ -14,10 +14,22 @@ use ceres_core::{DatabaseStats, HarvestJob, SearchResult, SyncStats};
 /// Health check response.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct HealthResponse {
-    /// Health status ("healthy" or "unhealthy")
+    /// Health status ("healthy", "degraded", or "unhealthy")
     pub status: String,
     /// Server version
     pub version: String,
+    /// Database connectivity status
+    pub database: ServiceStatus,
+}
+
+/// Status of an individual service component.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ServiceStatus {
+    /// Whether the service is reachable
+    pub healthy: bool,
+    /// Optional message (e.g., error details)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Database statistics response.
