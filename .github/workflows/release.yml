@@ -209,6 +209,13 @@ jobs:
           sleep 60
 
           publish_crate ceres-search
+          echo "Waiting 60s for crates.io indexing..."
+          sleep 60
+
+          publish_crate ceres-server
+          echo "Waiting 60s for crates.io indexing..."
+          sleep 60
+
           echo "All crates published successfully"
 
   release:
