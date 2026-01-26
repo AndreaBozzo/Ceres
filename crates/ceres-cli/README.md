@@ -1,10 +1,11 @@
-# ceres-search
+# ceres-cli
 
-**The easy way to use Ceres.**
+**The command-line interface for Ceres.**
 
-`ceres-search is the tool you use to talk to Ceres from your computer's terminal. It makes it simple to start "harvesting" data and searching for information.
+`ceres-cli` is the tool to interact with Ceres from your terminal. It provides commands for harvesting data and searching information.
 
 ### What you can do
-* **Start a Harvest:** Command Ceres to begin syncing data from various web portals.
-* **Manage Settings:** Easily update your database links or portal lists.
-* **Quick Search:** Find the information you need directly from your command line.
+* **Harvest**: Sync datasets from CKAN portals.
+* **Search**: Find datasets using semantic search.
+* **Export**: Export data in JSON, JSONL, or CSV format.
+* **Stats**: View database statistics.

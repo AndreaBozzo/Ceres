@@ -1,8 +1,10 @@
 # ceres-core
 
-This crate serves as the heart of the Ceres engine. It is responsible for the foundation of the system, specifically handling:
+**The foundation of Ceres.**
 
-* **Core Types & Errors**: Manages fundamental data structure and system-wide error definitions.
-* **Configuration**: Defines the environment settings and setup required for the project.
-* **Data Models**: Handles specialized models such as Dataset and Portal
+This crate provides the core building blocks: types, errors, configuration, and data models used throughout the project.
 
+### What it provides
+* **Core Types & Errors**: Fundamental data structures and error definitions.
+* **Configuration**: Environment settings and database configuration.
+* **Data Models**: Domain models like Dataset and Portal.

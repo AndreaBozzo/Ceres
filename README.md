@@ -152,6 +152,7 @@ As shown, the initial cost to index a substantial number of datasets is just a f
 | Database | PostgreSQL 16+ with pgvector |
 | Embeddings | Google Gemini text-embedding-004 |
 | Portal Protocol | CKAN API v3 |
+| REST API | Axum with OpenAPI/Swagger UI |
 
 ## Quick Start
 
@@ -247,6 +248,30 @@ Environment Variables:
   GEMINI_API_KEY   Google Gemini API key for embeddings
 ```
 
+## REST API
+
+Start the server:
+
+```bash
+ceres-server
+```
+
+Available endpoints:
+- `GET /api/v1/search` — Semantic search
+- `POST /api/v1/harvest` — Trigger harvesting
+- `GET /api/v1/export` — Export datasets
+- `GET /api/v1/stats` — Database statistics
+- `GET /api/v1/portals` — List portals
+- `GET /swagger-ui` — Interactive API docs
+
+Server environment variables:
+```
+PORT                  Server port (default: 3000)
+HOST                  Server host (default: 0.0.0.0)
+CORS_ALLOWED_ORIGINS  Comma-separated allowed origins
+RATE_LIMIT_RPS        Requests per second limit
+```
+
 ## Development
 
 The project includes a Makefile with convenient shortcuts for common development tasks:
@@ -295,7 +320,7 @@ make help
 - Delta detection
 - Improved error handling and retry logic
 
-### v0.2 — Multi-portal & API
+### v0.2 — Multi-portal & API ✅
 - Incremental harvesting (time-based metadata filtering)
 - REST API
 - Graceful shutdown
