@@ -66,10 +66,10 @@ jobs:
           # Update workspace version
           sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
 
-          # Update internal crate dependencies
-          sed -i "s/ceres-core = { version = \".*\"/ceres-core = { version = \"${VERSION}\"/" Cargo.toml
-          sed -i "s/ceres-client = { version = \".*\"/ceres-client = { version = \"${VERSION}\"/" Cargo.toml
-          sed -i "s/ceres-db = { version = \".*\"/ceres-db = { version = \"${VERSION}\"/" Cargo.toml
+          # Update internal crate dependencies (keep the path for local development)
+          sed -i "s/ceres-core = { version = \"[^\"]*\", path/ceres-core = { version = \"${VERSION}\", path/" Cargo.toml
+          sed -i "s/ceres-client = { version = \"[^\"]*\", path/ceres-client = { version = \"${VERSION}\", path/" Cargo.toml
+          sed -i "s/ceres-db = { version = \"[^\"]*\", path/ceres-db = { version = \"${VERSION}\", path/" Cargo.toml
 
           # Update Cargo.lock
           cargo check --quiet 2>/dev/null || true
