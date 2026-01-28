@@ -349,7 +349,7 @@ cargo test
 RUST_LOG=debug cargo run -- harvest https://dati.comune.milano.it
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
 
 ## License
 
