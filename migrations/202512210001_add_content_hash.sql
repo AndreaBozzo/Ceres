@@ -1,4 +1,4 @@
--- Migration: Add content_hash column for delta harvesting
+-- Migration: Add content_hash column for delta detection
 -- This enables tracking content changes to avoid unnecessary embedding regeneration
 
 -- Add the content_hash column (nullable for backward compatibility with existing records)

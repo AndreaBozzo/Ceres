@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update Ceres architecture diagram image with drawio
 - Implement structured error handling for Gemini API with classification and detailed messages
 - Add changelog
-- Delta harvesting with content hash tracking
+- Delta detection with content hash tracking
 - Add portals.toml for multi-portal batch harvesting
 - Implement automated release workflow and update versioning to 0.1.0
 

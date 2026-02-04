@@ -103,7 +103,7 @@ $ ceres stats
 
 - **CKAN Harvester** — Fetch datasets from any CKAN-compatible portal
 - **Multi-portal Batch Harvest** — Configure multiple portals in `portals.toml` and harvest them all at once
-- **Delta Detection** — Only regenerate embeddings for changed datasets (99.8% API cost savings)
+- **Delta Detection** — Only regenerate embeddings for changed datasets (99.8% API cost savings). See [Harvesting Architecture](docs/HARVESTING.md)
 - **Persistent Jobs** — Recoverable database-backed job queue with automatic retries and exponential backoff
 - **Graceful Shutdown** — Safely interrupt harvesting to ensure data consistency and release in-progress jobs back to the queue
 - **Real-time Progress** — Live progress reporting during harvest with batch timestamp updates
