@@ -31,6 +31,14 @@ impl SlowEmbeddingProvider {
 }
 
 impl EmbeddingProvider for SlowEmbeddingProvider {
+    fn name(&self) -> &'static str {
+        "slow-mock"
+    }
+
+    fn dimension(&self) -> usize {
+        768
+    }
+
     async fn generate(&self, _text: &str) -> Result<Vec<f32>, AppError> {
         sleep(self.delay).await;
         self.processed_count.fetch_add(1, Ordering::Relaxed);

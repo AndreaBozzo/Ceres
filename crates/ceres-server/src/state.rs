@@ -1,6 +1,6 @@
 use tokio_util::sync::CancellationToken;
 
-use ceres_client::{CkanClientFactory, GeminiClient};
+use ceres_client::{CkanClientFactory, EmbeddingProviderEnum};
 use ceres_core::{ExportService, HarvestService, PortalsConfig, SearchService};
 use ceres_db::{DatasetRepository, JobRepository};
 
@@ -11,10 +11,11 @@ use ceres_db::{DatasetRepository, JobRepository};
 #[derive(Clone)]
 pub struct AppState {
     /// Search service for semantic search operations
-    pub search_service: SearchService<DatasetRepository, GeminiClient>,
+    pub search_service: SearchService<DatasetRepository, EmbeddingProviderEnum>,
 
     /// Harvest service for portal synchronization
-    pub harvest_service: HarvestService<DatasetRepository, GeminiClient, CkanClientFactory>,
+    pub harvest_service:
+        HarvestService<DatasetRepository, EmbeddingProviderEnum, CkanClientFactory>,
 
     /// Export service for streaming data exports
     pub export_service: ExportService<DatasetRepository>,
@@ -36,7 +37,7 @@ impl AppState {
     /// Creates a new application state with all services initialized.
     pub fn new(
         pool: sqlx::PgPool,
-        gemini_client: GeminiClient,
+        embedding_client: EmbeddingProviderEnum,
         portals_config: Option<PortalsConfig>,
         shutdown_token: CancellationToken,
     ) -> Self {
@@ -45,8 +46,12 @@ impl AppState {
         let ckan_factory = CkanClientFactory::new();
 
         Self {
-            search_service: SearchService::new(dataset_repo.clone(), gemini_client.clone()),
-            harvest_service: HarvestService::new(dataset_repo.clone(), gemini_client, ckan_factory),
+            search_service: SearchService::new(dataset_repo.clone(), embedding_client.clone()),
+            harvest_service: HarvestService::new(
+                dataset_repo.clone(),
+                embedding_client,
+                ckan_factory,
+            ),
             export_service: ExportService::new(dataset_repo.clone()),
             dataset_repo,
             job_repo,

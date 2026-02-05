@@ -21,16 +21,55 @@ use uuid::Uuid;
 
 /// Mock embedding provider that returns deterministic vectors.
 ///
-/// Returns a 768-dimensional vector based on the input text length,
-/// making embeddings reproducible for testing.
+/// Returns vectors based on the input text length, making embeddings
+/// reproducible for testing. Dimension is configurable for testing
+/// different provider configurations.
 #[derive(Clone)]
-pub struct MockEmbeddingProvider;
+pub struct MockEmbeddingProvider {
+    dimension: usize,
+}
+
+impl MockEmbeddingProvider {
+    /// Creates a new mock provider with 768 dimensions (Gemini default).
+    pub fn new() -> Self {
+        Self { dimension: 768 }
+    }
+
+    /// Creates a mock provider with a custom dimension.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Simulate OpenAI text-embedding-3-small (1536 dimensions)
+    /// let provider = MockEmbeddingProvider::with_dimension(1536);
+    /// ```
+    #[allow(dead_code)]
+    pub fn with_dimension(dimension: usize) -> Self {
+        Self { dimension }
+    }
+}
+
+impl Default for MockEmbeddingProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl EmbeddingProvider for MockEmbeddingProvider {
+    fn name(&self) -> &'static str {
+        "mock"
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+
     async fn generate(&self, text: &str) -> Result<Vec<f32>, AppError> {
         // Generate a deterministic embedding based on text length
         let seed = text.len() as f32;
-        let embedding: Vec<f32> = (0..768).map(|i| (seed + i as f32) / 1000.0).collect();
+        let embedding: Vec<f32> = (0..self.dimension)
+            .map(|i| (seed + i as f32) / 1000.0)
+            .collect();
         Ok(embedding)
     }
 }

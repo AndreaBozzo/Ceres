@@ -13,11 +13,113 @@
 //! defaults -> config file -> environment variables -> CLI args
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 
 use crate::circuit_breaker::CircuitBreakerConfig;
 use crate::error::AppError;
+
+// =============================================================================
+// Embedding Provider Configuration
+// =============================================================================
+
+/// Embedding provider type.
+///
+/// Determines which embedding API to use for generating text embeddings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EmbeddingProviderType {
+    /// Google Gemini text-embedding-004 (768 dimensions).
+    #[default]
+    Gemini,
+    /// OpenAI text-embedding-3-small (1536d) or text-embedding-3-large (3072d).
+    OpenAI,
+}
+
+impl fmt::Display for EmbeddingProviderType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Gemini => write!(f, "gemini"),
+            Self::OpenAI => write!(f, "openai"),
+        }
+    }
+}
+
+impl FromStr for EmbeddingProviderType {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "gemini" => Ok(Self::Gemini),
+            "openai" => Ok(Self::OpenAI),
+            _ => Err(AppError::ConfigError(format!(
+                "Unknown embedding provider: '{}'. Valid options: gemini, openai",
+                s
+            ))),
+        }
+    }
+}
+
+/// Gemini embedding provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeminiEmbeddingConfig {
+    /// Gemini model name.
+    #[serde(default = "default_gemini_model")]
+    pub model: String,
+}
+
+fn default_gemini_model() -> String {
+    "text-embedding-004".to_string()
+}
+
+impl Default for GeminiEmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            model: default_gemini_model(),
+        }
+    }
+}
+
+/// OpenAI embedding provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIEmbeddingConfig {
+    /// OpenAI model name.
+    #[serde(default = "default_openai_model")]
+    pub model: String,
+    /// Custom API endpoint (for Azure OpenAI or proxies).
+    pub endpoint: Option<String>,
+}
+
+fn default_openai_model() -> String {
+    "text-embedding-3-small".to_string()
+}
+
+impl Default for OpenAIEmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            model: default_openai_model(),
+            endpoint: None,
+        }
+    }
+}
+
+/// Returns the embedding dimension for a given provider and model.
+///
+/// # Arguments
+///
+/// * `provider` - The embedding provider type
+/// * `model` - The model name (optional, uses default if None)
+pub fn embedding_dimension(provider: EmbeddingProviderType, model: Option<&str>) -> usize {
+    match provider {
+        EmbeddingProviderType::Gemini => 768, // text-embedding-004 is always 768
+        EmbeddingProviderType::OpenAI => match model.unwrap_or("text-embedding-3-small") {
+            "text-embedding-3-large" => 3072,
+            _ => 1536, // text-embedding-3-small and ada-002
+        },
+    }
+}
 
 /// Database connection pool configuration.
 ///
@@ -577,5 +679,87 @@ description = "A fully configured portal"
 
         assert!(config.portals.is_empty());
         assert!(config.enabled_portals().is_empty());
+    }
+
+    // =========================================================================
+    // Embedding Provider Configuration Tests
+    // =========================================================================
+
+    #[test]
+    fn test_embedding_provider_type_from_str() {
+        assert_eq!(
+            "gemini".parse::<EmbeddingProviderType>().unwrap(),
+            EmbeddingProviderType::Gemini
+        );
+        assert_eq!(
+            "openai".parse::<EmbeddingProviderType>().unwrap(),
+            EmbeddingProviderType::OpenAI
+        );
+        assert_eq!(
+            "GEMINI".parse::<EmbeddingProviderType>().unwrap(),
+            EmbeddingProviderType::Gemini
+        );
+        assert_eq!(
+            "OpenAI".parse::<EmbeddingProviderType>().unwrap(),
+            EmbeddingProviderType::OpenAI
+        );
+    }
+
+    #[test]
+    fn test_embedding_provider_type_invalid() {
+        let result = "invalid".parse::<EmbeddingProviderType>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_embedding_provider_type_display() {
+        assert_eq!(EmbeddingProviderType::Gemini.to_string(), "gemini");
+        assert_eq!(EmbeddingProviderType::OpenAI.to_string(), "openai");
+    }
+
+    #[test]
+    fn test_embedding_dimension() {
+        // Gemini is always 768
+        assert_eq!(
+            embedding_dimension(EmbeddingProviderType::Gemini, None),
+            768
+        );
+        assert_eq!(
+            embedding_dimension(EmbeddingProviderType::Gemini, Some("text-embedding-004")),
+            768
+        );
+
+        // OpenAI defaults to 1536
+        assert_eq!(
+            embedding_dimension(EmbeddingProviderType::OpenAI, None),
+            1536
+        );
+        assert_eq!(
+            embedding_dimension(
+                EmbeddingProviderType::OpenAI,
+                Some("text-embedding-3-small")
+            ),
+            1536
+        );
+        assert_eq!(
+            embedding_dimension(
+                EmbeddingProviderType::OpenAI,
+                Some("text-embedding-3-large")
+            ),
+            3072
+        );
+    }
+
+    #[test]
+    fn test_gemini_embedding_config_default() {
+        let config = GeminiEmbeddingConfig::default();
+        assert_eq!(config.model, "text-embedding-004");
+    }
+
+    #[test]
+    fn test_openai_embedding_config_default() {
+        let config = OpenAIEmbeddingConfig::default();
+        assert_eq!(config.model, "text-embedding-3-small");
+        assert!(config.endpoint.is_none());
     }
 }

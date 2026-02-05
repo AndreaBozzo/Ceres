@@ -16,10 +16,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
-use ceres_client::GeminiClient;
+use ceres_client::EmbeddingProviderEnum;
+use ceres_core::config::EmbeddingProviderType;
+use ceres_core::traits::EmbeddingProvider;
 use ceres_core::{
     TracingReporter, TracingWorkerReporter, WorkerConfig, WorkerService, load_portals_config,
 };
+use ceres_db::DatasetRepository;
 
 use ceres_server::{AppState, ServerConfig, create_router};
 
@@ -46,9 +49,20 @@ async fn main() -> anyhow::Result<()> {
         .context("Failed to connect to database")?;
     info!("Database connection established");
 
-    // Initialize Gemini client
-    let gemini_client =
-        GeminiClient::new(&config.gemini_api_key).context("Failed to initialize Gemini client")?;
+    // Initialize embedding provider based on configuration
+    let embedding_client = create_embedding_provider(&config)?;
+
+    // Validate embedding dimension matches database configuration
+    let repo = DatasetRepository::new(pool.clone());
+    repo.validate_embedding_dimension(embedding_client.dimension())
+        .await
+        .context("Embedding provider validation failed")?;
+
+    info!(
+        "Using {} embedding provider ({} dimensions)",
+        embedding_client.name(),
+        embedding_client.dimension()
+    );
 
     // Load portal configuration
     let portals_config = if let Some(path) = &config.portals_config {
@@ -68,7 +82,12 @@ async fn main() -> anyhow::Result<()> {
     let shutdown_token = CancellationToken::new();
 
     // Create application state
-    let app_state = AppState::new(pool, gemini_client, portals_config, shutdown_token.clone());
+    let app_state = AppState::new(
+        pool,
+        embedding_client,
+        portals_config,
+        shutdown_token.clone(),
+    );
 
     // Build router with rate limiting and CORS configuration
     let app = create_router(app_state.clone(), &config);
@@ -157,4 +176,33 @@ async fn shutdown_signal(shutdown_token: CancellationToken) {
 
     // Allow time for in-flight HTTP requests and worker jobs to complete
     tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// Creates an embedding provider based on server configuration.
+fn create_embedding_provider(config: &ServerConfig) -> anyhow::Result<EmbeddingProviderEnum> {
+    let provider_type: EmbeddingProviderType = config
+        .embedding_provider
+        .parse()
+        .context("Invalid embedding provider")?;
+
+    match provider_type {
+        EmbeddingProviderType::Gemini => {
+            let api_key = config.gemini_api_key.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("GEMINI_API_KEY required when using gemini provider")
+            })?;
+            EmbeddingProviderEnum::gemini(api_key).context("Failed to initialize Gemini client")
+        }
+        EmbeddingProviderType::OpenAI => {
+            let api_key = config.openai_api_key.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("OPENAI_API_KEY required when using openai provider")
+            })?;
+
+            if let Some(model) = &config.embedding_model {
+                EmbeddingProviderEnum::openai_with_model(api_key, model)
+                    .context("Failed to initialize OpenAI client")
+            } else {
+                EmbeddingProviderEnum::openai(api_key).context("Failed to initialize OpenAI client")
+            }
+        }
+    }
 }
