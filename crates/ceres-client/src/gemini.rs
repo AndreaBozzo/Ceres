@@ -247,9 +247,22 @@ impl GeminiClient {
 // =============================================================================
 
 impl ceres_core::traits::EmbeddingProvider for GeminiClient {
+    fn name(&self) -> &'static str {
+        "gemini"
+    }
+
+    fn dimension(&self) -> usize {
+        // text-embedding-004 produces 768-dimensional vectors
+        768
+    }
+
     async fn generate(&self, text: &str) -> Result<Vec<f32>, AppError> {
         self.get_embeddings(text).await
     }
+
+    // Note: Gemini API supports batch embeddings via batchEmbedContents endpoint.
+    // For now, we use the default sequential implementation.
+    // TODO: Implement native batch API for improved efficiency.
 }
 
 #[cfg(test)]

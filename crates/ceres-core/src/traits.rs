@@ -41,7 +41,25 @@ use crate::{AppError, Dataset, NewDataset, SearchResult};
 /// Provider for generating text embeddings.
 ///
 /// Implementations convert text into vector representations for semantic search.
+/// Different providers may produce vectors of different dimensions:
+/// - Gemini text-embedding-004: 768 dimensions
+/// - OpenAI text-embedding-3-small: 1536 dimensions
+/// - OpenAI text-embedding-3-large: 3072 dimensions
 pub trait EmbeddingProvider: Send + Sync + Clone {
+    /// Returns the provider identifier for logging and configuration.
+    ///
+    /// # Examples
+    ///
+    /// - `"gemini"` for Google Gemini
+    /// - `"openai"` for OpenAI
+    fn name(&self) -> &'static str;
+
+    /// Returns the embedding dimension this provider generates.
+    ///
+    /// This value must match the database column dimension for vector storage.
+    /// Mismatched dimensions will cause insertion failures.
+    fn dimension(&self) -> usize;
+
     /// Generates an embedding vector for the given text.
     ///
     /// # Arguments
@@ -51,7 +69,34 @@ pub trait EmbeddingProvider: Send + Sync + Clone {
     /// # Returns
     ///
     /// A vector of floating-point values representing the text embedding.
+    /// The vector length must equal `self.dimension()`.
     fn generate(&self, text: &str) -> impl Future<Output = Result<Vec<f32>, AppError>> + Send;
+
+    /// Generates embeddings for multiple texts in a batch.
+    ///
+    /// The default implementation calls `generate()` sequentially.
+    /// Providers with native batch API support should override for efficiency.
+    ///
+    /// # Arguments
+    ///
+    /// * `texts` - Slice of texts to embed
+    ///
+    /// # Returns
+    ///
+    /// A vector of embedding vectors, one per input text.
+    fn generate_batch(
+        &self,
+        texts: &[String],
+    ) -> impl Future<Output = Result<Vec<Vec<f32>>, AppError>> + Send {
+        let texts_owned: Vec<String> = texts.to_vec();
+        async move {
+            let mut results = Vec::with_capacity(texts_owned.len());
+            for text in &texts_owned {
+                results.push(self.generate(text).await?);
+            }
+            Ok(results)
+        }
+    }
 }
 
 /// Client for accessing open data portals (CKAN, Socrata, etc.).

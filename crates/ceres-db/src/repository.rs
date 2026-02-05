@@ -409,6 +409,88 @@ impl DatasetRepository {
         Ok(())
     }
 
+    // =========================================================================
+    // Embedding Configuration Methods
+    // =========================================================================
+
+    /// Retrieves the current embedding provider configuration from the database.
+    ///
+    /// Returns None if no configuration exists (fresh database).
+    pub async fn get_embedding_config(&self) -> Result<Option<EmbeddingConfigRow>, AppError> {
+        let result = sqlx::query_as::<_, EmbeddingConfigRow>(
+            r#"
+            SELECT provider_name, model_name, dimension
+            FROM embedding_config
+            WHERE id = 1
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+        Ok(result)
+    }
+
+    /// Validates that the embedding provider's dimension matches the database configuration.
+    ///
+    /// This should be called at startup to fail fast if there's a mismatch.
+    /// Returns Ok(()) if dimensions match or if no config exists (first run).
+    ///
+    /// # Arguments
+    ///
+    /// * `provider_dimension` - The dimension from the embedding provider
+    ///
+    /// # Errors
+    ///
+    /// Returns `AppError::ConfigError` if dimensions don't match.
+    pub async fn validate_embedding_dimension(
+        &self,
+        provider_dimension: usize,
+    ) -> Result<(), AppError> {
+        if let Some(config) = self.get_embedding_config().await? {
+            if config.dimension as usize != provider_dimension {
+                return Err(AppError::ConfigError(format!(
+                    "Embedding dimension mismatch: database configured for {} dimensions ({}), \
+                     but provider generates {} dimensions. \
+                     To switch providers, clear existing embeddings and update the embedding_config table.",
+                    config.dimension, config.provider_name, provider_dimension
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Updates the embedding provider configuration in the database.
+    ///
+    /// WARNING: This should only be called after clearing existing embeddings
+    /// and altering the vector column dimension.
+    pub async fn update_embedding_config(
+        &self,
+        provider_name: &str,
+        model_name: &str,
+        dimension: usize,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            INSERT INTO embedding_config (id, provider_name, model_name, dimension, updated_at)
+            VALUES (1, $1, $2, $3, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                provider_name = EXCLUDED.provider_name,
+                model_name = EXCLUDED.model_name,
+                dimension = EXCLUDED.dimension,
+                updated_at = NOW()
+            "#,
+        )
+        .bind(provider_name)
+        .bind(model_name)
+        .bind(dimension as i32)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+        Ok(())
+    }
+
     /// Returns aggregated database statistics.
     pub async fn get_stats(&self) -> Result<DatabaseStats, AppError> {
         let row: StatsRow = sqlx::query_as(
@@ -477,6 +559,14 @@ pub struct PortalSyncStatus {
     pub datasets_synced: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Represents the embedding provider configuration stored in the database.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct EmbeddingConfigRow {
+    pub provider_name: String,
+    pub model_name: String,
+    pub dimension: i32,
 }
 
 // =============================================================================

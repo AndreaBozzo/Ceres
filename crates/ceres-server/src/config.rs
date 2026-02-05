@@ -10,9 +10,21 @@ pub struct ServerConfig {
     #[arg(long, env = "DATABASE_URL")]
     pub database_url: String,
 
-    /// Google Gemini API key for generating embeddings
+    /// Embedding provider to use: gemini (default) or openai
+    #[arg(long, env = "EMBEDDING_PROVIDER", default_value = "gemini")]
+    pub embedding_provider: String,
+
+    /// Google Gemini API key (required when embedding_provider=gemini)
     #[arg(long, env = "GEMINI_API_KEY")]
-    pub gemini_api_key: String,
+    pub gemini_api_key: Option<String>,
+
+    /// OpenAI API key (required when embedding_provider=openai)
+    #[arg(long, env = "OPENAI_API_KEY")]
+    pub openai_api_key: Option<String>,
+
+    /// Embedding model name (provider-specific, uses default if not set)
+    #[arg(long, env = "EMBEDDING_MODEL")]
+    pub embedding_model: Option<String>,
 
     /// Server port to listen on
     #[arg(short, long, env = "PORT", default_value = "3000")]

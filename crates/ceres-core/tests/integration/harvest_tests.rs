@@ -27,7 +27,7 @@ async fn test_harvest_creates_new_dataset() {
     }];
 
     let store = MockDatasetStore::new();
-    let embedding = MockEmbeddingProvider;
+    let embedding = MockEmbeddingProvider::new();
     let factory = MockPortalClientFactory::new(datasets);
 
     let config = SyncConfig {
@@ -78,7 +78,7 @@ async fn test_harvest_skips_unchanged_dataset() {
     }];
 
     let store = MockDatasetStore::new();
-    let embedding = MockEmbeddingProvider;
+    let embedding = MockEmbeddingProvider::new();
     let factory = MockPortalClientFactory::new(datasets);
 
     let config = SyncConfig {
