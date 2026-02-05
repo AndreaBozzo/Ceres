@@ -452,7 +452,7 @@ impl DatasetRepository {
                 return Err(AppError::ConfigError(format!(
                     "Embedding dimension mismatch: database configured for {} dimensions ({}), \
                      but provider generates {} dimensions. \
-                     Run 'ceres embedding migrate' to switch providers.",
+                     To switch providers, clear existing embeddings and update the embedding_config table.",
                     config.dimension, config.provider_name, provider_dimension
                 )));
             }

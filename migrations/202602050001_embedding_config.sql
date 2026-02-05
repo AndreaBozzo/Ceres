@@ -29,16 +29,24 @@ CREATE TABLE IF NOT EXISTS embedding_config (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Insert default configuration for existing Gemini installations.
--- This ensures backward compatibility - existing databases will
--- continue to work with Gemini embeddings.
-INSERT INTO embedding_config (provider_name, model_name, dimension)
-VALUES ('gemini', 'text-embedding-004', 768)
-ON CONFLICT (id) DO NOTHING;
+-- Insert default configuration only for EXISTING Gemini installations.
+-- This ensures backward compatibility - databases that already have datasets
+-- will continue to work with Gemini embeddings.
+-- Fresh installations are left empty, allowing the application to configure
+-- based on the active embedding provider on first run.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM datasets LIMIT 1) THEN
+        INSERT INTO embedding_config (provider_name, model_name, dimension)
+        VALUES ('gemini', 'text-embedding-004', 768)
+        ON CONFLICT (id) DO NOTHING;
+    END IF;
+END
+$$;
 
 COMMENT ON TABLE embedding_config IS
 'Stores the active embedding provider configuration. Only one row allowed.
 Changing providers requires clearing embeddings and running a migration.';
 
 COMMENT ON COLUMN embedding_config.dimension IS
-'Must match the dimension of datasets.embedding vector column (currently 768).';
+'Must match the dimension of datasets.embedding vector column.';

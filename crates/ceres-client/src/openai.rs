@@ -44,6 +44,7 @@ pub struct OpenAIClient {
     model: String,
     endpoint: String,
     dim: usize,
+    timeout_secs: u64,
 }
 
 /// Request body for OpenAI embedding API
@@ -122,6 +123,7 @@ impl OpenAIClient {
             .unwrap_or("https://api.openai.com/v1/embeddings")
             .to_string();
         let dim = model_dimension(model);
+        let timeout_secs = http_config.timeout.as_secs();
 
         Ok(Self {
             client,
@@ -129,6 +131,7 @@ impl OpenAIClient {
             model: model.to_string(),
             endpoint,
             dim,
+            timeout_secs,
         })
     }
 
@@ -183,7 +186,7 @@ impl OpenAIClient {
             .await
             .map_err(|e| {
                 if e.is_timeout() {
-                    AppError::Timeout(30)
+                    AppError::Timeout(self.timeout_secs)
                 } else if e.is_connect() {
                     AppError::NetworkError(format!("Cannot connect to OpenAI: {}", e))
                 } else {
