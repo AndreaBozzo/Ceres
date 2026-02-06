@@ -54,11 +54,42 @@ type = "ckan"
 description = "Open Data NRW (Germany)"
 
 # Other verified portals (uncomment to enable)
+
 # [[portals]]
 # name = "toscana"
 # url = "https://dati.toscana.it"
 # type = "ckan"
 # description = "Open data della Regione Toscana"
+
+# [[portals]]
+# name = "dati-gov-it"
+# url = "https://dati.gov.it/opendata/"
+# type = "ckan"
+# description = "Portale nazionale dati aperti (dati.gov.it) (~70k datasets, very large)"
+
+# [[portals]]
+# name = "lazio"
+# url = "https://dati.lazio.it"
+# type = "ckan"
+# description = "Open data della Regione Lazio"
+
+# [[portals]]
+# name = "emilia-romagna"
+# url = "https://dati.emilia-romagna.it"
+# type = "ckan"
+# description = "Open data della Regione Emilia-Romagna"
+
+# [[portals]]
+# name = "roma"
+# url = "https://dati.comune.roma.it/catalog/"
+# type = "ckan"
+# description = "Open data del Comune di Roma"
+
+# [[portals]]
+# name = "puglia"
+# url = "https://dati.puglia.it/ckan/"
+# type = "ckan"
+# description = "Open data della Regione Puglia"
 
 # [[portals]]
 # name = "hdx"
