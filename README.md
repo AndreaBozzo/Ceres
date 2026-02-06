@@ -109,6 +109,7 @@ $ ceres stats
 - **Graceful Shutdown** — Safely interrupt harvesting to ensure data consistency and release in-progress jobs back to the queue
 - **Real-time Progress** — Live progress reporting during harvest with batch timestamp updates
 - **Semantic Search** — Find datasets by meaning using Gemini embeddings
+- **Pluggable Embeddings** — Switchable embedding backend via trait (Gemini, OpenAI)
 - **Multi-format Export** — Export to JSON, JSON Lines, or CSV
 - **Database Statistics** — Monitor indexed datasets and portals
 
@@ -138,7 +139,7 @@ This scenario estimates the one-time cost to index a catalog of 50,000 datasets.
 
 | Metric | Detail |
 |--------------------------------|--------------------------------------------------------------------------------|
-| **Cost per 1M Input Tokens** | ~$0.15 USD (Standard rate for Google's `text-embedding-004` model) |
+| **Cost per 1M Input Tokens** | ~$0.15 USD (Standard rate for Google's `gemini-embedding-001` model) |
 | **Estimated Tokens per Dataset** | 500 tokens (A generous estimate for title, description, and tags) |
 | **Total Tokens** | `50,000 datasets * 500 tokens/dataset = 25,000,000 tokens` |
 | **Total Initial Cost** | `(25,000,000 / 1,000,000) * $0.15 =` **$3.75** |
@@ -151,7 +152,7 @@ As shown, the initial cost to index a substantial number of datasets is just a f
 |-----------|------------|
 | Language | Rust (async with Tokio) |
 | Database | PostgreSQL 16+ with pgvector |
-| Embeddings | Google Gemini text-embedding-004 |
+| Embeddings | Google Gemini gemini-embedding-001 |
 | Portal Protocol | CKAN API v3 |
 | REST API | Axum with OpenAPI/Swagger UI |
 
@@ -258,19 +259,28 @@ ceres-server
 ```
 
 Available endpoints:
-- `GET /api/v1/search` — Semantic search
-- `POST /api/v1/harvest` — Trigger harvesting
-- `GET /api/v1/export` — Export datasets
-- `GET /api/v1/stats` — Database statistics
-- `GET /api/v1/portals` — List portals
-- `GET /swagger-ui` — Interactive API docs
+- `GET  /api/v1/health` — Health check
+- `GET  /api/v1/stats` — Database statistics
+- `GET  /api/v1/search` — Semantic search
+- `GET  /api/v1/portals` — List configured portals
+- `GET  /api/v1/portals/:name/stats` — Portal-specific statistics
+- `POST /api/v1/portals/:name/harvest` — Trigger harvest for a portal
+- `POST /api/v1/harvest` — Trigger harvest for all portals
+- `GET  /api/v1/harvest/status` — Check harvest job status
+- `GET  /api/v1/export` — Export datasets
+- `GET  /api/v1/datasets/:id` — Get dataset by ID
+- `GET  /swagger-ui` — Interactive API docs
 
 Server environment variables:
 ```
-PORT                  Server port (default: 3000)
-HOST                  Server host (default: 0.0.0.0)
-CORS_ALLOWED_ORIGINS  Comma-separated allowed origins
-RATE_LIMIT_RPS        Requests per second limit
+PORT                   Server port (default: 3000)
+HOST                   Server host (default: 0.0.0.0)
+EMBEDDING_PROVIDER     Embedding backend: gemini or openai (default: gemini)
+EMBEDDING_MODEL        Model name (uses provider default if unset)
+PORTALS_CONFIG         Path to portals.toml (optional)
+CORS_ALLOWED_ORIGINS   Comma-separated allowed origins (default: *)
+RATE_LIMIT_RPS         Requests per second per IP (default: 10)
+RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
 ```
 
 ## Development
@@ -311,7 +321,7 @@ make help
 
 ### v0.0.1 — Initial Release ✅
 - CKAN harvester with concurrent processing
-- Gemini embeddings (text-embedding-004, 768 dimensions)
+- Gemini embeddings (768 dimensions)
 - CLI with harvest, search, export, stats commands
 - PostgreSQL + pgvector backend
 - Multi-format export (JSON, JSONL, CSV)
@@ -328,16 +338,21 @@ make help
 - Persistent jobs
 - Streaming export/search
 
-### Future
-- Multilingual embeddings (E5-multilingual)
-- Cross-language search
+### v0.3.0 — Extensibility & Production Readiness
+- Streaming harvest for large portals ([#85](https://github.com/AndreaBozzo/Ceres/issues/85))
+- Local embeddings via Ollama ([#79](https://github.com/AndreaBozzo/Ceres/issues/79))
+- Abstract PortalClient for Socrata / DCAT-AP support ([#61](https://github.com/AndreaBozzo/Ceres/issues/61))
+- Authentication middleware ([#72](https://github.com/AndreaBozzo/Ceres/issues/72))
+- Docker image ([#74](https://github.com/AndreaBozzo/Ceres/issues/74))
+- Multilingual CKAN field handling ([#40](https://github.com/AndreaBozzo/Ceres/issues/40))
+- Delta detection improvements ([#51](https://github.com/AndreaBozzo/Ceres/issues/51), [#53](https://github.com/AndreaBozzo/Ceres/issues/53))
+- Integration test suite ([#29](https://github.com/AndreaBozzo/Ceres/issues/29))
+
+### Backlog
+- Schema-level search ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
+- Standalone library support ([#35](https://github.com/AndreaBozzo/Ceres/issues/35))
+- Cross-language semantic search
 - data.europa.eu integration
-- Socrata support
-- DCAT-AP harvester (EU portals)
-- Switchable embedding providers
-- Schema-level search
-- Data quality scoring
-- Multi-tenant
 ## Contributing
 
 Contributions are welcome! This project is in early stages, so there's plenty of room to shape its direction.
