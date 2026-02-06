@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 /// HTTP client for interacting with Google's Gemini Embeddings API.
 ///
 /// This client provides methods to generate text embeddings using Google's
-/// text-embedding-004 model. Embeddings are vector representations of text
+/// gemini-embedding-001 model. Embeddings are vector representations of text
 /// that can be used for semantic search, clustering, and similarity comparisons.
 ///
 /// # Security
@@ -70,6 +70,10 @@ pub struct GeminiClient {
 struct EmbeddingRequest {
     model: String,
     content: Content,
+    /// Output dimensionality for Matryoshka (MRL) models like gemini-embedding-001.
+    /// Allows reducing from 3072 default to 768 for compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_dimensionality: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -149,7 +153,7 @@ impl GeminiClient {
         })
     }
 
-    /// Generates text embeddings using Google's text-embedding-004 model.
+    /// Generates text embeddings using Google's gemini-embedding-001 model.
     ///
     /// This method converts input text into a 768-dimensional vector representation
     /// that captures semantic meaning.
@@ -170,21 +174,16 @@ impl GeminiClient {
         // Sanitize text - replace newlines with spaces
         let sanitized_text = text.replace('\n', " ");
 
-        // TODO(config): Make API endpoint configurable via GEMINI_API_ENDPOINT env var
-        // Useful for: (1) Proxy servers, (2) Self-hosted alternatives, (3) Testing
-        let url = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent";
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
 
-        // TODO(config): Make embedding model configurable via GEMINI_EMBEDDING_MODEL env var
-        // Different models offer different cost/quality tradeoffs:
-        // - text-embedding-004 (current): 768 dimensions
-        // - Future models may have different dimensions - handle dynamically
         let request_body = EmbeddingRequest {
-            model: "models/text-embedding-004".to_string(),
+            model: "models/gemini-embedding-001".to_string(),
             content: Content {
                 parts: vec![Part {
                     text: sanitized_text,
                 }],
             },
+            output_dimensionality: Some(768),
         };
 
         let response = self
@@ -252,7 +251,7 @@ impl ceres_core::traits::EmbeddingProvider for GeminiClient {
     }
 
     fn dimension(&self) -> usize {
-        // text-embedding-004 produces 768-dimensional vectors
+        // gemini-embedding-001 with output_dimensionality=768
         768
     }
 
@@ -285,17 +284,19 @@ mod tests {
     #[test]
     fn test_request_serialization() {
         let request = EmbeddingRequest {
-            model: "models/text-embedding-004".to_string(),
+            model: "models/gemini-embedding-001".to_string(),
             content: Content {
                 parts: vec![Part {
                     text: "Hello world".to_string(),
                 }],
             },
+            output_dimensionality: Some(768),
         };
 
         let json = serde_json::to_string(&request).unwrap();
-        assert!(json.contains("text-embedding-004"));
+        assert!(json.contains("gemini-embedding-001"));
         assert!(json.contains("Hello world"));
+        assert!(json.contains("output_dimensionality"));
     }
 
     #[test]

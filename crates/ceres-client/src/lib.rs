@@ -17,7 +17,7 @@
 //!
 //! | Provider | Model | Dimensions |
 //! |----------|-------|------------|
-//! | Gemini | text-embedding-004 | 768 |
+//! | Gemini | gemini-embedding-001 | 768 |
 //! | OpenAI | text-embedding-3-small | 1536 |
 //! | OpenAI | text-embedding-3-large | 3072 |
 
