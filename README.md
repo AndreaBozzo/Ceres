@@ -25,10 +25,11 @@ Ceres harvests metadata from CKAN open data portals and indexes them with vector
 ## Why Ceres?
 
 <div align="center">
-  <img src="docs/assets/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" width="600"/>
+  <img src="docs/assets/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" width="800"/>
   <br/>
-  <sub>5,000 datasets from 5 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar.</sub>
+  <sub>106,657 datasets from 12 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar.</sub>
 </div>
+
 
 Open data portals are everywhere, but finding the right dataset is still painful:
 
@@ -41,34 +42,19 @@ Ceres solves this by creating a unified semantic index. Search by *meaning*, not
 ```
 $ ceres harvest
 
-INFO [Portal 1/5] milano (https://dati.comune.milano.it)
+INFO [Portal 1/12] milano (https://dati.comune.milano.it)
 INFO Found 2575 dataset(s) on portal
-INFO Progress: 2575/2575 (100%) - 0 new, 0 updated, 2575 unchanged, 0 failed
-INFO [Portal 1/5] milano completed: 2575 dataset(s)
+INFO [Portal 1/12] milano completed: 2575 dataset(s)
 
-INFO [Portal 2/5] sicilia (https://dati.regione.sicilia.it)
-INFO Found 186 dataset(s) on portal
-INFO [Portal 2/5] sicilia completed: 186 dataset(s)
-
-INFO [Portal 3/5] trentino (https://dati.trentino.it)
-INFO Found 1388 dataset(s) on portal
-INFO [Portal 3/5] trentino completed: 1388 dataset(s) (1388 created)
-
-INFO [Portal 4/5] aragon (https://opendata.aragon.es/ckan)
-INFO Found 2879 dataset(s) on portal
-INFO [Portal 4/5] aragon completed: 2879 dataset(s) (2879 created)
-
-INFO [Portal 5/5] nrw (https://ckan.open.nrw.de)
-INFO Found 10926 dataset(s) on portal
-INFO [Portal 5/5] nrw completed: 10926 dataset(s) (10926 created)
+...
 
 ═══════════════════════════════════════════════════════
 BATCH HARVEST COMPLETE
 ═══════════════════════════════════════════════════════
-  Portals processed:   5
-  Successful:          5
+  Portals processed:   12
+  Successful:          12
   Failed:              0
-  Total datasets:      17954
+  Total datasets:      106657
 ═══════════════════════════════════════════════════════
 ```
 
@@ -100,10 +86,10 @@ $ ceres stats
 
 📊 Database Statistics
 
-  Total datasets:        17954
-  With embeddings:       17954
-  Unique portals:        5
-  Last update:           2025-12-31 15:09:48 UTC
+  Total datasets:        106657
+  With embeddings:       106657
+  Unique portals:        12
+  Last update:           2026-02-06 15:31:06.250326 UTC
 ```
 
 ## Features
