@@ -24,6 +24,12 @@ Ceres harvests metadata from CKAN open data portals and indexes them with vector
 
 ## Why Ceres?
 
+<div align="center">
+  <img src="docs/assets/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" width="600"/>
+  <br/>
+  <sub>5,000 datasets from 5 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar.</sub>
+</div>
+
 Open data portals are everywhere, but finding the right dataset is still painful:
 
 - **Keyword search fails**: "public transport" won't find "mobility data" or "bus schedules"
