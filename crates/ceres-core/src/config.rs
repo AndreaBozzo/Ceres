@@ -284,6 +284,15 @@ pub struct PortalEntry {
 
     /// Optional description of the portal.
     pub description: Option<String>,
+
+    /// Optional URL template for dataset landing pages.
+    ///
+    /// Supports placeholders:
+    /// - `{id}` — dataset UUID from the CKAN API
+    /// - `{name}` — dataset slug/name
+    ///
+    /// If not set, defaults to `{portal_url}/dataset/{name}`.
+    pub url_template: Option<String>,
 }
 
 /// Default configuration file name.
@@ -315,6 +324,9 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r#"# Ceres Portal Configuration
 #   ceres harvest https://...     # Harvest single URL (ignores this file)
 #
 # Set enabled = false to skip a portal during batch harvest.
+# Use url_template for portals with non-standard frontends:
+#   url_template = "https://example.com/dataset?id={id}"
+#   Placeholders: {id} = dataset UUID, {name} = dataset slug
 
 # City of Milan open data
 [[portals]]

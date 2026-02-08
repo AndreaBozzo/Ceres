@@ -293,6 +293,7 @@ where
             .harvest_service
             .sync_portal_with_progress_cancellable_with_options(
                 &job.portal_url,
+                job.url_template.as_deref(),
                 harvest_reporter,
                 job_cancel.clone(),
                 job.force_full_sync,

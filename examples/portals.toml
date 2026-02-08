@@ -65,6 +65,7 @@ description = "Open Data NRW (Germany)"
 # name = "dati-gov-it"
 # url = "https://dati.gov.it/opendata/"
 # type = "ckan"
+# url_template = "https://www.dati.gov.it/view-dataset/dataset?id={id}"
 # description = "Portale nazionale dati aperti (dati.gov.it) (~70k datasets, very large)"
 
 # [[portals]]
