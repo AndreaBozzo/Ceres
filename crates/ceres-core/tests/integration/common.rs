@@ -126,11 +126,14 @@ impl PortalClient for MockPortalClient {
         let content_hash =
             NewDataset::compute_content_hash(&data.title, data.description.as_deref());
 
+        // Mock uses `id` for both `{id}` and `{name}` since MockPortalData
+        // has no separate name/slug field. This is sufficient for testing
+        // the template plumbing; CKAN-specific substitution is tested in ckan.rs.
         let url = match url_template {
             Some(template) => template
                 .replace("{id}", &data.id)
                 .replace("{name}", &data.id),
-            None => format!("{}/dataset/{}", portal_url, data.id),
+            None => format!("{}/dataset/{}", portal_url.trim_end_matches('/'), data.id),
         };
 
         NewDataset {

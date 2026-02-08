@@ -286,13 +286,13 @@ where
         let report_interval = std::cmp::max(total / 20, 50);
 
         // Process datasets - for incremental sync we already have full dataset objects
-        let url_template_owned = url_template.map(|s| s.to_string());
+        let url_template_arc: Option<Arc<str>> = url_template.map(Arc::from);
         let _results: Vec<_> = stream::iter(datasets_to_process.into_iter())
             .map(|portal_data| {
                 let embedding = self.embedding.clone();
                 let store = self.store.clone();
                 let portal_url = portal_url.to_string();
-                let url_template = url_template_owned.clone();
+                let url_template = url_template_arc.clone();
                 let existing_hashes = existing_hashes.clone();
                 let stats = Arc::clone(&stats);
                 let unchanged_ids = Arc::clone(&unchanged_ids);
@@ -776,13 +776,13 @@ where
         let report_interval = std::cmp::max(total / 20, 50);
 
         // Process datasets with cancellation checks
-        let url_template_owned = url_template.map(|s| s.to_string());
+        let url_template_arc: Option<Arc<str>> = url_template.map(Arc::from);
         let _results: Vec<_> = stream::iter(datasets_to_process.into_iter())
             .map(|portal_data| {
                 let embedding = self.embedding.clone();
                 let store = self.store.clone();
                 let portal_url = portal_url.to_string();
-                let url_template = url_template_owned.clone();
+                let url_template = url_template_arc.clone();
                 let existing_hashes = existing_hashes.clone();
                 let stats = Arc::clone(&stats);
                 let unchanged_ids = Arc::clone(&unchanged_ids);
