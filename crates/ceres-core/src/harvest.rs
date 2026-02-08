@@ -205,7 +205,7 @@ where
     /// - The portal API is unreachable
     /// - Database operations fail
     pub async fn sync_portal(&self, portal_url: &str) -> Result<SyncStats, AppError> {
-        self.sync_portal_with_progress(portal_url, &SilentReporter)
+        self.sync_portal_with_progress(portal_url, None, &SilentReporter)
             .await
     }
 
@@ -222,6 +222,7 @@ where
     pub async fn sync_portal_with_progress<R: ProgressReporter>(
         &self,
         portal_url: &str,
+        url_template: Option<&str>,
         reporter: &R,
     ) -> Result<SyncStats, AppError> {
         let portal_client = self.portal_factory.create(portal_url)?;
@@ -285,18 +286,24 @@ where
         let report_interval = std::cmp::max(total / 20, 50);
 
         // Process datasets - for incremental sync we already have full dataset objects
+        let url_template_owned = url_template.map(|s| s.to_string());
         let _results: Vec<_> = stream::iter(datasets_to_process.into_iter())
             .map(|portal_data| {
                 let embedding = self.embedding.clone();
                 let store = self.store.clone();
                 let portal_url = portal_url.to_string();
+                let url_template = url_template_owned.clone();
                 let existing_hashes = existing_hashes.clone();
                 let stats = Arc::clone(&stats);
                 let unchanged_ids = Arc::clone(&unchanged_ids);
                 let circuit_breaker = circuit_breaker.clone();
 
                 async move {
-                    let mut new_dataset = F::Client::into_new_dataset(portal_data, &portal_url);
+                    let mut new_dataset = F::Client::into_new_dataset(
+                        portal_data,
+                        &portal_url,
+                        url_template.as_deref(),
+                    );
                     let decision = needs_reprocessing(
                         existing_hashes.get(&new_dataset.original_id),
                         &new_dataset.content_hash,
@@ -560,7 +567,10 @@ where
                 portal_url: &portal.url,
             });
 
-            match self.sync_portal_with_progress(&portal.url, reporter).await {
+            match self
+                .sync_portal_with_progress(&portal.url, portal.url_template.as_deref(), reporter)
+                .await
+            {
                 Ok(stats) => {
                     reporter.report(HarvestEvent::PortalCompleted {
                         portal_index: i,
@@ -618,6 +628,7 @@ where
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
+            None,
             &SilentReporter,
             cancel_token,
             self.config.force_full_sync,
@@ -632,11 +643,13 @@ where
     pub async fn sync_portal_with_progress_cancellable<R: ProgressReporter>(
         &self,
         portal_url: &str,
+        url_template: Option<&str>,
         reporter: &R,
         cancel_token: CancellationToken,
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
+            url_template,
             reporter,
             cancel_token,
             self.config.force_full_sync,
@@ -649,6 +662,7 @@ where
     pub async fn sync_portal_with_progress_cancellable_with_options<R: ProgressReporter>(
         &self,
         portal_url: &str,
+        url_template: Option<&str>,
         reporter: &R,
         cancel_token: CancellationToken,
         force_full_sync: bool,
@@ -656,6 +670,7 @@ where
         let force_full_sync = self.config.force_full_sync || force_full_sync;
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
+            url_template,
             reporter,
             cancel_token,
             force_full_sync,
@@ -666,6 +681,7 @@ where
     async fn sync_portal_with_progress_cancellable_internal<R: ProgressReporter>(
         &self,
         portal_url: &str,
+        url_template: Option<&str>,
         reporter: &R,
         cancel_token: CancellationToken,
         force_full_sync: bool,
@@ -760,11 +776,13 @@ where
         let report_interval = std::cmp::max(total / 20, 50);
 
         // Process datasets with cancellation checks
+        let url_template_owned = url_template.map(|s| s.to_string());
         let _results: Vec<_> = stream::iter(datasets_to_process.into_iter())
             .map(|portal_data| {
                 let embedding = self.embedding.clone();
                 let store = self.store.clone();
                 let portal_url = portal_url.to_string();
+                let url_template = url_template_owned.clone();
                 let existing_hashes = existing_hashes.clone();
                 let stats = Arc::clone(&stats);
                 let unchanged_ids = Arc::clone(&unchanged_ids);
@@ -779,7 +797,11 @@ where
                         return Ok(());
                     }
 
-                    let mut new_dataset = F::Client::into_new_dataset(portal_data, &portal_url);
+                    let mut new_dataset = F::Client::into_new_dataset(
+                        portal_data,
+                        &portal_url,
+                        url_template.as_deref(),
+                    );
                     let decision = needs_reprocessing(
                         existing_hashes.get(&new_dataset.original_id),
                         &new_dataset.content_hash,
@@ -1093,7 +1115,12 @@ where
             });
 
             match self
-                .sync_portal_with_progress_cancellable(&portal.url, reporter, cancel_token.clone())
+                .sync_portal_with_progress_cancellable(
+                    &portal.url,
+                    portal.url_template.as_deref(),
+                    reporter,
+                    cancel_token.clone(),
+                )
                 .await
             {
                 Ok(result) => {

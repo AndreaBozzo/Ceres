@@ -118,14 +118,25 @@ impl PortalClient for MockPortalClient {
             .ok_or_else(|| AppError::Generic(format!("Dataset not found: {}", id)))
     }
 
-    fn into_new_dataset(data: Self::PortalData, portal_url: &str) -> NewDataset {
+    fn into_new_dataset(
+        data: Self::PortalData,
+        portal_url: &str,
+        url_template: Option<&str>,
+    ) -> NewDataset {
         let content_hash =
             NewDataset::compute_content_hash(&data.title, data.description.as_deref());
+
+        let url = match url_template {
+            Some(template) => template
+                .replace("{id}", &data.id)
+                .replace("{name}", &data.id),
+            None => format!("{}/dataset/{}", portal_url, data.id),
+        };
 
         NewDataset {
             original_id: data.id.clone(),
             source_portal: portal_url.to_string(),
-            url: format!("{}/dataset/{}", portal_url, data.id),
+            url,
             title: data.title,
             description: data.description,
             embedding: None,

@@ -388,19 +388,29 @@ impl CkanClient {
     ///
     /// let new_dataset = CkanClient::into_new_dataset(
     ///     ckan_dataset,
-    ///     "https://dati.gov.it"
+    ///     "https://dati.gov.it",
+    ///     None,
     /// );
     ///
     /// assert_eq!(new_dataset.original_id, "abc-123");
     /// assert_eq!(new_dataset.url, "https://dati.gov.it/dataset/air-quality-data");
     /// assert_eq!(new_dataset.title, "Air Quality Monitoring");
     /// ```
-    pub fn into_new_dataset(dataset: CkanDataset, portal_url: &str) -> NewDataset {
-        let landing_page = format!(
-            "{}/dataset/{}",
-            portal_url.trim_end_matches('/'),
-            dataset.name
-        );
+    pub fn into_new_dataset(
+        dataset: CkanDataset,
+        portal_url: &str,
+        url_template: Option<&str>,
+    ) -> NewDataset {
+        let landing_page = match url_template {
+            Some(template) => template
+                .replace("{id}", &dataset.id)
+                .replace("{name}", &dataset.name),
+            None => format!(
+                "{}/dataset/{}",
+                portal_url.trim_end_matches('/'),
+                dataset.name
+            ),
+        };
 
         let metadata_json = serde_json::Value::Object(dataset.extras.clone());
 
@@ -456,7 +466,7 @@ mod tests {
         };
 
         let portal_url = "https://dati.gov.it";
-        let new_dataset = CkanClient::into_new_dataset(ckan_dataset.clone(), portal_url);
+        let new_dataset = CkanClient::into_new_dataset(ckan_dataset.clone(), portal_url, None);
 
         assert_eq!(new_dataset.original_id, "dataset-123");
         assert_eq!(new_dataset.source_portal, "https://dati.gov.it");
@@ -469,6 +479,47 @@ mod tests {
             NewDataset::compute_content_hash(&ckan_dataset.title, ckan_dataset.notes.as_deref());
         assert_eq!(new_dataset.content_hash, expected_hash);
         assert_eq!(new_dataset.content_hash.len(), 64);
+    }
+
+    #[test]
+    fn test_into_new_dataset_with_url_template() {
+        let ckan_dataset = CkanDataset {
+            id: "52db43b1-4d6a-446c-a3fc-b2e470fe5a45".to_string(),
+            name: "raccolta-differenziata".to_string(),
+            title: "Raccolta Differenziata".to_string(),
+            notes: Some("Percentuale raccolta differenziata".to_string()),
+            extras: serde_json::Map::new(),
+        };
+
+        let portal_url = "https://dati.gov.it/opendata/";
+        let template = "https://www.dati.gov.it/view-dataset/dataset?id={id}";
+        let new_dataset = CkanClient::into_new_dataset(ckan_dataset, portal_url, Some(template));
+
+        assert_eq!(
+            new_dataset.url,
+            "https://www.dati.gov.it/view-dataset/dataset?id=52db43b1-4d6a-446c-a3fc-b2e470fe5a45"
+        );
+        assert_eq!(new_dataset.source_portal, "https://dati.gov.it/opendata/");
+    }
+
+    #[test]
+    fn test_into_new_dataset_url_template_with_name() {
+        let ckan_dataset = CkanDataset {
+            id: "abc-123".to_string(),
+            name: "air-quality-data".to_string(),
+            title: "Air Quality".to_string(),
+            notes: None,
+            extras: serde_json::Map::new(),
+        };
+
+        let template = "https://example.com/datasets/{name}/view";
+        let new_dataset =
+            CkanClient::into_new_dataset(ckan_dataset, "https://example.com", Some(template));
+
+        assert_eq!(
+            new_dataset.url,
+            "https://example.com/datasets/air-quality-data/view"
+        );
     }
 
     #[test]
@@ -517,8 +568,12 @@ impl ceres_core::traits::PortalClient for CkanClient {
         self.show_package(id).await
     }
 
-    fn into_new_dataset(data: Self::PortalData, portal_url: &str) -> NewDataset {
-        CkanClient::into_new_dataset(data, portal_url)
+    fn into_new_dataset(
+        data: Self::PortalData,
+        portal_url: &str,
+        url_template: Option<&str>,
+    ) -> NewDataset {
+        CkanClient::into_new_dataset(data, portal_url, url_template)
     }
 
     async fn search_modified_since(

@@ -42,6 +42,10 @@ pub async fn trigger_harvest_all(
     for portal in enabled_portals {
         let mut job_request = CreateJobRequest::new(&portal.url).with_name(&portal.name);
 
+        if let Some(ref tmpl) = portal.url_template {
+            job_request = job_request.with_url_template(tmpl);
+        }
+
         if request.force_full_sync {
             job_request = job_request.with_full_sync();
         }

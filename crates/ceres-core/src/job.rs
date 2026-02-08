@@ -200,6 +200,9 @@ pub struct HarvestJob {
 
     /// Whether to force full sync (bypass incremental).
     pub force_full_sync: bool,
+
+    /// Optional URL template for dataset landing pages.
+    pub url_template: Option<String>,
 }
 
 impl HarvestJob {
@@ -230,6 +233,8 @@ pub struct CreateJobRequest {
     pub force_full_sync: bool,
     /// Maximum retries (uses default if None).
     pub max_retries: Option<u32>,
+    /// Optional URL template for dataset landing pages.
+    pub url_template: Option<String>,
 }
 
 impl CreateJobRequest {
@@ -240,6 +245,7 @@ impl CreateJobRequest {
             portal_name: None,
             force_full_sync: false,
             max_retries: None,
+            url_template: None,
         }
     }
 
@@ -258,6 +264,12 @@ impl CreateJobRequest {
     /// Set maximum retries.
     pub fn with_max_retries(mut self, max: u32) -> Self {
         self.max_retries = Some(max);
+        self
+    }
+
+    /// Set URL template for dataset landing pages.
+    pub fn with_url_template(mut self, template: impl Into<String>) -> Self {
+        self.url_template = Some(template.into());
         self
     }
 }
@@ -412,6 +424,7 @@ mod tests {
             sync_stats: None,
             worker_id: Some("worker-1".to_string()),
             force_full_sync: false,
+            url_template: None,
         };
 
         assert!(job.can_retry());

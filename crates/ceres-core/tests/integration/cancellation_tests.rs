@@ -168,6 +168,7 @@ async fn test_batch_harvest_cancellable() {
             description: None,
             enabled: true,
             portal_type: "ckan".to_string(),
+            url_template: None,
         },
         ceres_core::PortalEntry {
             name: "Portal 2".to_string(),
@@ -175,6 +176,7 @@ async fn test_batch_harvest_cancellable() {
             description: None,
             enabled: true,
             portal_type: "ckan".to_string(),
+            url_template: None,
         },
     ];
 

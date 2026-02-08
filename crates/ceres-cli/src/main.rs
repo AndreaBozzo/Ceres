@@ -144,7 +144,7 @@ async fn handle_harvest(
         (Some(url), None) => {
             info!("Syncing portal: {}", url);
             let stats = harvest_service
-                .sync_portal_with_progress(&url, &reporter)
+                .sync_portal_with_progress(&url, None, &reporter)
                 .await?;
             print_single_portal_summary(&url, &stats);
         }
@@ -169,7 +169,7 @@ async fn handle_harvest(
 
             info!("Syncing portal: {}", portal.url);
             let stats = harvest_service
-                .sync_portal_with_progress(&portal.url, &reporter)
+                .sync_portal_with_progress(&portal.url, portal.url_template.as_deref(), &reporter)
                 .await?;
             print_single_portal_summary(&portal.url, &stats);
         }
