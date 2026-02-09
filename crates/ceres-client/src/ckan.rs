@@ -613,7 +613,7 @@ impl ceres_core::traits::PortalClientFactory for CkanClientFactory {
     ) -> Result<Self::Client, AppError> {
         match portal_type {
             ceres_core::config::PortalType::Ckan => CkanClient::new(portal_url),
-            other => Err(AppError::Config(format!(
+            other => Err(AppError::ConfigError(format!(
                 "CkanClientFactory can only create CKAN clients, but portal type {:?} was requested for URL {}",
                 other, portal_url
             ))),
