@@ -62,7 +62,7 @@ pub use circuit_breaker::{
 
 // Configuration
 pub use config::{
-    DbConfig, HttpConfig, PortalEntry, PortalsConfig, SyncConfig, default_config_path,
+    DbConfig, HttpConfig, PortalEntry, PortalType, PortalsConfig, SyncConfig, default_config_path,
     load_portals_config,
 };
 

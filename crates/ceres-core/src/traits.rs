@@ -36,6 +36,7 @@ use futures::stream::BoxStream;
 use pgvector::Vector;
 use uuid::Uuid;
 
+use crate::config::PortalType;
 use crate::{AppError, Dataset, NewDataset, SearchResult};
 
 /// Provider for generating text embeddings.
@@ -106,6 +107,12 @@ pub trait PortalClient: Send + Sync + Clone {
     /// Type representing raw portal data before transformation.
     type PortalData: Send;
 
+    /// Returns the portal type identifier (e.g., "ckan", "socrata", "dcat").
+    fn portal_type(&self) -> &'static str;
+
+    /// Returns the base URL of the portal.
+    fn base_url(&self) -> &str;
+
     /// Lists all dataset IDs available on the portal.
     fn list_dataset_ids(&self) -> impl Future<Output = Result<Vec<String>, AppError>> + Send;
 
@@ -158,12 +165,13 @@ pub trait PortalClientFactory: Send + Sync + Clone {
     /// The type of portal client this factory creates.
     type Client: PortalClient;
 
-    /// Creates a new portal client for the given URL.
+    /// Creates a new portal client for the given URL and portal type.
     ///
     /// # Arguments
     ///
     /// * `portal_url` - The portal API base URL
-    fn create(&self, portal_url: &str) -> Result<Self::Client, AppError>;
+    /// * `portal_type` - The type of portal to create a client for
+    fn create(&self, portal_url: &str, portal_type: PortalType) -> Result<Self::Client, AppError>;
 }
 
 /// Store for dataset persistence and retrieval.

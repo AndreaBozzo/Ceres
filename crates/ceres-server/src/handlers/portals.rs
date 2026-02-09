@@ -45,7 +45,7 @@ pub async fn list_portals(
         portals.push(PortalInfoResponse {
             name: portal.name.clone(),
             url: portal.url.clone(),
-            portal_type: portal.portal_type.clone(),
+            portal_type: portal.portal_type.to_string(),
             enabled: portal.enabled,
             description: portal.description.clone(),
             last_sync: sync_status.as_ref().and_then(|s| s.last_successful_sync),

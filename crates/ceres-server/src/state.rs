@@ -1,6 +1,6 @@
 use tokio_util::sync::CancellationToken;
 
-use ceres_client::{CkanClientFactory, EmbeddingProviderEnum};
+use ceres_client::{EmbeddingProviderEnum, PortalClientFactoryEnum};
 use ceres_core::{ExportService, HarvestService, PortalsConfig, SearchService};
 use ceres_db::{DatasetRepository, JobRepository};
 
@@ -15,7 +15,7 @@ pub struct AppState {
 
     /// Harvest service for portal synchronization
     pub harvest_service:
-        HarvestService<DatasetRepository, EmbeddingProviderEnum, CkanClientFactory>,
+        HarvestService<DatasetRepository, EmbeddingProviderEnum, PortalClientFactoryEnum>,
 
     /// Export service for streaming data exports
     pub export_service: ExportService<DatasetRepository>,
@@ -43,14 +43,14 @@ impl AppState {
     ) -> Self {
         let dataset_repo = DatasetRepository::new(pool.clone());
         let job_repo = JobRepository::new(pool);
-        let ckan_factory = CkanClientFactory::new();
+        let portal_factory = PortalClientFactoryEnum::new();
 
         Self {
             search_service: SearchService::new(dataset_repo.clone(), embedding_client.clone()),
             harvest_service: HarvestService::new(
                 dataset_repo.clone(),
                 embedding_client,
-                ckan_factory,
+                portal_factory,
             ),
             export_service: ExportService::new(dataset_repo.clone()),
             dataset_repo,
