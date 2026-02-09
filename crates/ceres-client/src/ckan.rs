@@ -2,17 +2,10 @@
 //!
 //! # Future Extensions
 //!
-//! TODO: Add support for other portal types (roadmap v0.3+):
+//! The `PortalClient` trait (defined in `ceres_core::traits`) was introduced in PR #90,
+//! abstracting over portal types. Remaining portal implementations tracked in #61:
 //! - Socrata API (used by many US cities): <https://dev.socrata.com/>
 //! - DCAT-AP harvester for EU portals: <https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe>
-//!
-//! Consider creating a `PortalClient` trait that abstracts over different portal types:
-//! ```ignore
-//! pub trait PortalClient {
-//!     async fn list_dataset_ids(&self) -> Result<Vec<String>, AppError>;
-//!     async fn get_dataset(&self, id: &str) -> Result<NewDataset, AppError>;
-//! }
-//! ```
 
 use ceres_core::HttpConfig;
 use ceres_core::error::AppError;

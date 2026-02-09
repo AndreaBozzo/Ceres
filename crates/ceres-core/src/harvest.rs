@@ -35,13 +35,12 @@
 //! Each dataset embedding is generated individually. Gemini API may support
 //! batching multiple texts per request, reducing latency and API calls.
 //!
-//! TODO(server): Implement persistent job queue for REST API
-//! When transitioning to ceres-server, avoid spawning long-running harvest tasks
-//! directly in HTTP handlers. Instead:
-//! - Create a `harvest_jobs` table in Postgres (consider `sqlx-mq` crate)
-//! - On POST /api/harvest, insert job with status='pending', return 202 Accepted + job_id
-//! - Separate worker process picks up jobs, updates status: running -> completed/failed
-//! - This ensures recoverability on server restart and visibility into failed harvests
+//! # Job Queue
+//!
+//! The REST API uses a persistent job queue backed by a `harvest_jobs` table.
+//! On `POST /api/v1/harvest`, a job is created with status='pending' and a 202
+//! is returned. A background `WorkerService` polls for jobs and processes them
+//! using `HarvestService`. See `ceres_core::worker` and `ceres_db::JobRepository`.
 //!
 //! # Cancellation Support
 //!

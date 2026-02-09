@@ -31,7 +31,7 @@ use crate::error::AppError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EmbeddingProviderType {
-    /// Google Gemini text-embedding-004 (768 dimensions).
+    /// Google Gemini gemini-embedding-001 (768 dimensions).
     #[default]
     Gemini,
     /// OpenAI text-embedding-3-small (1536d) or text-embedding-3-large (3072d).
@@ -71,7 +71,7 @@ pub struct GeminiEmbeddingConfig {
 }
 
 fn default_gemini_model() -> String {
-    "text-embedding-004".to_string()
+    "gemini-embedding-001".to_string()
 }
 
 impl Default for GeminiEmbeddingConfig {
@@ -113,7 +113,7 @@ impl Default for OpenAIEmbeddingConfig {
 /// * `model` - The model name (optional, uses default if None)
 pub fn embedding_dimension(provider: EmbeddingProviderType, model: Option<&str>) -> usize {
     match provider {
-        EmbeddingProviderType::Gemini => 768, // text-embedding-004 is always 768
+        EmbeddingProviderType::Gemini => 768, // gemini-embedding-001 with output_dimensionality=768
         EmbeddingProviderType::OpenAI => match model.unwrap_or("text-embedding-3-small") {
             "text-embedding-3-large" => 3072,
             _ => 1536, // text-embedding-3-small and ada-002
@@ -773,7 +773,7 @@ description = "A fully configured portal"
             768
         );
         assert_eq!(
-            embedding_dimension(EmbeddingProviderType::Gemini, Some("text-embedding-004")),
+            embedding_dimension(EmbeddingProviderType::Gemini, Some("gemini-embedding-001")),
             768
         );
 
@@ -801,7 +801,7 @@ description = "A fully configured portal"
     #[test]
     fn test_gemini_embedding_config_default() {
         let config = GeminiEmbeddingConfig::default();
-        assert_eq!(config.model, "text-embedding-004");
+        assert_eq!(config.model, "gemini-embedding-001");
     }
 
     #[test]

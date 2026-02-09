@@ -1,18 +1,4 @@
 //! Dataset repository for PostgreSQL with pgvector support.
-//!
-//! # Testing
-//!
-//! TODO(#12): Improve test coverage for repository methods
-//! Current tests only cover struct/serialization. Integration tests needed for:
-//! - `upsert()` - insert and update paths
-//! - `search()` - vector similarity queries
-//! - `get_hashes_for_portal()` - delta detection queries
-//! - `update_timestamp_only()` - timestamp-only updates
-//!
-//! Consider using testcontainers-rs for isolated PostgreSQL instances:
-//! <https://github.com/testcontainers/testcontainers-rs>
-//!
-//! See: <https://github.com/AndreaBozzo/Ceres/issues/12>
 
 use ceres_core::error::AppError;
 use ceres_core::models::{DatabaseStats, Dataset, NewDataset, SearchResult};

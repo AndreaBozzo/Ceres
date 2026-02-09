@@ -1,22 +1,12 @@
 //! Google Gemini embeddings client.
 //!
-//! # Future Extensions
+//! # Embedding Provider Architecture
 //!
-//! TODO: Implement switchable embedding providers (roadmap v0.3+)
-//! Consider creating an `EmbeddingProvider` trait:
-//! ```ignore
-//! #[async_trait]
-//! pub trait EmbeddingProvider: Send + Sync {
-//!     fn dimension(&self) -> usize;
-//!     async fn embed(&self, text: &str) -> Result<Vec<f32>, AppError>;
-//! }
-//! ```
-//!
-//! Potential providers to support:
-//! - OpenAI text-embedding-3-small/large
-//! - Cohere embed-multilingual-v3.0
-//! - E5-multilingual (local, for cross-language search)
+//! The `EmbeddingProvider` trait (defined in `ceres_core::traits`) was introduced in PR #81,
+//! abstracting over embedding backends. Current implementations: Gemini, OpenAI.
+//! Remaining providers tracked in issue #79:
 //! - Ollama (local embeddings)
+//! - E5-multilingual (local, for cross-language search)
 //!
 //! TODO(observability): Add OpenTelemetry instrumentation for cloud deployment
 //! Use `tracing-opentelemetry` crate to export spans to cloud observability platforms
