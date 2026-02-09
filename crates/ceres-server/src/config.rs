@@ -39,7 +39,7 @@ pub struct ServerConfig {
     pub portals_config: Option<PathBuf>,
 
     /// Allowed CORS origins (comma-separated). Use "*" for any origin (dev only).
-    /// Example: "https://example.com,https://app.example.com"
+    /// Example: "<https://example.com>,<https://app.example.com>"
     #[arg(long, env = "CORS_ALLOWED_ORIGINS", default_value = "*")]
     pub cors_origins: String,
 

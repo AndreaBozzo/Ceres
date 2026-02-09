@@ -233,7 +233,7 @@ impl DatasetRepository {
 
     /// Lists datasets with optional portal filter and limit.
     ///
-    /// For memory-efficient exports of large datasets, use [`list_all_stream`] instead.
+    /// For memory-efficient exports of large datasets, use [`Self::list_all_stream`] instead.
     ///
     /// TODO(config): Make default limit configurable via DEFAULT_EXPORT_LIMIT env var
     /// Currently hardcoded to 10000.
@@ -273,7 +273,7 @@ impl DatasetRepository {
 
     /// Lists datasets as a stream with optional portal filter.
     ///
-    /// Unlike [`list_all`], this method streams results directly from the database
+    /// Unlike [`Self::list_all`], this method streams results directly from the database
     /// without loading everything into memory. Suitable for large exports.
     ///
     /// # Arguments

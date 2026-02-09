@@ -7,7 +7,7 @@ use ceres_db::{DatasetRepository, JobRepository};
 /// Shared application state for all handlers.
 ///
 /// This is wrapped in Arc internally by Axum when using `with_state()`,
-/// so all fields must implement Clone (which they do via internal Arc<Pool>).
+/// so all fields must implement Clone (which they do via internal `Arc<Pool>`).
 #[derive(Clone)]
 pub struct AppState {
     /// Search service for semantic search operations
