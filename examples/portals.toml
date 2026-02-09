@@ -97,3 +97,38 @@ description = "Open Data NRW (Germany)"
 # url = "https://data.humdata.org"
 # type = "ckan"
 # description = "Humanitarian Data Exchange (UN OCHA)"
+
+# --- New verified portals (Feb 2026) --- #
+
+# Italian city portals
+# [[portals]]
+# name = "napoli"
+# url = "https://dati.comune.napoli.it"
+# type = "ckan"
+# description = "Open data del Comune di Napoli (~33 datasets)"
+
+# [[portals]]
+# name = "genova"
+# url = "https://dati.comune.genova.it"
+# type = "ckan"
+# description = "Open data del Comune di Genova (~171 datasets)"
+
+# Non-multilingual European/international portals
+
+# [[portals]]
+# name = "romania"
+# url = "https://data.gov.ro"
+# type = "ckan"
+# description = "Romanian Government Open Data Portal (~5,007 datasets)"
+
+# [[portals]]
+# name = "chile"
+# url = "https://datos.gob.cl"
+# type = "ckan"
+# description = "Chilean Government Open Data Portal (~2,889 datasets)"
+
+# [[portals]]
+# name = "ukraine"
+# url = "https://data.gov.ua"
+# type = "ckan"
+# description = "Ukrainian Government Open Data Portal (~39,775 datasets, large)"
