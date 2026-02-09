@@ -2,7 +2,7 @@
 
 use axum::{Json, extract::State, http::StatusCode};
 
-use ceres_core::{CreateJobRequest, JobQueue, JobStatus};
+use ceres_core::{CreateJobRequest, JobQueue, JobStatus, PortalType};
 
 use crate::dto::{HarvestJobResponse, HarvestStatusResponse, TriggerHarvestRequest};
 use crate::error::ApiError;
@@ -40,6 +40,16 @@ pub async fn trigger_harvest_all(
     let mut jobs = Vec::new();
 
     for portal in enabled_portals {
+        // Only CKAN portals are supported for job-based harvesting for now
+        if portal.portal_type != PortalType::Ckan {
+            tracing::warn!(
+                portal = %portal.name,
+                portal_type = %portal.portal_type,
+                "Skipping portal: only 'ckan' is supported for job-based harvesting"
+            );
+            continue;
+        }
+
         let mut job_request = CreateJobRequest::new(&portal.url).with_name(&portal.name);
 
         if let Some(ref tmpl) = portal.url_template {

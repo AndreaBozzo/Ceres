@@ -560,6 +560,14 @@ mod tests {
 impl ceres_core::traits::PortalClient for CkanClient {
     type PortalData = CkanDataset;
 
+    fn portal_type(&self) -> &'static str {
+        "ckan"
+    }
+
+    fn base_url(&self) -> &str {
+        self.base_url.as_str()
+    }
+
     async fn list_dataset_ids(&self) -> Result<Vec<String>, AppError> {
         self.list_package_ids().await
     }
@@ -598,7 +606,17 @@ impl CkanClientFactory {
 impl ceres_core::traits::PortalClientFactory for CkanClientFactory {
     type Client = CkanClient;
 
-    fn create(&self, portal_url: &str) -> Result<Self::Client, AppError> {
-        CkanClient::new(portal_url)
+    fn create(
+        &self,
+        portal_url: &str,
+        portal_type: ceres_core::config::PortalType,
+    ) -> Result<Self::Client, AppError> {
+        match portal_type {
+            ceres_core::config::PortalType::Ckan => CkanClient::new(portal_url),
+            other => Err(AppError::ConfigError(format!(
+                "CkanClientFactory can only create CKAN clients, but portal type {:?} was requested for URL {}",
+                other, portal_url
+            ))),
+        }
     }
 }

@@ -28,13 +28,15 @@
 //! # Example
 //!
 //! ```ignore
-//! use ceres_core::{HarvestService, SearchService};
+//! use ceres_core::{HarvestService, PortalType, SearchService};
 //! use ceres_core::progress::TracingReporter;
 //!
 //! // Create services with your implementations
 //! let harvest = HarvestService::new(store, embedding, portal_factory);
 //! let reporter = TracingReporter;
-//! let stats = harvest.sync_portal_with_progress("https://data.gov/api/3", &reporter).await?;
+//! let stats = harvest
+//!     .sync_portal_with_progress("https://data.gov/api/3", None, &reporter, PortalType::Ckan)
+//!     .await?;
 //!
 //! // Semantic search
 //! let search = SearchService::new(store, embedding);
@@ -62,7 +64,7 @@ pub use circuit_breaker::{
 
 // Configuration
 pub use config::{
-    DbConfig, HttpConfig, PortalEntry, PortalsConfig, SyncConfig, default_config_path,
+    DbConfig, HttpConfig, PortalEntry, PortalType, PortalsConfig, SyncConfig, default_config_path,
     load_portals_config,
 };
 

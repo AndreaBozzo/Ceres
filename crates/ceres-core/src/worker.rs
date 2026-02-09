@@ -41,6 +41,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::SyncStats;
+use crate::config::PortalType;
 use crate::error::AppError;
 use crate::harvest::HarvestService;
 use crate::job::{HarvestJob, WorkerConfig};
@@ -289,6 +290,7 @@ where
         let job_cancel = cancel_token.child_token();
 
         // Execute the harvest with cancellation support
+        // TODO: Add portal_type to HarvestJob when Socrata/DCAT support is added
         let result = self
             .harvest_service
             .sync_portal_with_progress_cancellable_with_options(
@@ -297,6 +299,7 @@ where
                 harvest_reporter,
                 job_cancel.clone(),
                 job.force_full_sync,
+                PortalType::default(),
             )
             .await;
 

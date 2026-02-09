@@ -65,6 +65,7 @@ use pgvector::Vector;
 use tokio_util::sync::CancellationToken;
 
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError, CircuitState};
+use crate::config::PortalType;
 use crate::progress::{HarvestEvent, ProgressReporter, SilentReporter};
 use crate::sync::{AtomicSyncStats, SyncOutcome, SyncResult, SyncStatus};
 use crate::traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFactory};
@@ -205,7 +206,7 @@ where
     /// - The portal API is unreachable
     /// - Database operations fail
     pub async fn sync_portal(&self, portal_url: &str) -> Result<SyncStats, AppError> {
-        self.sync_portal_with_progress(portal_url, None, &SilentReporter)
+        self.sync_portal_with_progress(portal_url, None, &SilentReporter, PortalType::default())
             .await
     }
 
@@ -224,8 +225,9 @@ where
         portal_url: &str,
         url_template: Option<&str>,
         reporter: &R,
+        portal_type: PortalType,
     ) -> Result<SyncStats, AppError> {
-        let portal_client = self.portal_factory.create(portal_url)?;
+        let portal_client = self.portal_factory.create(portal_url, portal_type)?;
         let sync_start = Utc::now();
 
         // Determine sync mode
@@ -568,7 +570,12 @@ where
             });
 
             match self
-                .sync_portal_with_progress(&portal.url, portal.url_template.as_deref(), reporter)
+                .sync_portal_with_progress(
+                    &portal.url,
+                    portal.url_template.as_deref(),
+                    reporter,
+                    portal.portal_type,
+                )
                 .await
             {
                 Ok(stats) => {
@@ -632,6 +639,7 @@ where
             &SilentReporter,
             cancel_token,
             self.config.force_full_sync,
+            PortalType::default(),
         )
         .await
     }
@@ -646,6 +654,7 @@ where
         url_template: Option<&str>,
         reporter: &R,
         cancel_token: CancellationToken,
+        portal_type: PortalType,
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
@@ -653,6 +662,7 @@ where
             reporter,
             cancel_token,
             self.config.force_full_sync,
+            portal_type,
         )
         .await
     }
@@ -666,6 +676,7 @@ where
         reporter: &R,
         cancel_token: CancellationToken,
         force_full_sync: bool,
+        portal_type: PortalType,
     ) -> Result<SyncResult, AppError> {
         let force_full_sync = self.config.force_full_sync || force_full_sync;
         self.sync_portal_with_progress_cancellable_internal(
@@ -674,6 +685,7 @@ where
             reporter,
             cancel_token,
             force_full_sync,
+            portal_type,
         )
         .await
     }
@@ -685,6 +697,7 @@ where
         reporter: &R,
         cancel_token: CancellationToken,
         force_full_sync: bool,
+        portal_type: PortalType,
     ) -> Result<SyncResult, AppError> {
         let sync_start = Utc::now();
 
@@ -706,7 +719,7 @@ where
             return Ok(SyncResult::cancelled(SyncStats::default()));
         }
 
-        let portal_client = self.portal_factory.create(portal_url)?;
+        let portal_client = self.portal_factory.create(portal_url, portal_type)?;
 
         // Determine sync mode and fetch datasets (check cancellation during fetch)
         let (sync_mode, datasets_to_process) = self
@@ -1120,6 +1133,7 @@ where
                     portal.url_template.as_deref(),
                     reporter,
                     cancel_token.clone(),
+                    portal.portal_type,
                 )
                 .await
             {

@@ -106,6 +106,14 @@ impl MockPortalClient {
 impl PortalClient for MockPortalClient {
     type PortalData = MockPortalData;
 
+    fn portal_type(&self) -> &'static str {
+        "mock"
+    }
+
+    fn base_url(&self) -> &str {
+        &self.portal_url
+    }
+
     async fn list_dataset_ids(&self) -> Result<Vec<String>, AppError> {
         Ok(self.datasets.iter().map(|d| d.id.clone()).collect())
     }
@@ -176,7 +184,11 @@ impl MockPortalClientFactory {
 impl PortalClientFactory for MockPortalClientFactory {
     type Client = MockPortalClient;
 
-    fn create(&self, portal_url: &str) -> Result<Self::Client, AppError> {
+    fn create(
+        &self,
+        portal_url: &str,
+        _portal_type: ceres_core::config::PortalType,
+    ) -> Result<Self::Client, AppError> {
         Ok(MockPortalClient::new(portal_url, self.datasets.clone()))
     }
 }

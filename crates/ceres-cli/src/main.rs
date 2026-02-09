@@ -8,12 +8,13 @@ use sqlx::postgres::PgPoolOptions;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
-use ceres_client::{CkanClientFactory, EmbeddingProviderEnum};
+use ceres_client::{EmbeddingProviderEnum, PortalClientFactoryEnum};
 use ceres_core::config::EmbeddingProviderType;
 use ceres_core::traits::EmbeddingProvider;
 use ceres_core::{
     BatchHarvestSummary, DbConfig, ExportFormat as CoreExportFormat, ExportService, HarvestService,
-    PortalEntry, SearchService, SyncConfig, SyncStats, TracingReporter, load_portals_config,
+    PortalEntry, PortalType, SearchService, SyncConfig, SyncStats, TracingReporter,
+    load_portals_config,
 };
 use ceres_db::DatasetRepository;
 use ceres_search::{Command, Config, ExportFormat};
@@ -55,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Create services with concrete implementations (dependency injection)
-    let ckan_factory = CkanClientFactory::new();
+    let portal_factory = PortalClientFactoryEnum::new();
     let search_service = SearchService::new(repo.clone(), embedding_client.clone());
 
     match config.command {
@@ -74,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
             let harvest_service = HarvestService::with_config(
                 repo.clone(),
                 embedding_client.clone(),
-                ckan_factory,
+                portal_factory,
                 sync_config,
             );
             handle_harvest(&harvest_service, portal_url, portal, config_path).await?;
@@ -132,7 +133,11 @@ fn create_embedding_provider(config: &Config) -> anyhow::Result<EmbeddingProvide
 /// 2. Named portal from config
 /// 3. Batch mode (all enabled portals)
 async fn handle_harvest(
-    harvest_service: &HarvestService<DatasetRepository, EmbeddingProviderEnum, CkanClientFactory>,
+    harvest_service: &HarvestService<
+        DatasetRepository,
+        EmbeddingProviderEnum,
+        PortalClientFactoryEnum,
+    >,
     portal_url: Option<String>,
     portal_name: Option<String>,
     config_path: Option<PathBuf>,
@@ -140,11 +145,11 @@ async fn handle_harvest(
     let reporter = TracingReporter;
 
     match (portal_url, portal_name) {
-        // Mode 1: Direct URL (backward compatible)
+        // Mode 1: Direct URL (backward compatible, assumes CKAN)
         (Some(url), None) => {
             info!("Syncing portal: {}", url);
             let stats = harvest_service
-                .sync_portal_with_progress(&url, None, &reporter)
+                .sync_portal_with_progress(&url, None, &reporter, PortalType::Ckan)
                 .await?;
             print_single_portal_summary(&url, &stats);
         }
@@ -169,7 +174,12 @@ async fn handle_harvest(
 
             info!("Syncing portal: {}", portal.url);
             let stats = harvest_service
-                .sync_portal_with_progress(&portal.url, portal.url_template.as_deref(), &reporter)
+                .sync_portal_with_progress(
+                    &portal.url,
+                    portal.url_template.as_deref(),
+                    &reporter,
+                    portal.portal_type,
+                )
                 .await?;
             print_single_portal_summary(&portal.url, &stats);
         }

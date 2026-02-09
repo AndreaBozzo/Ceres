@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
 };
 
-use ceres_core::{CreateJobRequest, JobQueue};
+use ceres_core::{CreateJobRequest, JobQueue, PortalType};
 
 use crate::dto::{
     HarvestJobResponse, PortalInfoResponse, PortalStatsResponse, TriggerHarvestRequest,
@@ -45,7 +45,7 @@ pub async fn list_portals(
         portals.push(PortalInfoResponse {
             name: portal.name.clone(),
             url: portal.url.clone(),
-            portal_type: portal.portal_type.clone(),
+            portal_type: portal.portal_type.to_string(),
             enabled: portal.enabled,
             description: portal.description.clone(),
             last_sync: sync_status.as_ref().and_then(|s| s.last_successful_sync),
@@ -146,6 +146,14 @@ pub async fn trigger_portal_harvest(
         .iter()
         .find(|p| p.name.to_lowercase() == name.to_lowercase())
         .ok_or_else(|| ApiError::NotFound(format!("Portal not found: {}", name)))?;
+
+    // Only CKAN portals are supported for job-based harvesting for now
+    if portal.portal_type != PortalType::Ckan {
+        return Err(ApiError::BadRequest(format!(
+            "Portal type '{}' is not yet supported for job-based harvesting. Only 'ckan' is currently implemented.",
+            portal.portal_type
+        )));
+    }
 
     let mut job_request = CreateJobRequest::new(&portal.url).with_name(&portal.name);
 

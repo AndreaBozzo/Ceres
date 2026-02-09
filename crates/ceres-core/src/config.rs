@@ -197,9 +197,45 @@ impl SyncConfig {
 // Portal Configuration (portals.toml)
 // =============================================================================
 
-/// Default portal type when not specified in configuration.
-fn default_portal_type() -> String {
-    "ckan".to_string()
+/// Portal type identifier.
+///
+/// Determines which portal API client to use for harvesting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PortalType {
+    /// CKAN open data portal (default).
+    #[default]
+    Ckan,
+    /// Socrata open data portal (US cities: NYC, Chicago, SF).
+    Socrata,
+    /// DCAT-AP / SPARQL endpoint (EU portals, data.europa.eu).
+    Dcat,
+}
+
+impl fmt::Display for PortalType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ckan => write!(f, "ckan"),
+            Self::Socrata => write!(f, "socrata"),
+            Self::Dcat => write!(f, "dcat"),
+        }
+    }
+}
+
+impl FromStr for PortalType {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "ckan" => Ok(Self::Ckan),
+            "socrata" => Ok(Self::Socrata),
+            "dcat" => Ok(Self::Dcat),
+            _ => Err(AppError::ConfigError(format!(
+                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat",
+                s
+            ))),
+        }
+    }
 }
 
 /// Default enabled status when not specified in configuration.
@@ -270,11 +306,11 @@ pub struct PortalEntry {
     /// Example: "<https://dati.comune.milano.it>"
     pub url: String,
 
-    /// Portal type: "ckan", "socrata", or "dcat".
+    /// Portal type: ckan, socrata, or dcat.
     ///
-    /// Defaults to "ckan" if not specified.
-    #[serde(rename = "type", default = "default_portal_type")]
-    pub portal_type: String,
+    /// Defaults to `Ckan` if not specified.
+    #[serde(rename = "type", default)]
+    pub portal_type: PortalType,
 
     /// Whether this portal is enabled for batch harvesting.
     ///
@@ -471,7 +507,7 @@ type = "ckan"
         assert_eq!(config.portals.len(), 1);
         assert_eq!(config.portals[0].name, "test-portal");
         assert_eq!(config.portals[0].url, "https://example.com");
-        assert_eq!(config.portals[0].portal_type, "ckan");
+        assert_eq!(config.portals[0].portal_type, PortalType::Ckan);
         assert!(config.portals[0].enabled); // default
         assert!(config.portals[0].description.is_none());
     }
@@ -484,7 +520,7 @@ name = "minimal"
 url = "https://example.com"
 "#;
         let config: PortalsConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.portals[0].portal_type, "ckan"); // default type
+        assert_eq!(config.portals[0].portal_type, PortalType::Ckan); // default type
         assert!(config.portals[0].enabled); // default enabled
     }
 
@@ -672,7 +708,7 @@ description = "A fully configured portal"
         let portal = &config.portals[0];
         assert_eq!(portal.name, "full-config");
         assert_eq!(portal.url, "https://example.com");
-        assert_eq!(portal.portal_type, "ckan");
+        assert_eq!(portal.portal_type, PortalType::Ckan);
         assert!(portal.enabled);
         assert_eq!(
             portal.description,

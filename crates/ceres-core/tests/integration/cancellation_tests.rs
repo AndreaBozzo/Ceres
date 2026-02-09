@@ -167,7 +167,7 @@ async fn test_batch_harvest_cancellable() {
             url: "http://p1.com".to_string(),
             description: None,
             enabled: true,
-            portal_type: "ckan".to_string(),
+            portal_type: ceres_core::PortalType::Ckan,
             url_template: None,
         },
         ceres_core::PortalEntry {
@@ -175,7 +175,7 @@ async fn test_batch_harvest_cancellable() {
             url: "http://p2.com".to_string(),
             description: None,
             enabled: true,
-            portal_type: "ckan".to_string(),
+            portal_type: ceres_core::PortalType::Ckan,
             url_template: None,
         },
     ];
