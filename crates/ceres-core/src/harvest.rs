@@ -63,7 +63,7 @@ use pgvector::Vector;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError, CircuitState};
+use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError};
 use crate::config::PortalType;
 use crate::progress::{HarvestEvent, ProgressReporter, SilentReporter};
 use crate::sync::{AtomicSyncStats, SyncOutcome, SyncResult, SyncStatus};
@@ -88,6 +88,34 @@ impl SyncMode {
         match self {
             SyncMode::Full => "full",
             SyncMode::Incremental => "incremental",
+        }
+    }
+}
+
+/// Describes what data is available for the sync pipeline.
+///
+/// For full sync, we only have dataset IDs — each dataset must be fetched
+/// individually inside the processing stream. For incremental sync, the
+/// datasets were already fetched by `search_modified_since`.
+enum SyncPlan<PD: Send> {
+    /// Full sync: fetch each dataset by ID in the stream pipeline.
+    Full {
+        /// Dataset IDs to fetch and process.
+        ids: Vec<String>,
+    },
+    /// Incremental sync: datasets already fetched.
+    Incremental {
+        /// Pre-fetched dataset objects.
+        datasets: Vec<PD>,
+    },
+}
+
+impl<PD: Send> SyncPlan<PD> {
+    /// Returns the total number of items to process.
+    fn len(&self) -> usize {
+        match self {
+            SyncPlan::Full { ids } => ids.len(),
+            SyncPlan::Incremental { datasets } => datasets.len(),
         }
     }
 }
@@ -226,238 +254,37 @@ where
         reporter: &R,
         portal_type: PortalType,
     ) -> Result<SyncStats, AppError> {
-        let portal_client = self.portal_factory.create(portal_url, portal_type)?;
-        let sync_start = Utc::now();
-
-        // Determine sync mode
-        let (sync_mode, datasets_to_process) = self
-            .determine_sync_mode_and_fetch(portal_url, &portal_client, reporter)
-            .await?;
-
-        let existing_hashes = self.store.get_hashes_for_portal(portal_url).await?;
-        reporter.report(HarvestEvent::ExistingDatasetsFound {
-            count: existing_hashes.len(),
-        });
-
-        let total = datasets_to_process.len();
-        if total == 0 {
-            tracing::info!(
-                portal = portal_url,
-                "No datasets to process (portal up to date)"
-            );
-            // Record successful sync even if no datasets changed
-            if let Err(e) = self
-                .store
-                .record_sync_status(
-                    portal_url,
-                    sync_start,
-                    sync_mode.as_str(),
-                    SyncStatus::Completed.as_str(),
-                    0,
-                )
-                .await
-            {
-                tracing::warn!(error = %e, "Failed to record sync status");
-            }
-            return Ok(SyncStats::default());
-        }
-
-        let stats = Arc::new(AtomicSyncStats::new());
-        let unchanged_ids: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let processed_count = Arc::new(AtomicUsize::new(0));
-        let last_reported = Arc::new(AtomicUsize::new(0));
-
-        // Create circuit breaker for embedding API resilience
-        let circuit_breaker = CircuitBreaker::new("gemini", self.config.circuit_breaker.clone());
-
-        // Check if circuit breaker is already open from a previous run
-        if circuit_breaker.state() == CircuitState::Open {
-            let cb_stats = circuit_breaker.stats();
-            reporter.report(HarvestEvent::CircuitBreakerOpen {
-                service: "gemini",
-                retry_after: cb_stats.time_until_half_open.unwrap_or_default(),
-            });
-            tracing::warn!(
-                portal = portal_url,
-                "Embedding service circuit breaker is already open"
-            );
-        }
-
-        // Report progress every 5% or minimum 50 items
-        let report_interval = std::cmp::max(total / 20, 50);
-
-        // Process datasets - for incremental sync we already have full dataset objects
-        let url_template_arc: Option<Arc<str>> = url_template.map(Arc::from);
-        let _results: Vec<_> = stream::iter(datasets_to_process.into_iter())
-            .map(|portal_data| {
-                let embedding = self.embedding.clone();
-                let store = self.store.clone();
-                let portal_url = portal_url.to_string();
-                let url_template = url_template_arc.clone();
-                let existing_hashes = existing_hashes.clone();
-                let stats = Arc::clone(&stats);
-                let unchanged_ids = Arc::clone(&unchanged_ids);
-                let circuit_breaker = circuit_breaker.clone();
-
-                async move {
-                    let mut new_dataset = F::Client::into_new_dataset(
-                        portal_data,
-                        &portal_url,
-                        url_template.as_deref(),
-                    );
-                    let decision = needs_reprocessing(
-                        existing_hashes.get(&new_dataset.original_id),
-                        &new_dataset.content_hash,
-                    );
-
-                    match decision.outcome {
-                        SyncOutcome::Unchanged => {
-                            stats.record(SyncOutcome::Unchanged);
-                            // Collect ID for batch update instead of individual update
-                            if let Ok(mut ids) = unchanged_ids.lock() {
-                                ids.push(new_dataset.original_id);
-                            }
-                            return Ok(());
-                        }
-                        SyncOutcome::Updated | SyncOutcome::Created => {
-                            // Continue to embedding generation
-                        }
-                        SyncOutcome::Failed | SyncOutcome::Skipped => {
-                            unreachable!("needs_reprocessing never returns Failed or Skipped")
-                        }
-                    }
-
-                    if decision.needs_embedding {
-                        let combined_text = format!(
-                            "{} {}",
-                            new_dataset.title,
-                            new_dataset.description.as_deref().unwrap_or_default()
-                        );
-
-                        if !combined_text.trim().is_empty() {
-                            // Use circuit breaker to protect embedding generation
-                            match circuit_breaker
-                                .call(|| embedding.generate(&combined_text))
-                                .await
-                            {
-                                Ok(emb) => {
-                                    new_dataset.embedding = Some(Vector::from(emb));
-                                }
-                                Err(CircuitBreakerError::Open { retry_after, .. }) => {
-                                    // Circuit is open - skip this dataset
-                                    tracing::debug!(
-                                        dataset_id = %new_dataset.original_id,
-                                        retry_after_secs = retry_after.as_secs(),
-                                        "Skipping dataset - circuit breaker open"
-                                    );
-                                    stats.record(SyncOutcome::Skipped);
-                                    return Ok(());
-                                }
-                                Err(CircuitBreakerError::Inner(e)) => {
-                                    stats.record(SyncOutcome::Failed);
-                                    return Err(AppError::Generic(format!(
-                                        "Failed to generate embedding: {e}"
-                                    )));
-                                }
-                            }
-                        }
-                    }
-
-                    match store.upsert(&new_dataset).await {
-                        Ok(_uuid) => {
-                            stats.record(decision.outcome);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            stats.record(SyncOutcome::Failed);
-                            Err(e)
-                        }
-                    }
-                }
-            })
-            .buffer_unordered(self.config.concurrency)
-            .inspect(|_| {
-                let current = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-                let last = last_reported.load(Ordering::Relaxed);
-
-                // Report progress at intervals
-                let should_report = current >= last + report_interval || current == total;
-                if should_report
-                    && last_reported
-                        .compare_exchange(last, current, Ordering::SeqCst, Ordering::Relaxed)
-                        .is_ok()
-                {
-                    let current_stats = stats.to_stats();
-                    reporter.report(HarvestEvent::DatasetProcessed {
-                        current,
-                        total,
-                        created: current_stats.created,
-                        updated: current_stats.updated,
-                        unchanged: current_stats.unchanged,
-                        failed: current_stats.failed,
-                        skipped: current_stats.skipped,
-                    });
-                }
-            })
-            .collect()
-            .await;
-
-        // Batch update timestamps for unchanged datasets
-        let unchanged_list = unchanged_ids
-            .lock()
-            .ok()
-            .map(|g| g.clone())
-            .unwrap_or_default();
-        if !unchanged_list.is_empty() {
-            if let Err(e) = self
-                .store
-                .batch_update_timestamps(portal_url, &unchanged_list)
-                .await
-            {
-                tracing::warn!(
-                    count = unchanged_list.len(),
-                    error = %e,
-                    "Failed to batch update timestamps for unchanged datasets"
-                );
-            }
-        }
-
-        let final_stats = stats.to_stats();
-
-        // Record successful sync
-        if let Err(e) = self
-            .store
-            .record_sync_status(
+        let result = self
+            .sync_portal_with_progress_cancellable_internal(
                 portal_url,
-                sync_start,
-                sync_mode.as_str(),
-                SyncStatus::Completed.as_str(),
-                final_stats.total() as i32,
+                url_template,
+                reporter,
+                CancellationToken::new(), // never cancelled
+                self.config.force_full_sync,
+                portal_type,
             )
-            .await
-        {
-            tracing::warn!(error = %e, "Failed to record sync status");
-        }
-
-        Ok(final_stats)
+            .await?;
+        Ok(result.stats)
     }
 
-    /// Determines the sync mode and fetches the datasets to process.
+    /// Determines the sync mode and returns a plan describing what to process.
     ///
-    /// Returns a tuple of (sync_mode, datasets_to_process).
-    async fn determine_sync_mode_and_fetch<R: ProgressReporter>(
+    /// For full sync, returns dataset IDs (datasets will be fetched inside the
+    /// processing stream). For incremental sync, returns pre-fetched datasets.
+    async fn determine_sync_plan<R: ProgressReporter>(
         &self,
         portal_url: &str,
         portal_client: &F::Client,
         reporter: &R,
-    ) -> Result<(SyncMode, Vec<<F::Client as PortalClient>::PortalData>), AppError> {
-        // Check if we should use incremental sync
-        if self.config.force_full_sync {
+        force_full_sync: bool,
+    ) -> Result<(SyncMode, SyncPlan<<F::Client as PortalClient>::PortalData>), AppError> {
+        if force_full_sync {
             tracing::info!(portal = portal_url, "Force full sync requested");
-            return self.do_full_sync(portal_url, portal_client, reporter).await;
+            let ids = portal_client.list_dataset_ids().await?;
+            reporter.report(HarvestEvent::PortalDatasetsFound { count: ids.len() });
+            return Ok((SyncMode::Full, SyncPlan::Full { ids }));
         }
 
-        // Check last sync time
         let last_sync = self.store.get_last_sync_time(portal_url).await?;
 
         match last_sync {
@@ -468,7 +295,6 @@ where
                     "Attempting incremental sync"
                 );
 
-                // Try incremental sync
                 match portal_client.search_modified_since(since).await {
                     Ok(datasets) => {
                         let count = datasets.len();
@@ -479,7 +305,7 @@ where
                             count
                         );
                         reporter.report(HarvestEvent::PortalDatasetsFound { count });
-                        Ok((SyncMode::Incremental, datasets))
+                        Ok((SyncMode::Incremental, SyncPlan::Incremental { datasets }))
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -487,45 +313,19 @@ where
                             error = %e,
                             "Incremental sync failed, falling back to full sync"
                         );
-                        self.do_full_sync(portal_url, portal_client, reporter).await
+                        let ids = portal_client.list_dataset_ids().await?;
+                        reporter.report(HarvestEvent::PortalDatasetsFound { count: ids.len() });
+                        Ok((SyncMode::Full, SyncPlan::Full { ids }))
                     }
                 }
             }
             None => {
                 tracing::info!(portal = portal_url, "First sync, using full sync");
-                self.do_full_sync(portal_url, portal_client, reporter).await
+                let ids = portal_client.list_dataset_ids().await?;
+                reporter.report(HarvestEvent::PortalDatasetsFound { count: ids.len() });
+                Ok((SyncMode::Full, SyncPlan::Full { ids }))
             }
         }
-    }
-
-    /// Performs a full sync by fetching all dataset IDs and then each dataset.
-    async fn do_full_sync<R: ProgressReporter>(
-        &self,
-        portal_url: &str,
-        portal_client: &F::Client,
-        reporter: &R,
-    ) -> Result<(SyncMode, Vec<<F::Client as PortalClient>::PortalData>), AppError> {
-        let ids = portal_client.list_dataset_ids().await?;
-        let total = ids.len();
-        reporter.report(HarvestEvent::PortalDatasetsFound { count: total });
-
-        // Fetch all datasets
-        let mut datasets = Vec::with_capacity(total);
-        for id in ids {
-            match portal_client.get_dataset(&id).await {
-                Ok(data) => datasets.push(data),
-                Err(e) => {
-                    tracing::warn!(
-                        portal = portal_url,
-                        dataset_id = id,
-                        error = %e,
-                        "Failed to fetch dataset, skipping"
-                    );
-                }
-            }
-        }
-
-        Ok((SyncMode::Full, datasets))
     }
 
     /// Harvests multiple portals sequentially with error isolation.
@@ -553,62 +353,12 @@ where
         portals: &[&PortalEntry],
         reporter: &R,
     ) -> BatchHarvestSummary {
-        let mut summary = BatchHarvestSummary::new();
-        let total = portals.len();
-
-        reporter.report(HarvestEvent::BatchStarted {
-            total_portals: total,
-        });
-
-        for (i, portal) in portals.iter().enumerate() {
-            reporter.report(HarvestEvent::PortalStarted {
-                portal_index: i,
-                total_portals: total,
-                portal_name: &portal.name,
-                portal_url: &portal.url,
-            });
-
-            match self
-                .sync_portal_with_progress(
-                    &portal.url,
-                    portal.url_template.as_deref(),
-                    reporter,
-                    portal.portal_type,
-                )
-                .await
-            {
-                Ok(stats) => {
-                    reporter.report(HarvestEvent::PortalCompleted {
-                        portal_index: i,
-                        total_portals: total,
-                        portal_name: &portal.name,
-                        stats: &stats,
-                    });
-                    summary.add(PortalHarvestResult::success(
-                        portal.name.clone(),
-                        portal.url.clone(),
-                        stats,
-                    ));
-                }
-                Err(e) => {
-                    let error_str = e.to_string();
-                    reporter.report(HarvestEvent::PortalFailed {
-                        portal_index: i,
-                        total_portals: total,
-                        portal_name: &portal.name,
-                        error: &error_str,
-                    });
-                    summary.add(PortalHarvestResult::failure(
-                        portal.name.clone(),
-                        portal.url.clone(),
-                        error_str,
-                    ));
-                }
-            }
-        }
-
-        reporter.report(HarvestEvent::BatchCompleted { summary: &summary });
-        summary
+        self.batch_harvest_with_progress_cancellable(
+            portals,
+            reporter,
+            CancellationToken::new(), // never cancelled
+        )
+        .await
     }
 
     // =========================================================================
@@ -720,18 +470,12 @@ where
 
         let portal_client = self.portal_factory.create(portal_url, portal_type)?;
 
-        // Determine sync mode and fetch datasets (check cancellation during fetch)
-        let (sync_mode, datasets_to_process) = self
-            .determine_sync_mode_and_fetch_cancellable(
-                portal_url,
-                &portal_client,
-                reporter,
-                &cancel_token,
-                force_full_sync,
-            )
+        // Determine sync plan (IDs for full sync, datasets for incremental)
+        let (sync_mode, plan) = self
+            .determine_sync_plan(portal_url, &portal_client, reporter, force_full_sync)
             .await?;
 
-        // Check cancellation after fetch
+        // Check cancellation after plan determination
         if cancel_token.is_cancelled() {
             if let Err(e) = self
                 .store
@@ -754,7 +498,7 @@ where
             count: existing_hashes.len(),
         });
 
-        let total = datasets_to_process.len();
+        let total = plan.len();
         if total == 0 {
             tracing::info!(
                 portal = portal_url,
@@ -786,11 +530,13 @@ where
         let circuit_breaker = CircuitBreaker::new("gemini", self.config.circuit_breaker.clone());
 
         let report_interval = std::cmp::max(total / 20, 50);
-
-        // Process datasets with cancellation checks
         let url_template_arc: Option<Arc<str>> = url_template.map(Arc::from);
-        let _results: Vec<_> = stream::iter(datasets_to_process.into_iter())
-            .map(|portal_data| {
+
+        // Build the processing closure shared by both Full and Incremental paths.
+        // The closure takes an already-fetched PortalData and processes it
+        // (hash check → embed → upsert).
+        macro_rules! process_dataset {
+            ($portal_data:expr) => {{
                 let embedding = self.embedding.clone();
                 let store = self.store.clone();
                 let portal_url = portal_url.to_string();
@@ -802,11 +548,12 @@ where
                 let was_cancelled = Arc::clone(&was_cancelled);
                 let circuit_breaker = circuit_breaker.clone();
 
+                let portal_data = $portal_data;
                 async move {
                     // Check cancellation before processing each item
                     if cancel_token.is_cancelled() {
                         was_cancelled.store(true, Ordering::SeqCst);
-                        return Ok(());
+                        return Ok::<(), AppError>(());
                     }
 
                     let mut new_dataset = F::Client::into_new_dataset(
@@ -849,7 +596,6 @@ where
                         );
 
                         if !combined_text.trim().is_empty() {
-                            // Use circuit breaker to protect embedding generation
                             match circuit_breaker
                                 .call(|| embedding.generate(&combined_text))
                                 .await
@@ -858,7 +604,6 @@ where
                                     new_dataset.embedding = Some(Vector::from(emb));
                                 }
                                 Err(CircuitBreakerError::Open { retry_after, .. }) => {
-                                    // Circuit is open - skip this dataset
                                     tracing::debug!(
                                         dataset_id = %new_dataset.original_id,
                                         retry_after_secs = retry_after.as_secs(),
@@ -888,36 +633,185 @@ where
                         }
                     }
                 }
-            })
-            .buffer_unordered(self.config.concurrency)
-            .inspect(|_| {
-                let current = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-                let last = last_reported.load(Ordering::Relaxed);
+            }};
+        }
 
-                let should_report = current >= last + report_interval || current == total;
-                if should_report
-                    && last_reported
-                        .compare_exchange(last, current, Ordering::SeqCst, Ordering::Relaxed)
-                        .is_ok()
-                {
-                    let current_stats = stats.to_stats();
-                    reporter.report(HarvestEvent::DatasetProcessed {
-                        current,
-                        total,
-                        created: current_stats.created,
-                        updated: current_stats.updated,
-                        unchanged: current_stats.unchanged,
-                        failed: current_stats.failed,
-                        skipped: current_stats.skipped,
-                    });
-                }
-            })
-            .take_while(|_| {
-                let is_cancelled = cancel_token.is_cancelled();
-                async move { !is_cancelled }
-            })
-            .collect()
-            .await;
+        // Progress + cancellation combinators shared by both stream paths
+        macro_rules! apply_stream_combinators {
+            ($stream:expr) => {
+                $stream
+                    .buffer_unordered(self.config.concurrency)
+                    .inspect(|_| {
+                        let current = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        let last = last_reported.load(Ordering::Relaxed);
+
+                        let should_report = current >= last + report_interval || current == total;
+                        if should_report
+                            && last_reported
+                                .compare_exchange(
+                                    last,
+                                    current,
+                                    Ordering::SeqCst,
+                                    Ordering::Relaxed,
+                                )
+                                .is_ok()
+                        {
+                            let current_stats = stats.to_stats();
+                            reporter.report(HarvestEvent::DatasetProcessed {
+                                current,
+                                total,
+                                created: current_stats.created,
+                                updated: current_stats.updated,
+                                unchanged: current_stats.unchanged,
+                                failed: current_stats.failed,
+                                skipped: current_stats.skipped,
+                            });
+                        }
+                    })
+                    .take_while(|_| {
+                        let is_cancelled = cancel_token.is_cancelled();
+                        async move { !is_cancelled }
+                    })
+                    .collect::<Vec<_>>()
+                    .await
+            };
+        }
+
+        // Run the appropriate stream pipeline based on sync plan
+        match plan {
+            SyncPlan::Full { ids } => {
+                // Unified fetch+process stream: each item fetches a single dataset
+                // by ID and then processes it. Memory is bounded by concurrency,
+                // not total dataset count.
+                let stream = stream::iter(ids).map(|id| {
+                    let portal_client = portal_client.clone();
+                    let portal_url_owned = portal_url.to_string();
+                    let stats = Arc::clone(&stats);
+                    let cancel_token = cancel_token.clone();
+                    let was_cancelled = Arc::clone(&was_cancelled);
+
+                    // Capture variables needed by process_dataset! before moving
+                    // into the async block. The macro captures `self` and friends.
+                    let embedding = self.embedding.clone();
+                    let store = self.store.clone();
+                    let url_template = url_template_arc.clone();
+                    let existing_hashes = existing_hashes.clone();
+                    let unchanged_ids = Arc::clone(&unchanged_ids);
+                    let circuit_breaker = circuit_breaker.clone();
+
+                    async move {
+                        // Check cancellation before fetching
+                        if cancel_token.is_cancelled() {
+                            was_cancelled.store(true, Ordering::SeqCst);
+                            return Ok::<(), AppError>(());
+                        }
+
+                        // Fetch the dataset
+                        let portal_data = match portal_client.get_dataset(&id).await {
+                            Ok(data) => data,
+                            Err(e) => {
+                                tracing::warn!(
+                                    portal = portal_url_owned.as_str(),
+                                    dataset_id = id,
+                                    error = %e,
+                                    "Failed to fetch dataset, skipping"
+                                );
+                                stats.record(SyncOutcome::Failed);
+                                return Ok(());
+                            }
+                        };
+
+                        // Process: hash check → embed → upsert
+                        // (inline the same logic as the Incremental path)
+                        if cancel_token.is_cancelled() {
+                            was_cancelled.store(true, Ordering::SeqCst);
+                            return Ok(());
+                        }
+
+                        let mut new_dataset = F::Client::into_new_dataset(
+                            portal_data,
+                            &portal_url_owned,
+                            url_template.as_deref(),
+                        );
+                        let decision = needs_reprocessing(
+                            existing_hashes.get(&new_dataset.original_id),
+                            &new_dataset.content_hash,
+                        );
+
+                        match decision.outcome {
+                            SyncOutcome::Unchanged => {
+                                stats.record(SyncOutcome::Unchanged);
+                                if let Ok(mut ids) = unchanged_ids.lock() {
+                                    ids.push(new_dataset.original_id);
+                                }
+                                return Ok(());
+                            }
+                            SyncOutcome::Updated | SyncOutcome::Created => {}
+                            SyncOutcome::Failed | SyncOutcome::Skipped => {
+                                unreachable!("needs_reprocessing never returns Failed or Skipped")
+                            }
+                        }
+
+                        if cancel_token.is_cancelled() {
+                            was_cancelled.store(true, Ordering::SeqCst);
+                            return Ok(());
+                        }
+
+                        if decision.needs_embedding {
+                            let combined_text = format!(
+                                "{} {}",
+                                new_dataset.title,
+                                new_dataset.description.as_deref().unwrap_or_default()
+                            );
+
+                            if !combined_text.trim().is_empty() {
+                                match circuit_breaker
+                                    .call(|| embedding.generate(&combined_text))
+                                    .await
+                                {
+                                    Ok(emb) => {
+                                        new_dataset.embedding = Some(Vector::from(emb));
+                                    }
+                                    Err(CircuitBreakerError::Open { retry_after, .. }) => {
+                                        tracing::debug!(
+                                            dataset_id = %new_dataset.original_id,
+                                            retry_after_secs = retry_after.as_secs(),
+                                            "Skipping dataset - circuit breaker open"
+                                        );
+                                        stats.record(SyncOutcome::Skipped);
+                                        return Ok(());
+                                    }
+                                    Err(CircuitBreakerError::Inner(e)) => {
+                                        stats.record(SyncOutcome::Failed);
+                                        return Err(AppError::Generic(format!(
+                                            "Failed to generate embedding: {e}"
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+
+                        match store.upsert(&new_dataset).await {
+                            Ok(_uuid) => {
+                                stats.record(decision.outcome);
+                                Ok(())
+                            }
+                            Err(e) => {
+                                stats.record(SyncOutcome::Failed);
+                                Err(e)
+                            }
+                        }
+                    }
+                });
+                apply_stream_combinators!(stream);
+            }
+            SyncPlan::Incremental { datasets } => {
+                // Incremental: datasets already fetched, just process them
+                let stream =
+                    stream::iter(datasets).map(|portal_data| process_dataset!(portal_data));
+                apply_stream_combinators!(stream);
+            }
+        }
 
         // Batch update timestamps for unchanged datasets
         let unchanged_list = unchanged_ids
@@ -974,109 +868,6 @@ where
         } else {
             Ok(SyncResult::completed(final_stats))
         }
-    }
-
-    /// Determines sync mode and fetches datasets with cancellation support.
-    async fn determine_sync_mode_and_fetch_cancellable<R: ProgressReporter>(
-        &self,
-        portal_url: &str,
-        portal_client: &F::Client,
-        reporter: &R,
-        cancel_token: &CancellationToken,
-        force_full_sync: bool,
-    ) -> Result<(SyncMode, Vec<<F::Client as PortalClient>::PortalData>), AppError> {
-        if force_full_sync {
-            tracing::info!(portal = portal_url, "Force full sync requested");
-            return self
-                .do_full_sync_cancellable(portal_url, portal_client, reporter, cancel_token)
-                .await;
-        }
-
-        let last_sync = self.store.get_last_sync_time(portal_url).await?;
-
-        match last_sync {
-            Some(since) => {
-                tracing::info!(
-                    portal = portal_url,
-                    last_sync = %since,
-                    "Attempting incremental sync"
-                );
-
-                match portal_client.search_modified_since(since).await {
-                    Ok(datasets) => {
-                        let count = datasets.len();
-                        tracing::info!(
-                            portal = portal_url,
-                            modified_count = count,
-                            "Incremental sync: found {} modified datasets",
-                            count
-                        );
-                        reporter.report(HarvestEvent::PortalDatasetsFound { count });
-                        Ok((SyncMode::Incremental, datasets))
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            portal = portal_url,
-                            error = %e,
-                            "Incremental sync failed, falling back to full sync"
-                        );
-                        self.do_full_sync_cancellable(
-                            portal_url,
-                            portal_client,
-                            reporter,
-                            cancel_token,
-                        )
-                        .await
-                    }
-                }
-            }
-            None => {
-                tracing::info!(portal = portal_url, "First sync, using full sync");
-                self.do_full_sync_cancellable(portal_url, portal_client, reporter, cancel_token)
-                    .await
-            }
-        }
-    }
-
-    /// Performs a full sync with cancellation support.
-    async fn do_full_sync_cancellable<R: ProgressReporter>(
-        &self,
-        portal_url: &str,
-        portal_client: &F::Client,
-        reporter: &R,
-        cancel_token: &CancellationToken,
-    ) -> Result<(SyncMode, Vec<<F::Client as PortalClient>::PortalData>), AppError> {
-        let ids = portal_client.list_dataset_ids().await?;
-        let total = ids.len();
-        reporter.report(HarvestEvent::PortalDatasetsFound { count: total });
-
-        let mut datasets = Vec::with_capacity(total);
-        for id in ids {
-            // Check cancellation before each fetch
-            if cancel_token.is_cancelled() {
-                tracing::info!(
-                    portal = portal_url,
-                    fetched = datasets.len(),
-                    total = total,
-                    "Cancellation requested during dataset fetch"
-                );
-                break;
-            }
-
-            match portal_client.get_dataset(&id).await {
-                Ok(data) => datasets.push(data),
-                Err(e) => {
-                    tracing::warn!(
-                        portal = portal_url,
-                        dataset_id = id,
-                        error = %e,
-                        "Failed to fetch dataset, skipping"
-                    );
-                }
-            }
-        }
-
-        Ok((SyncMode::Full, datasets))
     }
 
     /// Harvests multiple portals with cancellation support.
