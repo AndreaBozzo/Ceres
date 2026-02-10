@@ -744,9 +744,7 @@ where
                             }
                             SyncOutcome::Updated | SyncOutcome::Created => {}
                             SyncOutcome::Failed | SyncOutcome::Skipped => {
-                                unreachable!(
-                                    "needs_reprocessing never returns Failed or Skipped"
-                                )
+                                unreachable!("needs_reprocessing never returns Failed or Skipped")
                             }
                         }
 
@@ -770,9 +768,7 @@ where
                                     Ok(emb) => {
                                         new_dataset.embedding = Some(Vector::from(emb));
                                     }
-                                    Err(CircuitBreakerError::Open {
-                                        retry_after, ..
-                                    }) => {
+                                    Err(CircuitBreakerError::Open { retry_after, .. }) => {
                                         tracing::debug!(
                                             dataset_id = %new_dataset.original_id,
                                             retry_after_secs = retry_after.as_secs(),
