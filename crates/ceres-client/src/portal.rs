@@ -86,6 +86,15 @@ impl PortalClient for PortalClientEnum {
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Ckan).collect()),
         }
     }
+
+    async fn search_all_datasets(&self) -> Result<Vec<Self::PortalData>, AppError> {
+        match self {
+            Self::Ckan(c) => c
+                .search_all_datasets()
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Ckan).collect()),
+        }
+    }
 }
 
 /// Factory that creates the appropriate portal client based on portal type.
