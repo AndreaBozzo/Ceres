@@ -66,10 +66,11 @@ impl PortalClient for PortalClientEnum {
         data: Self::PortalData,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
     ) -> NewDataset {
         match data {
             PortalDataEnum::Ckan(ckan_data) => {
-                CkanClient::into_new_dataset(ckan_data, portal_url, url_template)
+                CkanClient::into_new_dataset(ckan_data, portal_url, url_template, language)
             }
         }
     }

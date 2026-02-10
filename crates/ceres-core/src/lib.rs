@@ -32,7 +32,7 @@
 //! let harvest = HarvestService::new(store, embedding, portal_factory);
 //! let reporter = TracingReporter;
 //! let stats = harvest
-//!     .sync_portal_with_progress("https://data.gov/api/3", None, &reporter, PortalType::Ckan)
+//!     .sync_portal_with_progress("https://data.gov/api/3", None, "en", &reporter, PortalType::Ckan)
 //!     .await?;
 //!
 //! // Semantic search
@@ -45,6 +45,7 @@ pub mod config;
 pub mod error;
 pub mod export;
 pub mod harvest;
+pub mod i18n;
 pub mod job;
 pub mod job_queue;
 pub mod models;
@@ -67,6 +68,9 @@ pub use config::{
 
 // Error handling
 pub use error::AppError;
+
+// Internationalization
+pub use i18n::LocalizedField;
 
 // Domain models
 pub use models::{DatabaseStats, Dataset, NewDataset, Portal, SearchResult};

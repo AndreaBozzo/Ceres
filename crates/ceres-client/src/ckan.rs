@@ -8,6 +8,7 @@
 //! - DCAT-AP harvester for EU portals: <https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe>
 
 use ceres_core::HttpConfig;
+use ceres_core::LocalizedField;
 use ceres_core::error::AppError;
 use ceres_core::models::NewDataset;
 use chrono::{DateTime, Utc};
@@ -45,11 +46,15 @@ struct PackageSearchResult {
 /// This structure represents the core fields returned by the CKAN `package_show` API.
 /// Additional fields returned by CKAN are captured in the `extras` map.
 ///
+/// The `title` and `notes` fields use [`LocalizedField`] to support both plain
+/// strings and multilingual objects (e.g., `{"en": "...", "de": "..."}`).
+///
 /// # Examples
 ///
 /// ```
 /// use ceres_client::ckan::CkanDataset;
 ///
+/// // Plain string fields (most portals)
 /// let json = r#"{
 ///     "id": "dataset-123",
 ///     "name": "my-dataset",
@@ -60,8 +65,20 @@ struct PackageSearchResult {
 ///
 /// let dataset: CkanDataset = serde_json::from_str(json).unwrap();
 /// assert_eq!(dataset.id, "dataset-123");
-/// assert_eq!(dataset.title, "My Dataset");
+/// assert_eq!(dataset.title.resolve("en"), "My Dataset");
 /// assert!(dataset.extras.contains_key("organization"));
+///
+/// // Multilingual fields (e.g., Swiss portals)
+/// let json = r#"{
+///     "id": "dataset-456",
+///     "name": "swiss-dataset",
+///     "title": {"en": "English Title", "de": "Deutscher Titel"},
+///     "notes": {"en": "English description", "de": "Deutsche Beschreibung"}
+/// }"#;
+///
+/// let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+/// assert_eq!(dataset.title.resolve("de"), "Deutscher Titel");
+/// assert_eq!(dataset.notes.as_ref().unwrap().resolve("en"), "English description");
 /// ```
 #[derive(Deserialize, Debug, Clone)]
 pub struct CkanDataset {
@@ -69,10 +86,10 @@ pub struct CkanDataset {
     pub id: String,
     /// URL-friendly name/slug of the dataset
     pub name: String,
-    /// Human-readable title of the dataset
-    pub title: String,
-    /// Optional description/notes about the dataset
-    pub notes: Option<String>,
+    /// Human-readable title of the dataset (plain string or multilingual object)
+    pub title: LocalizedField,
+    /// Optional description/notes about the dataset (plain string or multilingual object)
+    pub notes: Option<LocalizedField>,
     /// All other fields returned by CKAN (e.g., organization, tags, resources)
     #[serde(flatten)]
     pub extras: serde_json::Map<String, Value>,
@@ -354,12 +371,15 @@ impl CkanClient {
     /// Converts a CKAN dataset into Ceres' internal `NewDataset` model.
     ///
     /// This helper method transforms CKAN-specific data structures into the format
-    /// used by Ceres for database storage.
+    /// used by Ceres for database storage. Multilingual fields are resolved using
+    /// the specified language preference.
     ///
     /// # Arguments
     ///
     /// * `dataset` - The CKAN dataset to convert
     /// * `portal_url` - The base URL of the CKAN portal
+    /// * `url_template` - Optional URL template with `{id}` and `{name}` placeholders
+    /// * `language` - Preferred language for resolving multilingual fields
     ///
     /// # Returns
     ///
@@ -370,12 +390,13 @@ impl CkanClient {
     /// ```
     /// use ceres_client::CkanClient;
     /// use ceres_client::ckan::CkanDataset;
+    /// use ceres_core::LocalizedField;
     ///
     /// let ckan_dataset = CkanDataset {
     ///     id: "abc-123".to_string(),
     ///     name: "air-quality-data".to_string(),
-    ///     title: "Air Quality Monitoring".to_string(),
-    ///     notes: Some("Data from air quality sensors".to_string()),
+    ///     title: LocalizedField::Plain("Air Quality Monitoring".to_string()),
+    ///     notes: Some(LocalizedField::Plain("Data from air quality sensors".to_string())),
     ///     extras: serde_json::Map::new(),
     /// };
     ///
@@ -383,6 +404,7 @@ impl CkanClient {
     ///     ckan_dataset,
     ///     "https://dati.gov.it",
     ///     None,
+    ///     "en",
     /// );
     ///
     /// assert_eq!(new_dataset.original_id, "abc-123");
@@ -393,6 +415,7 @@ impl CkanClient {
         dataset: CkanDataset,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
     ) -> NewDataset {
         let landing_page = match url_template {
             Some(template) => template
@@ -407,16 +430,23 @@ impl CkanClient {
 
         let metadata_json = serde_json::Value::Object(dataset.extras.clone());
 
-        // Compute content hash for delta detection
-        let content_hash =
-            NewDataset::compute_content_hash(&dataset.title, dataset.notes.as_deref());
+        // Resolve multilingual fields using preferred language
+        let title = dataset.title.resolve(language);
+        let description = dataset.notes.map(|n| n.resolve(language));
+
+        // Content hash includes language for correct delta detection
+        let content_hash = NewDataset::compute_content_hash_with_language(
+            &title,
+            description.as_deref(),
+            language,
+        );
 
         NewDataset {
             original_id: dataset.id,
             source_portal: portal_url.to_string(),
             url: landing_page,
-            title: dataset.title,
-            description: dataset.notes,
+            title,
+            description,
             embedding: None,
             metadata: metadata_json,
             content_hash,
@@ -453,13 +483,13 @@ mod tests {
         let ckan_dataset = CkanDataset {
             id: "dataset-123".to_string(),
             name: "my-dataset".to_string(),
-            title: "My Dataset".to_string(),
-            notes: Some("This is a test dataset".to_string()),
+            title: LocalizedField::Plain("My Dataset".to_string()),
+            notes: Some(LocalizedField::Plain("This is a test dataset".to_string())),
             extras: serde_json::Map::new(),
         };
 
         let portal_url = "https://dati.gov.it";
-        let new_dataset = CkanClient::into_new_dataset(ckan_dataset.clone(), portal_url, None);
+        let new_dataset = CkanClient::into_new_dataset(ckan_dataset, portal_url, None, "en");
 
         assert_eq!(new_dataset.original_id, "dataset-123");
         assert_eq!(new_dataset.source_portal, "https://dati.gov.it");
@@ -467,9 +497,12 @@ mod tests {
         assert_eq!(new_dataset.title, "My Dataset");
         assert!(new_dataset.embedding.is_none());
 
-        // Verify content hash is computed correctly
-        let expected_hash =
-            NewDataset::compute_content_hash(&ckan_dataset.title, ckan_dataset.notes.as_deref());
+        // Verify content hash is computed correctly (includes language)
+        let expected_hash = NewDataset::compute_content_hash_with_language(
+            "My Dataset",
+            Some("This is a test dataset"),
+            "en",
+        );
         assert_eq!(new_dataset.content_hash, expected_hash);
         assert_eq!(new_dataset.content_hash.len(), 64);
     }
@@ -479,14 +512,17 @@ mod tests {
         let ckan_dataset = CkanDataset {
             id: "52db43b1-4d6a-446c-a3fc-b2e470fe5a45".to_string(),
             name: "raccolta-differenziata".to_string(),
-            title: "Raccolta Differenziata".to_string(),
-            notes: Some("Percentuale raccolta differenziata".to_string()),
+            title: LocalizedField::Plain("Raccolta Differenziata".to_string()),
+            notes: Some(LocalizedField::Plain(
+                "Percentuale raccolta differenziata".to_string(),
+            )),
             extras: serde_json::Map::new(),
         };
 
         let portal_url = "https://dati.gov.it/opendata/";
         let template = "https://www.dati.gov.it/view-dataset/dataset?id={id}";
-        let new_dataset = CkanClient::into_new_dataset(ckan_dataset, portal_url, Some(template));
+        let new_dataset =
+            CkanClient::into_new_dataset(ckan_dataset, portal_url, Some(template), "en");
 
         assert_eq!(
             new_dataset.url,
@@ -500,14 +536,14 @@ mod tests {
         let ckan_dataset = CkanDataset {
             id: "abc-123".to_string(),
             name: "air-quality-data".to_string(),
-            title: "Air Quality".to_string(),
+            title: LocalizedField::Plain("Air Quality".to_string()),
             notes: None,
             extras: serde_json::Map::new(),
         };
 
         let template = "https://example.com/datasets/{name}/view";
         let new_dataset =
-            CkanClient::into_new_dataset(ckan_dataset, "https://example.com", Some(template));
+            CkanClient::into_new_dataset(ckan_dataset, "https://example.com", Some(template), "en");
 
         assert_eq!(
             new_dataset.url,
@@ -542,7 +578,46 @@ mod tests {
         let dataset: CkanDataset = serde_json::from_str(json).unwrap();
         assert_eq!(dataset.id, "test-id");
         assert_eq!(dataset.name, "test-name");
+        assert_eq!(dataset.title.resolve("en"), "Test Title");
         assert!(dataset.extras.contains_key("organization"));
+    }
+
+    #[test]
+    fn test_ckan_dataset_multilingual_deserialization() {
+        let json = r#"{
+            "id": "swiss-123",
+            "name": "swiss-dataset",
+            "title": {"en": "English Title", "de": "Deutscher Titel", "fr": "Titre Francais"},
+            "notes": {"en": "English description", "de": "Deutsche Beschreibung"}
+        }"#;
+
+        let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+        assert_eq!(dataset.id, "swiss-123");
+        assert_eq!(dataset.title.resolve("en"), "English Title");
+        assert_eq!(dataset.title.resolve("de"), "Deutscher Titel");
+        assert_eq!(dataset.title.resolve("it"), "English Title"); // fallback to en
+        assert_eq!(
+            dataset.notes.as_ref().unwrap().resolve("de"),
+            "Deutsche Beschreibung"
+        );
+    }
+
+    #[test]
+    fn test_into_new_dataset_multilingual() {
+        let json = r#"{
+            "id": "swiss-dataset",
+            "name": "test-multilingual",
+            "title": {"en": "English Title", "de": "Deutscher Titel"},
+            "notes": {"en": "English description", "de": "Deutsche Beschreibung"}
+        }"#;
+        let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+        let new_ds =
+            CkanClient::into_new_dataset(dataset, "https://ckan.opendata.swiss", None, "de");
+        assert_eq!(new_ds.title, "Deutscher Titel");
+        assert_eq!(
+            new_ds.description,
+            Some("Deutsche Beschreibung".to_string())
+        );
     }
 }
 
@@ -573,8 +648,9 @@ impl ceres_core::traits::PortalClient for CkanClient {
         data: Self::PortalData,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
     ) -> NewDataset {
-        CkanClient::into_new_dataset(data, portal_url, url_template)
+        CkanClient::into_new_dataset(data, portal_url, url_template, language)
     }
 
     async fn search_modified_since(

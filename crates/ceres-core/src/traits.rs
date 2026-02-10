@@ -133,10 +133,12 @@ pub trait PortalClient: Send + Sync + Clone {
     /// * `data` - The raw portal data
     /// * `portal_url` - The portal URL for source tracking
     /// * `url_template` - Optional URL template with `{id}` and `{name}` placeholders
+    /// * `language` - Preferred language for resolving multilingual fields
     fn into_new_dataset(
         data: Self::PortalData,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
     ) -> NewDataset;
 
     /// Searches for datasets modified since the given timestamp.

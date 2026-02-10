@@ -291,11 +291,13 @@ where
 
         // Execute the harvest with cancellation support
         // TODO: Add portal_type to HarvestJob when Socrata/DCAT support is added
+        let language = job.language.as_deref().unwrap_or("en");
         let result = self
             .harvest_service
             .sync_portal_with_progress_cancellable_with_options(
                 &job.portal_url,
                 job.url_template.as_deref(),
+                language,
                 harvest_reporter,
                 job_cancel.clone(),
                 job.force_full_sync,

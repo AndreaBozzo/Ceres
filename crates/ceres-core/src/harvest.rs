@@ -233,8 +233,14 @@ where
     /// - The portal API is unreachable
     /// - Database operations fail
     pub async fn sync_portal(&self, portal_url: &str) -> Result<SyncStats, AppError> {
-        self.sync_portal_with_progress(portal_url, None, &SilentReporter, PortalType::default())
-            .await
+        self.sync_portal_with_progress(
+            portal_url,
+            None,
+            "en",
+            &SilentReporter,
+            PortalType::default(),
+        )
+        .await
     }
 
     /// Synchronizes a single portal with progress reporting.
@@ -251,6 +257,7 @@ where
         &self,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
         reporter: &R,
         portal_type: PortalType,
     ) -> Result<SyncStats, AppError> {
@@ -258,6 +265,7 @@ where
             .sync_portal_with_progress_cancellable_internal(
                 portal_url,
                 url_template,
+                language,
                 reporter,
                 CancellationToken::new(), // never cancelled
                 self.config.force_full_sync,
@@ -385,6 +393,7 @@ where
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
             None,
+            "en",
             &SilentReporter,
             cancel_token,
             self.config.force_full_sync,
@@ -401,6 +410,7 @@ where
         &self,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
         reporter: &R,
         cancel_token: CancellationToken,
         portal_type: PortalType,
@@ -408,6 +418,7 @@ where
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
             url_template,
+            language,
             reporter,
             cancel_token,
             self.config.force_full_sync,
@@ -418,10 +429,12 @@ where
 
     /// Synchronizes a single portal with cancellation support, allowing
     /// a per-call override of the `force_full_sync` flag.
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_portal_with_progress_cancellable_with_options<R: ProgressReporter>(
         &self,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
         reporter: &R,
         cancel_token: CancellationToken,
         force_full_sync: bool,
@@ -431,6 +444,7 @@ where
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
             url_template,
+            language,
             reporter,
             cancel_token,
             force_full_sync,
@@ -439,10 +453,12 @@ where
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn sync_portal_with_progress_cancellable_internal<R: ProgressReporter>(
         &self,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
         reporter: &R,
         cancel_token: CancellationToken,
         force_full_sync: bool,
@@ -531,6 +547,7 @@ where
 
         let report_interval = std::cmp::max(total / 20, 50);
         let url_template_arc: Option<Arc<str>> = url_template.map(Arc::from);
+        let language_arc: Arc<str> = Arc::from(language);
 
         // Build the processing closure shared by both Full and Incremental paths.
         // The closure takes an already-fetched PortalData and processes it
@@ -541,6 +558,7 @@ where
                 let store = self.store.clone();
                 let portal_url = portal_url.to_string();
                 let url_template = url_template_arc.clone();
+                let language = Arc::clone(&language_arc);
                 let existing_hashes = existing_hashes.clone();
                 let stats = Arc::clone(&stats);
                 let unchanged_ids = Arc::clone(&unchanged_ids);
@@ -560,6 +578,7 @@ where
                         portal_data,
                         &portal_url,
                         url_template.as_deref(),
+                        &language,
                     );
                     let decision = needs_reprocessing(
                         existing_hashes.get(&new_dataset.original_id),
@@ -692,6 +711,7 @@ where
                     let embedding = self.embedding.clone();
                     let store = self.store.clone();
                     let url_template = url_template_arc.clone();
+                    let language = Arc::clone(&language_arc);
                     let existing_hashes = existing_hashes.clone();
                     let unchanged_ids = Arc::clone(&unchanged_ids);
                     let circuit_breaker = circuit_breaker.clone();
@@ -728,6 +748,7 @@ where
                             portal_data,
                             &portal_url_owned,
                             url_template.as_deref(),
+                            &language,
                         );
                         let decision = needs_reprocessing(
                             existing_hashes.get(&new_dataset.original_id),
@@ -917,6 +938,7 @@ where
                 .sync_portal_with_progress_cancellable(
                     &portal.url,
                     portal.url_template.as_deref(),
+                    portal.language(),
                     reporter,
                     cancel_token.clone(),
                     portal.portal_type,

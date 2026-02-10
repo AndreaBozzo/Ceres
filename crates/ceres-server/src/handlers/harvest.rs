@@ -56,6 +56,10 @@ pub async fn trigger_harvest_all(
             job_request = job_request.with_url_template(tmpl);
         }
 
+        if let Some(ref lang) = portal.language {
+            job_request = job_request.with_language(lang);
+        }
+
         if request.force_full_sync {
             job_request = job_request.with_full_sync();
         }

@@ -130,6 +130,7 @@ impl PortalClient for MockPortalClient {
         data: Self::PortalData,
         portal_url: &str,
         url_template: Option<&str>,
+        _language: &str,
     ) -> NewDataset {
         let content_hash =
             NewDataset::compute_content_hash(&data.title, data.description.as_deref());
