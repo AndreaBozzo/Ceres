@@ -39,7 +39,7 @@ description = "Open Data Aragón (Spain)"
 # name = "ireland"
 # url = "https://data.gov.ie"
 # type = "ckan"
-# description = "Irish Government Open Data Portal (disabled: rate limited)"
+# description = "Irish Government Open Data Portal (21k datasets)"
 
 [[portals]]
 name = "switzerland"
