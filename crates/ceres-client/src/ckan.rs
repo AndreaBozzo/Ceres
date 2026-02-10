@@ -124,8 +124,15 @@ impl CkanClient {
     /// Delay between paginated API requests to avoid rate limiting.
     const PAGE_DELAY: Duration = Duration::from_secs(1);
 
-    /// Maximum backoff delay for rate-limited retries.
+    /// Maximum backoff delay for rate-limited retries within `request_with_retry`.
     const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+    /// Cooldown when a page request is rate-limited after exhausting low-level retries.
+    /// The pagination loop waits this long before retrying the same page.
+    const PAGE_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(60);
+
+    /// Maximum number of page-level retries when a page is rate-limited.
+    const PAGE_RATE_LIMIT_RETRIES: u32 = 3;
 
     /// Creates a new CKAN client for the specified portal.
     ///
@@ -263,54 +270,9 @@ impl CkanClient {
         &self,
         since: DateTime<Utc>,
     ) -> Result<Vec<CkanDataset>, AppError> {
-        const PAGE_SIZE: usize = 1000;
-        let mut all_datasets = Vec::new();
-        let mut start: usize = 0;
-
-        // Format timestamp for Solr query: YYYY-MM-DDTHH:MM:SSZ
         let since_str = since.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let fq = format!("metadata_modified:[{} TO *]", since_str);
-
-        loop {
-            let mut url = self
-                .base_url
-                .join("api/3/action/package_search")
-                .map_err(|e| AppError::Generic(e.to_string()))?;
-
-            url.query_pairs_mut()
-                .append_pair("fq", &fq)
-                .append_pair("rows", &PAGE_SIZE.to_string())
-                .append_pair("start", &start.to_string())
-                .append_pair("sort", "metadata_modified asc");
-
-            let resp = self.request_with_retry(&url).await?;
-
-            let ckan_resp: CkanResponse<PackageSearchResult> = resp
-                .json()
-                .await
-                .map_err(|e| AppError::ClientError(e.to_string()))?;
-
-            if !ckan_resp.success {
-                return Err(AppError::Generic(
-                    "CKAN package_search returned success: false".to_string(),
-                ));
-            }
-
-            let page_count = ckan_resp.result.results.len();
-            all_datasets.extend(ckan_resp.result.results);
-
-            // Check if we've fetched all results
-            if start + page_count >= ckan_resp.result.count || page_count < PAGE_SIZE {
-                break;
-            }
-
-            start += PAGE_SIZE;
-
-            // Polite delay between pages to avoid triggering rate limits
-            sleep(Self::PAGE_DELAY).await;
-        }
-
-        Ok(all_datasets)
+        let fq = Some(format!("metadata_modified:[{} TO *]", since_str));
+        self.paginated_search(fq.as_deref()).await
     }
 
     /// Fetches all datasets from the portal using paginated `package_search`.
@@ -319,9 +281,24 @@ impl CkanClient {
     /// which is critical for large portals like HDX (~40k datasets) that enforce
     /// strict rate limits.
     pub async fn search_all_datasets(&self) -> Result<Vec<CkanDataset>, AppError> {
+        self.paginated_search(None).await
+    }
+
+    /// Core paginated search with page-level rate limit resilience.
+    ///
+    /// Fetches all matching datasets using `package_search`, handling pagination
+    /// and rate limiting at two levels:
+    /// 1. Per-request retries via `request_with_retry` (immediate backoff)
+    /// 2. Per-page retries with longer cooldown when a page is persistently rate-limited
+    ///
+    /// # Arguments
+    ///
+    /// * `fq` - Optional Solr filter query (e.g., `metadata_modified:[... TO *]`)
+    async fn paginated_search(&self, fq: Option<&str>) -> Result<Vec<CkanDataset>, AppError> {
         const PAGE_SIZE: usize = 1000;
         let mut all_datasets = Vec::new();
         let mut start: usize = 0;
+        let mut page_delay = Self::PAGE_DELAY;
 
         loop {
             let mut url = self
@@ -329,12 +306,55 @@ impl CkanClient {
                 .join("api/3/action/package_search")
                 .map_err(|e| AppError::Generic(e.to_string()))?;
 
-            url.query_pairs_mut()
-                .append_pair("rows", &PAGE_SIZE.to_string())
-                .append_pair("start", &start.to_string())
-                .append_pair("sort", "metadata_modified asc");
+            {
+                let mut pairs = url.query_pairs_mut();
+                if let Some(filter) = fq {
+                    pairs.append_pair("fq", filter);
+                }
+                pairs
+                    .append_pair("rows", &PAGE_SIZE.to_string())
+                    .append_pair("start", &start.to_string())
+                    .append_pair("sort", "metadata_modified asc");
+            }
 
-            let resp = self.request_with_retry(&url).await?;
+            // Page-level retry: if the request is rate-limited after exhausting
+            // low-level retries, wait a longer cooldown and try the page again.
+            let mut page_result = None;
+            for page_attempt in 0..=Self::PAGE_RATE_LIMIT_RETRIES {
+                match self.request_with_retry(&url).await {
+                    Ok(resp) => {
+                        page_result = Some(Ok(resp));
+                        break;
+                    }
+                    Err(AppError::RateLimitExceeded)
+                        if page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
+                    {
+                        let cooldown =
+                            Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
+                        sleep(cooldown).await;
+                        page_delay = (page_delay * 2).min(Duration::from_secs(5));
+                    }
+                    Err(AppError::ClientError(ref msg))
+                        if msg.contains("429")
+                            && page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
+                    {
+                        let cooldown =
+                            Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
+                        sleep(cooldown).await;
+                        page_delay = (page_delay * 2).min(Duration::from_secs(5));
+                    }
+                    Err(e) => {
+                        page_result = Some(Err(e));
+                        break;
+                    }
+                }
+            }
+
+            let resp = match page_result {
+                Some(Ok(resp)) => resp,
+                Some(Err(e)) => return Err(e),
+                None => return Err(AppError::RateLimitExceeded),
+            };
 
             let ckan_resp: CkanResponse<PackageSearchResult> = resp
                 .json()
@@ -358,7 +378,7 @@ impl CkanClient {
             start += PAGE_SIZE;
 
             // Polite delay between pages to avoid triggering rate limits
-            sleep(Self::PAGE_DELAY).await;
+            sleep(page_delay).await;
         }
 
         Ok(all_datasets)
