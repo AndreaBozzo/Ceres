@@ -7,6 +7,8 @@
 //! - Socrata API (used by many US cities): <https://dev.socrata.com/>
 //! - DCAT-AP harvester for EU portals: <https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe>
 
+use std::time::Duration;
+
 use ceres_core::HttpConfig;
 use ceres_core::LocalizedField;
 use ceres_core::error::AppError;
@@ -119,6 +121,9 @@ pub struct CkanClient {
 }
 
 impl CkanClient {
+    /// Delay between paginated API requests to avoid rate limiting.
+    const PAGE_DELAY: Duration = Duration::from_millis(500);
+
     /// Creates a new CKAN client for the specified portal.
     ///
     /// # Arguments
@@ -297,6 +302,10 @@ impl CkanClient {
             }
 
             start += PAGE_SIZE;
+            // Polite delay between pages to avoid triggering rate limits
+            sleep(Self::PAGE_DELAY).await;
+            // Polite delay between pages to avoid triggering rate limits
+            sleep(Self::PAGE_DELAY).await;
         }
 
         Ok(all_datasets)
@@ -350,6 +359,10 @@ impl CkanClient {
         Ok(all_datasets)
     }
 
+    /// Maximum retries for rate-limited (429) responses.
+    /// Higher than normal retries because rate limits are transient.
+    const RATE_LIMIT_MAX_RETRIES: u32 = 6;
+
     // TODO(observability): Add detailed retry logging
     // Should log: (1) Attempt number and delay, (2) Reason for retry,
     // (3) Final error if all retries exhausted. Use tracing crate.
@@ -358,8 +371,10 @@ impl CkanClient {
         let max_retries = http_config.max_retries;
         let base_delay = http_config.retry_base_delay;
         let mut last_error = AppError::Generic("No attempts made".to_string());
+        // Use higher retry count for 429s since they are transient
+        let effective_max = Self::RATE_LIMIT_MAX_RETRIES.max(max_retries);
 
-        for attempt in 1..=max_retries {
+        for attempt in 1..=effective_max {
             match self.client.get(url.clone()).send().await {
                 Ok(resp) => {
                     let status = resp.status();
@@ -370,8 +385,15 @@ impl CkanClient {
 
                     if status == StatusCode::TOO_MANY_REQUESTS {
                         last_error = AppError::RateLimitExceeded;
-                        if attempt < max_retries {
-                            let delay = base_delay * 2_u32.pow(attempt);
+                        if attempt < effective_max {
+                            // Respect Retry-After header if present, otherwise exponential backoff
+                            let delay = resp
+                                .headers()
+                                .get("retry-after")
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .map(Duration::from_secs)
+                                .unwrap_or_else(|| base_delay * 2_u32.pow(attempt));
                             sleep(delay).await;
                             continue;
                         }
