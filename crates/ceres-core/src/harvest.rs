@@ -672,7 +672,7 @@ where
                         let is_cancelled = cancel_token.is_cancelled();
                         async move { !is_cancelled }
                     })
-                    .collect::<Vec<_>>()
+                    .for_each(|_| async {})
                     .await
             };
         }
@@ -689,9 +689,6 @@ where
                     let stats = Arc::clone(&stats);
                     let cancel_token = cancel_token.clone();
                     let was_cancelled = Arc::clone(&was_cancelled);
-
-                    // Capture variables needed by process_dataset! before moving
-                    // into the async block. The macro captures `self` and friends.
                     let embedding = self.embedding.clone();
                     let store = self.store.clone();
                     let url_template = url_template_arc.clone();
@@ -722,7 +719,6 @@ where
                         };
 
                         // Process: hash check → embed → upsert
-                        // (inline the same logic as the Incremental path)
                         if cancel_token.is_cancelled() {
                             was_cancelled.store(true, Ordering::SeqCst);
                             return Ok(());
@@ -748,7 +744,9 @@ where
                             }
                             SyncOutcome::Updated | SyncOutcome::Created => {}
                             SyncOutcome::Failed | SyncOutcome::Skipped => {
-                                unreachable!("needs_reprocessing never returns Failed or Skipped")
+                                unreachable!(
+                                    "needs_reprocessing never returns Failed or Skipped"
+                                )
                             }
                         }
 
@@ -772,7 +770,9 @@ where
                                     Ok(emb) => {
                                         new_dataset.embedding = Some(Vector::from(emb));
                                     }
-                                    Err(CircuitBreakerError::Open { retry_after, .. }) => {
+                                    Err(CircuitBreakerError::Open {
+                                        retry_after, ..
+                                    }) => {
                                         tracing::debug!(
                                             dataset_id = %new_dataset.original_id,
                                             retry_after_secs = retry_after.as_secs(),
