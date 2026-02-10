@@ -366,6 +366,24 @@ where
                 reporter.report(HarvestEvent::PortalDatasetsFound { count });
                 Ok((SyncMode::Full, SyncPlan::FullBulk { datasets }))
             }
+            Err(AppError::RateLimitExceeded) => {
+                // If bulk fetch was rate-limited, ID-by-ID would be even worse.
+                // Propagate the error instead of falling back.
+                tracing::warn!(
+                    portal = portal_url,
+                    "Bulk fetch rate-limited, not falling back to ID-by-ID (would be worse)"
+                );
+                Err(AppError::RateLimitExceeded)
+            }
+            Err(e) if e.to_string().contains("429") => {
+                // Catch rate limit errors wrapped in ClientError too
+                tracing::warn!(
+                    portal = portal_url,
+                    error = %e,
+                    "Bulk fetch rate-limited, not falling back to ID-by-ID (would be worse)"
+                );
+                Err(AppError::RateLimitExceeded)
+            }
             Err(e) => {
                 tracing::info!(
                     portal = portal_url,

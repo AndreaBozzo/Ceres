@@ -122,7 +122,10 @@ pub struct CkanClient {
 
 impl CkanClient {
     /// Delay between paginated API requests to avoid rate limiting.
-    const PAGE_DELAY: Duration = Duration::from_millis(500);
+    const PAGE_DELAY: Duration = Duration::from_secs(1);
+
+    /// Maximum backoff delay for rate-limited retries.
+    const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
     /// Creates a new CKAN client for the specified portal.
     ///
@@ -302,8 +305,7 @@ impl CkanClient {
             }
 
             start += PAGE_SIZE;
-            // Polite delay between pages to avoid triggering rate limits
-            sleep(Self::PAGE_DELAY).await;
+
             // Polite delay between pages to avoid triggering rate limits
             sleep(Self::PAGE_DELAY).await;
         }
@@ -354,6 +356,9 @@ impl CkanClient {
             }
 
             start += PAGE_SIZE;
+
+            // Polite delay between pages to avoid triggering rate limits
+            sleep(Self::PAGE_DELAY).await;
         }
 
         Ok(all_datasets)
@@ -361,7 +366,8 @@ impl CkanClient {
 
     /// Maximum retries for rate-limited (429) responses.
     /// Higher than normal retries because rate limits are transient.
-    const RATE_LIMIT_MAX_RETRIES: u32 = 6;
+    /// With 500ms base and 30s cap: 1s, 2s, 4s, 8s, 16s, 30s, 30s, 30s, 30s = ~151s total wait.
+    const RATE_LIMIT_MAX_RETRIES: u32 = 10;
 
     // TODO(observability): Add detailed retry logging
     // Should log: (1) Attempt number and delay, (2) Reason for retry,
@@ -386,14 +392,16 @@ impl CkanClient {
                     if status == StatusCode::TOO_MANY_REQUESTS {
                         last_error = AppError::RateLimitExceeded;
                         if attempt < effective_max {
-                            // Respect Retry-After header if present, otherwise exponential backoff
+                            // Respect Retry-After header if present, otherwise exponential backoff (capped)
                             let delay = resp
                                 .headers()
                                 .get("retry-after")
                                 .and_then(|v| v.to_str().ok())
                                 .and_then(|v| v.parse::<u64>().ok())
                                 .map(Duration::from_secs)
-                                .unwrap_or_else(|| base_delay * 2_u32.pow(attempt));
+                                .unwrap_or_else(|| {
+                                    (base_delay * 2_u32.pow(attempt)).min(Self::MAX_RETRY_DELAY)
+                                });
                             sleep(delay).await;
                             continue;
                         }
