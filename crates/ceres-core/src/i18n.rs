@@ -13,7 +13,7 @@
 
 use serde::Deserialize;
 use serde::de::{self, Deserializer, MapAccess, Visitor};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// A field that may be either a plain string or a multilingual map.
@@ -40,8 +40,10 @@ use std::fmt;
 pub enum LocalizedField {
     /// A simple string value (most portals).
     Plain(String),
-    /// A map of language code to localized text (multilingual portals).
-    Multilingual(HashMap<String, String>),
+    /// A sorted map of language code to localized text (multilingual portals).
+    /// Uses `BTreeMap` for deterministic fallback ordering when neither the
+    /// preferred language nor `"en"` is available.
+    Multilingual(BTreeMap<String, String>),
 }
 
 impl LocalizedField {
@@ -98,7 +100,7 @@ impl<'de> Deserialize<'de> for LocalizedField {
             where
                 M: MapAccess<'de>,
             {
-                let translations: HashMap<String, String> =
+                let translations: BTreeMap<String, String> =
                     Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 Ok(LocalizedField::Multilingual(translations))
             }
@@ -122,7 +124,7 @@ mod tests {
 
     #[test]
     fn test_resolve_multilingual_preferred_language() {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert("en".to_string(), "English".to_string());
         map.insert("de".to_string(), "Deutsch".to_string());
         map.insert("fr".to_string(), "Francais".to_string());
@@ -135,7 +137,7 @@ mod tests {
 
     #[test]
     fn test_resolve_multilingual_falls_back_to_en() {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert("en".to_string(), "English".to_string());
         map.insert("de".to_string(), "Deutsch".to_string());
         let field = LocalizedField::Multilingual(map);
@@ -146,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_resolve_multilingual_falls_back_to_first_available() {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert("de".to_string(), "Deutsch".to_string());
         let field = LocalizedField::Multilingual(map);
 
@@ -156,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_resolve_multilingual_empty_map() {
-        let field = LocalizedField::Multilingual(HashMap::new());
+        let field = LocalizedField::Multilingual(BTreeMap::new());
         assert_eq!(field.resolve("en"), "");
     }
 
