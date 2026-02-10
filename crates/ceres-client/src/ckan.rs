@@ -329,17 +329,14 @@ impl CkanClient {
                     Err(AppError::RateLimitExceeded)
                         if page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
                     {
-                        let cooldown =
-                            Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
+                        let cooldown = Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
                         sleep(cooldown).await;
                         page_delay = (page_delay * 2).min(Duration::from_secs(5));
                     }
                     Err(AppError::ClientError(ref msg))
-                        if msg.contains("429")
-                            && page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
+                        if msg.contains("429") && page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
                     {
-                        let cooldown =
-                            Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
+                        let cooldown = Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
                         sleep(cooldown).await;
                         page_delay = (page_delay * 2).min(Duration::from_secs(5));
                     }
