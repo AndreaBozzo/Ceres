@@ -302,6 +302,54 @@ impl CkanClient {
         Ok(all_datasets)
     }
 
+    /// Fetches all datasets from the portal using paginated `package_search`.
+    ///
+    /// This makes ~N/1000 API calls instead of N individual `package_show` calls,
+    /// which is critical for large portals like HDX (~40k datasets) that enforce
+    /// strict rate limits.
+    pub async fn search_all_datasets(&self) -> Result<Vec<CkanDataset>, AppError> {
+        const PAGE_SIZE: usize = 1000;
+        let mut all_datasets = Vec::new();
+        let mut start: usize = 0;
+
+        loop {
+            let mut url = self
+                .base_url
+                .join("api/3/action/package_search")
+                .map_err(|e| AppError::Generic(e.to_string()))?;
+
+            url.query_pairs_mut()
+                .append_pair("rows", &PAGE_SIZE.to_string())
+                .append_pair("start", &start.to_string())
+                .append_pair("sort", "metadata_modified asc");
+
+            let resp = self.request_with_retry(&url).await?;
+
+            let ckan_resp: CkanResponse<PackageSearchResult> = resp
+                .json()
+                .await
+                .map_err(|e| AppError::ClientError(e.to_string()))?;
+
+            if !ckan_resp.success {
+                return Err(AppError::Generic(
+                    "CKAN package_search returned success: false".to_string(),
+                ));
+            }
+
+            let page_count = ckan_resp.result.results.len();
+            all_datasets.extend(ckan_resp.result.results);
+
+            // Check if we've fetched all results
+            if start + page_count >= ckan_resp.result.count || page_count < PAGE_SIZE {
+                break;
+            }
+
+            start += PAGE_SIZE;
+        }
+
+        Ok(all_datasets)
+    }
+
     // TODO(observability): Add detailed retry logging
     // Should log: (1) Attempt number and delay, (2) Reason for retry,
     // (3) Final error if all retries exhausted. Use tracing crate.
@@ -658,6 +706,10 @@ impl ceres_core::traits::PortalClient for CkanClient {
         since: DateTime<Utc>,
     ) -> Result<Vec<Self::PortalData>, AppError> {
         self.search_modified_since(since).await
+    }
+
+    async fn search_all_datasets(&self) -> Result<Vec<Self::PortalData>, AppError> {
+        self.search_all_datasets().await
     }
 }
 

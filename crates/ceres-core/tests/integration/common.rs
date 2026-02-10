@@ -164,6 +164,11 @@ impl PortalClient for MockPortalClient {
         // For testing, return all datasets as "modified"
         Ok(self.datasets.clone())
     }
+
+    async fn search_all_datasets(&self) -> Result<Vec<Self::PortalData>, AppError> {
+        // For testing, return all datasets
+        Ok(self.datasets.clone())
+    }
 }
 
 // =============================================================================

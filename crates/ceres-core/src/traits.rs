@@ -158,6 +158,25 @@ pub trait PortalClient: Send + Sync + Clone {
         &self,
         since: DateTime<Utc>,
     ) -> impl Future<Output = Result<Vec<Self::PortalData>, AppError>> + Send;
+
+    /// Fetches all datasets from the portal in bulk using paginated search.
+    ///
+    /// This is far more efficient than `list_dataset_ids()` + individual
+    /// `get_dataset()` calls for large portals (e.g., HDX with ~40k datasets),
+    /// as it avoids per-dataset HTTP requests and rate limiting.
+    ///
+    /// Returns full dataset objects ready for processing.
+    /// The default implementation falls back to `list_dataset_ids()` + `get_dataset()`
+    /// for portals that don't support bulk search.
+    fn search_all_datasets(
+        &self,
+    ) -> impl Future<Output = Result<Vec<Self::PortalData>, AppError>> + Send {
+        async {
+            Err(AppError::Generic(
+                "search_all_datasets not supported".to_string(),
+            ))
+        }
+    }
 }
 
 /// Factory for creating portal clients.
