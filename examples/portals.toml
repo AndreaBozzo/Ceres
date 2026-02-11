@@ -103,6 +103,13 @@ description = "Open Data NRW (Germany)"
 
 # Italian city portals
 # [[portals]]
+# name = "campania"
+# url = "https://dati.regione.campania.it/ckan/"
+# type = "ckan"
+# url_template = "https://dati.regione.campania.it/ckan/api/3/action/package_show?id={name}"
+# description = "Open data della Regione Campania (~348 datasets)"
+
+# [[portals]]
 # name = "napoli"
 # url = "https://dati.comune.napoli.it"
 # type = "ckan"

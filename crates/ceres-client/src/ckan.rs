@@ -527,7 +527,19 @@ impl CkanClient {
 
         // Resolve multilingual fields using preferred language
         let title = dataset.title.resolve(language);
-        let description = dataset.notes.map(|n| n.resolve(language));
+        // Some portals (e.g., opendata.swiss) store the description in a
+        // "description" field instead of "notes". Fall back to extras if needed.
+        let description = dataset
+            .notes
+            .map(|n| n.resolve(language))
+            .or_else(|| {
+                dataset
+                    .extras
+                    .get("description")
+                    .and_then(|v| serde_json::from_value::<LocalizedField>(v.clone()).ok())
+                    .map(|f| f.resolve(language))
+            })
+            .filter(|d| !d.is_empty());
 
         // Content hash includes language for correct delta detection
         let content_hash = NewDataset::compute_content_hash_with_language(
@@ -713,6 +725,52 @@ mod tests {
             new_ds.description,
             Some("Deutsche Beschreibung".to_string())
         );
+    }
+
+    #[test]
+    fn test_into_new_dataset_description_fallback() {
+        // Swiss portal stores description in "description" field, not "notes"
+        let json = r#"{
+            "id": "swiss-no-notes",
+            "name": "dataset-without-notes",
+            "title": {"en": "English Title", "de": "Deutscher Titel"},
+            "description": {"en": "English desc", "de": "Deutsche Beschreibung"}
+        }"#;
+        let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+        assert!(dataset.notes.is_none());
+        let new_ds =
+            CkanClient::into_new_dataset(dataset, "https://ckan.opendata.swiss", None, "en");
+        assert_eq!(new_ds.description, Some("English desc".to_string()));
+    }
+
+    #[test]
+    fn test_into_new_dataset_description_fallback_empty() {
+        // If "description" exists but all translations are empty, description should be None
+        let json = r#"{
+            "id": "swiss-empty-desc",
+            "name": "dataset-empty-desc",
+            "title": "Some Title",
+            "description": {"en": "", "de": "", "fr": ""}
+        }"#;
+        let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+        let new_ds =
+            CkanClient::into_new_dataset(dataset, "https://ckan.opendata.swiss", None, "en");
+        assert_eq!(new_ds.description, None);
+    }
+
+    #[test]
+    fn test_into_new_dataset_notes_takes_priority() {
+        // When both "notes" and "description" exist, "notes" should win
+        let json = r#"{
+            "id": "both-fields",
+            "name": "dataset-both",
+            "title": "Title",
+            "notes": "Notes description",
+            "description": {"en": "Extras description"}
+        }"#;
+        let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+        let new_ds = CkanClient::into_new_dataset(dataset, "https://example.com", None, "en");
+        assert_eq!(new_ds.description, Some("Notes description".to_string()));
     }
 }
 

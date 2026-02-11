@@ -51,23 +51,24 @@ impl LocalizedField {
     ///
     /// Resolution strategy:
     /// 1. If plain string, return it directly (language is ignored).
-    /// 2. If multilingual, try the preferred language.
-    /// 3. Fall back to `"en"` if the preferred language is unavailable.
-    /// 4. Fall back to the first available translation.
+    /// 2. If multilingual, try the preferred language (skip if empty).
+    /// 3. Fall back to `"en"` if the preferred language is unavailable or empty.
+    /// 4. Fall back to the first non-empty translation.
     /// 5. Return an empty string if no translations exist.
     pub fn resolve(&self, preferred_language: &str) -> String {
         match self {
             LocalizedField::Plain(s) => s.clone(),
             LocalizedField::Multilingual(map) => map
                 .get(preferred_language)
+                .filter(|s| !s.is_empty())
                 .or_else(|| {
                     if preferred_language != "en" {
-                        map.get("en")
+                        map.get("en").filter(|s| !s.is_empty())
                     } else {
                         None
                     }
                 })
-                .or_else(|| map.values().next())
+                .or_else(|| map.values().find(|s| !s.is_empty()))
                 .cloned()
                 .unwrap_or_default(),
         }
@@ -160,6 +161,20 @@ mod tests {
     fn test_resolve_multilingual_empty_map() {
         let field = LocalizedField::Multilingual(BTreeMap::new());
         assert_eq!(field.resolve("en"), "");
+    }
+
+    #[test]
+    fn test_resolve_multilingual_skips_empty_preferred() {
+        let mut map = BTreeMap::new();
+        map.insert("en".to_string(), "".to_string());
+        map.insert("de".to_string(), "Deutsch".to_string());
+        map.insert("fr".to_string(), "".to_string());
+        let field = LocalizedField::Multilingual(map);
+
+        // "en" exists but is empty, should fall back to first non-empty ("de")
+        assert_eq!(field.resolve("en"), "Deutsch");
+        // "fr" exists but is empty, should try "en" (also empty), then first non-empty
+        assert_eq!(field.resolve("fr"), "Deutsch");
     }
 
     #[test]
