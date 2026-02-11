@@ -73,6 +73,18 @@ pub trait EmbeddingProvider: Send + Sync + Clone {
     /// The vector length must equal `self.dimension()`.
     fn generate(&self, text: &str) -> impl Future<Output = Result<Vec<f32>, AppError>> + Send;
 
+    /// Maximum number of texts supported per batch API call.
+    ///
+    /// The harvest pipeline uses `min(config.embedding_batch_size, max_batch_size())`
+    /// to ensure batches never exceed provider limits.
+    ///
+    /// # Defaults
+    ///
+    /// Returns `1` (no batching). Providers with native batch support should override.
+    fn max_batch_size(&self) -> usize {
+        1
+    }
+
     /// Generates embeddings for multiple texts in a batch.
     ///
     /// The default implementation calls `generate()` sequentially.

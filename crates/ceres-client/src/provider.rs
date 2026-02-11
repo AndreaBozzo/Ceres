@@ -90,6 +90,13 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         }
     }
 
+    fn max_batch_size(&self) -> usize {
+        match self {
+            Self::Gemini(c) => c.max_batch_size(),
+            Self::OpenAI(c) => c.max_batch_size(),
+        }
+    }
+
     async fn generate(&self, text: &str) -> Result<Vec<f32>, AppError> {
         match self {
             Self::Gemini(c) => c.generate(text).await,

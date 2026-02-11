@@ -39,6 +39,10 @@ impl EmbeddingProvider for SlowEmbeddingProvider {
         768
     }
 
+    fn max_batch_size(&self) -> usize {
+        100
+    }
+
     async fn generate(&self, _text: &str) -> Result<Vec<f32>, AppError> {
         sleep(self.delay).await;
         self.processed_count.fetch_add(1, Ordering::Relaxed);
@@ -91,9 +95,11 @@ async fn test_cancellation_during_processing() {
     let embedding = SlowEmbeddingProvider::new(Duration::from_millis(50));
     let factory = MockPortalClientFactory::new(datasets);
 
-    // Low concurrency to ensure sequential-ish processing and easier cancellation
+    // Low concurrency and small batch size to ensure cancellation can
+    // take effect between batches
     let config = SyncConfig {
         concurrency: 2,
+        embedding_batch_size: 2,
         force_full_sync: true,
         ..Default::default()
     };

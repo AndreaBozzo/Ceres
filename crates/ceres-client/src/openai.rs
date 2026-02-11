@@ -244,6 +244,10 @@ impl ceres_core::traits::EmbeddingProvider for OpenAIClient {
         self.dim
     }
 
+    fn max_batch_size(&self) -> usize {
+        2048 // OpenAI API limit
+    }
+
     async fn generate(&self, text: &str) -> Result<Vec<f32>, AppError> {
         self.get_embeddings(text).await
     }
