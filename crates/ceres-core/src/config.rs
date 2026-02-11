@@ -329,6 +329,20 @@ pub struct PortalEntry {
     ///
     /// If not set, defaults to `{portal_url}/dataset/{name}`.
     pub url_template: Option<String>,
+
+    /// Preferred language for multilingual portals (e.g., `"en"`, `"de"`, `"fr"`).
+    ///
+    /// Some portals return title and description as language-keyed objects.
+    /// This field controls which language is selected when resolving those fields.
+    /// Defaults to `"en"` when not specified.
+    pub language: Option<String>,
+}
+
+impl PortalEntry {
+    /// Returns the preferred language, defaulting to `"en"`.
+    pub fn language(&self) -> &str {
+        self.language.as_deref().unwrap_or("en")
+    }
 }
 
 /// Default configuration file name.

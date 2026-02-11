@@ -203,6 +203,9 @@ pub struct HarvestJob {
 
     /// Optional URL template for dataset landing pages.
     pub url_template: Option<String>,
+
+    /// Preferred language for multilingual portals.
+    pub language: Option<String>,
 }
 
 impl HarvestJob {
@@ -235,6 +238,9 @@ pub struct CreateJobRequest {
     pub max_retries: Option<u32>,
     /// Optional URL template for dataset landing pages.
     pub url_template: Option<String>,
+
+    /// Preferred language for multilingual portals.
+    pub language: Option<String>,
 }
 
 impl CreateJobRequest {
@@ -246,6 +252,7 @@ impl CreateJobRequest {
             force_full_sync: false,
             max_retries: None,
             url_template: None,
+            language: None,
         }
     }
 
@@ -270,6 +277,12 @@ impl CreateJobRequest {
     /// Set URL template for dataset landing pages.
     pub fn with_url_template(mut self, template: impl Into<String>) -> Self {
         self.url_template = Some(template.into());
+        self
+    }
+
+    /// Set preferred language for multilingual portals.
+    pub fn with_language(mut self, language: impl Into<String>) -> Self {
+        self.language = Some(language.into());
         self
     }
 }
@@ -425,6 +438,7 @@ mod tests {
             worker_id: Some("worker-1".to_string()),
             force_full_sync: false,
             url_template: None,
+            language: None,
         };
 
         assert!(job.can_retry());

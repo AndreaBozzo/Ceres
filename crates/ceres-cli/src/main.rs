@@ -149,7 +149,7 @@ async fn handle_harvest(
         (Some(url), None) => {
             info!("Syncing portal: {}", url);
             let stats = harvest_service
-                .sync_portal_with_progress(&url, None, &reporter, PortalType::Ckan)
+                .sync_portal_with_progress(&url, None, "en", &reporter, PortalType::Ckan)
                 .await?;
             print_single_portal_summary(&url, &stats);
         }
@@ -177,6 +177,7 @@ async fn handle_harvest(
                 .sync_portal_with_progress(
                     &portal.url,
                     portal.url_template.as_deref(),
+                    portal.language(),
                     &reporter,
                     portal.portal_type,
                 )

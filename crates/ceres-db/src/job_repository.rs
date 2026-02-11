@@ -51,6 +51,7 @@ struct JobRow {
     worker_id: Option<String>,
     force_full_sync: bool,
     url_template: Option<String>,
+    language: Option<String>,
 }
 
 /// JSON representation of SyncStats for database storage.
@@ -109,6 +110,7 @@ impl From<JobRow> for HarvestJob {
             worker_id: row.worker_id,
             force_full_sync: row.force_full_sync,
             url_template: row.url_template,
+            language: row.language,
         }
     }
 }
@@ -123,8 +125,8 @@ impl JobQueue for JobRepository {
 
         let row: JobRow = sqlx::query_as(
             r#"
-            INSERT INTO harvest_jobs (portal_url, portal_name, force_full_sync, max_retries, url_template)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO harvest_jobs (portal_url, portal_name, force_full_sync, max_retries, url_template, language)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING *
             "#,
         )
@@ -133,6 +135,7 @@ impl JobQueue for JobRepository {
         .bind(request.force_full_sync)
         .bind(max_retries)
         .bind(&request.url_template)
+        .bind(&request.language)
         .fetch_one(&self.pool)
         .await?;
 

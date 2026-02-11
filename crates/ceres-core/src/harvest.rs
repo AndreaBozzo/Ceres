@@ -97,11 +97,19 @@ impl SyncMode {
 /// For full sync, we only have dataset IDs — each dataset must be fetched
 /// individually inside the processing stream. For incremental sync, the
 /// datasets were already fetched by `search_modified_since`.
+/// For bulk full sync, all datasets were fetched via `search_all_datasets`.
 enum SyncPlan<PD: Send> {
-    /// Full sync: fetch each dataset by ID in the stream pipeline.
+    /// Full sync (ID-by-ID): fetch each dataset individually in the stream pipeline.
+    /// Used as fallback when the portal doesn't support bulk search.
     Full {
         /// Dataset IDs to fetch and process.
         ids: Vec<String>,
+    },
+    /// Full sync (bulk): all datasets pre-fetched via `search_all_datasets`.
+    /// Much more efficient for large portals that enforce rate limits (e.g., HDX).
+    FullBulk {
+        /// Pre-fetched dataset objects.
+        datasets: Vec<PD>,
     },
     /// Incremental sync: datasets already fetched.
     Incremental {
@@ -115,6 +123,7 @@ impl<PD: Send> SyncPlan<PD> {
     fn len(&self) -> usize {
         match self {
             SyncPlan::Full { ids } => ids.len(),
+            SyncPlan::FullBulk { datasets } => datasets.len(),
             SyncPlan::Incremental { datasets } => datasets.len(),
         }
     }
@@ -233,8 +242,14 @@ where
     /// - The portal API is unreachable
     /// - Database operations fail
     pub async fn sync_portal(&self, portal_url: &str) -> Result<SyncStats, AppError> {
-        self.sync_portal_with_progress(portal_url, None, &SilentReporter, PortalType::default())
-            .await
+        self.sync_portal_with_progress(
+            portal_url,
+            None,
+            "en",
+            &SilentReporter,
+            PortalType::default(),
+        )
+        .await
     }
 
     /// Synchronizes a single portal with progress reporting.
@@ -251,6 +266,7 @@ where
         &self,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
         reporter: &R,
         portal_type: PortalType,
     ) -> Result<SyncStats, AppError> {
@@ -258,6 +274,7 @@ where
             .sync_portal_with_progress_cancellable_internal(
                 portal_url,
                 url_template,
+                language,
                 reporter,
                 CancellationToken::new(), // never cancelled
                 self.config.force_full_sync,
@@ -280,9 +297,9 @@ where
     ) -> Result<(SyncMode, SyncPlan<<F::Client as PortalClient>::PortalData>), AppError> {
         if force_full_sync {
             tracing::info!(portal = portal_url, "Force full sync requested");
-            let ids = portal_client.list_dataset_ids().await?;
-            reporter.report(HarvestEvent::PortalDatasetsFound { count: ids.len() });
-            return Ok((SyncMode::Full, SyncPlan::Full { ids }));
+            return self
+                .full_sync_plan(portal_url, portal_client, reporter)
+                .await;
         }
 
         let last_sync = self.store.get_last_sync_time(portal_url).await?;
@@ -313,14 +330,66 @@ where
                             error = %e,
                             "Incremental sync failed, falling back to full sync"
                         );
-                        let ids = portal_client.list_dataset_ids().await?;
-                        reporter.report(HarvestEvent::PortalDatasetsFound { count: ids.len() });
-                        Ok((SyncMode::Full, SyncPlan::Full { ids }))
+                        self.full_sync_plan(portal_url, portal_client, reporter)
+                            .await
                     }
                 }
             }
             None => {
                 tracing::info!(portal = portal_url, "First sync, using full sync");
+                self.full_sync_plan(portal_url, portal_client, reporter)
+                    .await
+            }
+        }
+    }
+
+    /// Determines the best full sync plan for a portal.
+    ///
+    /// Prefers bulk fetch via `search_all_datasets` (paginated `package_search`)
+    /// which uses ~N/1000 API calls instead of N individual calls. Falls back to
+    /// ID-by-ID fetching if the portal doesn't support bulk search.
+    async fn full_sync_plan<R: ProgressReporter>(
+        &self,
+        portal_url: &str,
+        portal_client: &F::Client,
+        reporter: &R,
+    ) -> Result<(SyncMode, SyncPlan<<F::Client as PortalClient>::PortalData>), AppError> {
+        // Try bulk fetch first (much faster for large portals)
+        match portal_client.search_all_datasets().await {
+            Ok(datasets) => {
+                let count = datasets.len();
+                tracing::info!(
+                    portal = portal_url,
+                    count,
+                    "Full sync: bulk-fetched all datasets via package_search"
+                );
+                reporter.report(HarvestEvent::PortalDatasetsFound { count });
+                Ok((SyncMode::Full, SyncPlan::FullBulk { datasets }))
+            }
+            Err(AppError::RateLimitExceeded) => {
+                // If bulk fetch was rate-limited, ID-by-ID would be even worse.
+                // Propagate the error instead of falling back.
+                tracing::warn!(
+                    portal = portal_url,
+                    "Bulk fetch rate-limited, not falling back to ID-by-ID (would be worse)"
+                );
+                Err(AppError::RateLimitExceeded)
+            }
+            Err(e) if e.to_string().contains("429") => {
+                // Catch rate limit errors wrapped in ClientError too
+                tracing::warn!(
+                    portal = portal_url,
+                    error = %e,
+                    "Bulk fetch rate-limited, not falling back to ID-by-ID (would be worse)"
+                );
+                Err(AppError::RateLimitExceeded)
+            }
+            Err(e) => {
+                tracing::info!(
+                    portal = portal_url,
+                    error = %e,
+                    "Bulk fetch not available, falling back to ID-by-ID sync"
+                );
                 let ids = portal_client.list_dataset_ids().await?;
                 reporter.report(HarvestEvent::PortalDatasetsFound { count: ids.len() });
                 Ok((SyncMode::Full, SyncPlan::Full { ids }))
@@ -385,6 +454,7 @@ where
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
             None,
+            "en",
             &SilentReporter,
             cancel_token,
             self.config.force_full_sync,
@@ -401,6 +471,7 @@ where
         &self,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
         reporter: &R,
         cancel_token: CancellationToken,
         portal_type: PortalType,
@@ -408,6 +479,7 @@ where
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
             url_template,
+            language,
             reporter,
             cancel_token,
             self.config.force_full_sync,
@@ -418,10 +490,12 @@ where
 
     /// Synchronizes a single portal with cancellation support, allowing
     /// a per-call override of the `force_full_sync` flag.
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_portal_with_progress_cancellable_with_options<R: ProgressReporter>(
         &self,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
         reporter: &R,
         cancel_token: CancellationToken,
         force_full_sync: bool,
@@ -431,6 +505,7 @@ where
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
             url_template,
+            language,
             reporter,
             cancel_token,
             force_full_sync,
@@ -439,10 +514,12 @@ where
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn sync_portal_with_progress_cancellable_internal<R: ProgressReporter>(
         &self,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
         reporter: &R,
         cancel_token: CancellationToken,
         force_full_sync: bool,
@@ -531,6 +608,7 @@ where
 
         let report_interval = std::cmp::max(total / 20, 50);
         let url_template_arc: Option<Arc<str>> = url_template.map(Arc::from);
+        let language_arc: Arc<str> = Arc::from(language);
 
         // Build the processing closure shared by both Full and Incremental paths.
         // The closure takes an already-fetched PortalData and processes it
@@ -541,6 +619,7 @@ where
                 let store = self.store.clone();
                 let portal_url = portal_url.to_string();
                 let url_template = url_template_arc.clone();
+                let language = Arc::clone(&language_arc);
                 let existing_hashes = existing_hashes.clone();
                 let stats = Arc::clone(&stats);
                 let unchanged_ids = Arc::clone(&unchanged_ids);
@@ -560,6 +639,7 @@ where
                         portal_data,
                         &portal_url,
                         url_template.as_deref(),
+                        &language,
                     );
                     let decision = needs_reprocessing(
                         existing_hashes.get(&new_dataset.original_id),
@@ -692,6 +772,7 @@ where
                     let embedding = self.embedding.clone();
                     let store = self.store.clone();
                     let url_template = url_template_arc.clone();
+                    let language = Arc::clone(&language_arc);
                     let existing_hashes = existing_hashes.clone();
                     let unchanged_ids = Arc::clone(&unchanged_ids);
                     let circuit_breaker = circuit_breaker.clone();
@@ -728,6 +809,7 @@ where
                             portal_data,
                             &portal_url_owned,
                             url_template.as_deref(),
+                            &language,
                         );
                         let decision = needs_reprocessing(
                             existing_hashes.get(&new_dataset.original_id),
@@ -801,8 +883,8 @@ where
                 });
                 apply_stream_combinators!(stream);
             }
-            SyncPlan::Incremental { datasets } => {
-                // Incremental: datasets already fetched, just process them
+            SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
+                // Datasets already fetched (bulk or incremental), just process them
                 let stream =
                     stream::iter(datasets).map(|portal_data| process_dataset!(portal_data));
                 apply_stream_combinators!(stream);
@@ -917,6 +999,7 @@ where
                 .sync_portal_with_progress_cancellable(
                     &portal.url,
                     portal.url_template.as_deref(),
+                    portal.language(),
                     reporter,
                     cancel_token.clone(),
                     portal.portal_type,

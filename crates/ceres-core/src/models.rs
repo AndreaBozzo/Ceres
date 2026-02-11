@@ -136,6 +136,21 @@ impl NewDataset {
         hasher.update(content.as_bytes());
         format!("{:x}", hasher.finalize())
     }
+
+    /// Computes a content hash that includes the language preference.
+    ///
+    /// The language is included so that changing the preferred language
+    /// for a portal triggers re-embedding (since the resolved text changes).
+    pub fn compute_content_hash_with_language(
+        title: &str,
+        description: Option<&str>,
+        language: &str,
+    ) -> String {
+        let mut hasher = Sha256::new();
+        let content = format!("{}\n{}\n{}", language, title, description.unwrap_or(""));
+        hasher.update(content.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 /// Result of a semantic search with similarity score.

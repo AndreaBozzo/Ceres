@@ -7,7 +7,10 @@
 //! - Socrata API (used by many US cities): <https://dev.socrata.com/>
 //! - DCAT-AP harvester for EU portals: <https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe>
 
+use std::time::Duration;
+
 use ceres_core::HttpConfig;
+use ceres_core::LocalizedField;
 use ceres_core::error::AppError;
 use ceres_core::models::NewDataset;
 use chrono::{DateTime, Utc};
@@ -45,11 +48,15 @@ struct PackageSearchResult {
 /// This structure represents the core fields returned by the CKAN `package_show` API.
 /// Additional fields returned by CKAN are captured in the `extras` map.
 ///
+/// The `title` and `notes` fields use [`LocalizedField`] to support both plain
+/// strings and multilingual objects (e.g., `{"en": "...", "de": "..."}`).
+///
 /// # Examples
 ///
 /// ```
 /// use ceres_client::ckan::CkanDataset;
 ///
+/// // Plain string fields (most portals)
 /// let json = r#"{
 ///     "id": "dataset-123",
 ///     "name": "my-dataset",
@@ -60,8 +67,20 @@ struct PackageSearchResult {
 ///
 /// let dataset: CkanDataset = serde_json::from_str(json).unwrap();
 /// assert_eq!(dataset.id, "dataset-123");
-/// assert_eq!(dataset.title, "My Dataset");
+/// assert_eq!(dataset.title.resolve("en"), "My Dataset");
 /// assert!(dataset.extras.contains_key("organization"));
+///
+/// // Multilingual fields (e.g., Swiss portals)
+/// let json = r#"{
+///     "id": "dataset-456",
+///     "name": "swiss-dataset",
+///     "title": {"en": "English Title", "de": "Deutscher Titel"},
+///     "notes": {"en": "English description", "de": "Deutsche Beschreibung"}
+/// }"#;
+///
+/// let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+/// assert_eq!(dataset.title.resolve("de"), "Deutscher Titel");
+/// assert_eq!(dataset.notes.as_ref().unwrap().resolve("en"), "English description");
 /// ```
 #[derive(Deserialize, Debug, Clone)]
 pub struct CkanDataset {
@@ -69,10 +88,10 @@ pub struct CkanDataset {
     pub id: String,
     /// URL-friendly name/slug of the dataset
     pub name: String,
-    /// Human-readable title of the dataset
-    pub title: String,
-    /// Optional description/notes about the dataset
-    pub notes: Option<String>,
+    /// Human-readable title of the dataset (plain string or multilingual object)
+    pub title: LocalizedField,
+    /// Optional description/notes about the dataset (plain string or multilingual object)
+    pub notes: Option<LocalizedField>,
     /// All other fields returned by CKAN (e.g., organization, tags, resources)
     #[serde(flatten)]
     pub extras: serde_json::Map<String, Value>,
@@ -102,6 +121,19 @@ pub struct CkanClient {
 }
 
 impl CkanClient {
+    /// Delay between paginated API requests to avoid rate limiting.
+    const PAGE_DELAY: Duration = Duration::from_secs(1);
+
+    /// Maximum backoff delay for rate-limited retries within `request_with_retry`.
+    const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+    /// Cooldown when a page request is rate-limited after exhausting low-level retries.
+    /// The pagination loop waits this long before retrying the same page.
+    const PAGE_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(60);
+
+    /// Maximum number of page-level retries when a page is rate-limited.
+    const PAGE_RATE_LIMIT_RETRIES: u32 = 3;
+
     /// Creates a new CKAN client for the specified portal.
     ///
     /// # Arguments
@@ -238,13 +270,35 @@ impl CkanClient {
         &self,
         since: DateTime<Utc>,
     ) -> Result<Vec<CkanDataset>, AppError> {
+        let since_str = since.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let fq = Some(format!("metadata_modified:[{} TO *]", since_str));
+        self.paginated_search(fq.as_deref()).await
+    }
+
+    /// Fetches all datasets from the portal using paginated `package_search`.
+    ///
+    /// This makes ~N/1000 API calls instead of N individual `package_show` calls,
+    /// which is critical for large portals like HDX (~40k datasets) that enforce
+    /// strict rate limits.
+    pub async fn search_all_datasets(&self) -> Result<Vec<CkanDataset>, AppError> {
+        self.paginated_search(None).await
+    }
+
+    /// Core paginated search with page-level rate limit resilience.
+    ///
+    /// Fetches all matching datasets using `package_search`, handling pagination
+    /// and rate limiting at two levels:
+    /// 1. Per-request retries via `request_with_retry` (immediate backoff)
+    /// 2. Per-page retries with longer cooldown when a page is persistently rate-limited
+    ///
+    /// # Arguments
+    ///
+    /// * `fq` - Optional Solr filter query (e.g., `metadata_modified:[... TO *]`)
+    async fn paginated_search(&self, fq: Option<&str>) -> Result<Vec<CkanDataset>, AppError> {
         const PAGE_SIZE: usize = 1000;
         let mut all_datasets = Vec::new();
         let mut start: usize = 0;
-
-        // Format timestamp for Solr query: YYYY-MM-DDTHH:MM:SSZ
-        let since_str = since.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let fq = format!("metadata_modified:[{} TO *]", since_str);
+        let mut page_delay = Self::PAGE_DELAY;
 
         loop {
             let mut url = self
@@ -252,13 +306,52 @@ impl CkanClient {
                 .join("api/3/action/package_search")
                 .map_err(|e| AppError::Generic(e.to_string()))?;
 
-            url.query_pairs_mut()
-                .append_pair("fq", &fq)
-                .append_pair("rows", &PAGE_SIZE.to_string())
-                .append_pair("start", &start.to_string())
-                .append_pair("sort", "metadata_modified asc");
+            {
+                let mut pairs = url.query_pairs_mut();
+                if let Some(filter) = fq {
+                    pairs.append_pair("fq", filter);
+                }
+                pairs
+                    .append_pair("rows", &PAGE_SIZE.to_string())
+                    .append_pair("start", &start.to_string())
+                    .append_pair("sort", "metadata_modified asc");
+            }
 
-            let resp = self.request_with_retry(&url).await?;
+            // Page-level retry: if the request is rate-limited after exhausting
+            // low-level retries, wait a longer cooldown and try the page again.
+            let mut page_result = None;
+            for page_attempt in 0..=Self::PAGE_RATE_LIMIT_RETRIES {
+                match self.request_with_retry(&url).await {
+                    Ok(resp) => {
+                        page_result = Some(Ok(resp));
+                        break;
+                    }
+                    Err(AppError::RateLimitExceeded)
+                        if page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
+                    {
+                        let cooldown = Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
+                        sleep(cooldown).await;
+                        page_delay = (page_delay * 2).min(Duration::from_secs(5));
+                    }
+                    Err(AppError::ClientError(ref msg))
+                        if msg.contains("429") && page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
+                    {
+                        let cooldown = Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
+                        sleep(cooldown).await;
+                        page_delay = (page_delay * 2).min(Duration::from_secs(5));
+                    }
+                    Err(e) => {
+                        page_result = Some(Err(e));
+                        break;
+                    }
+                }
+            }
+
+            let resp = match page_result {
+                Some(Ok(resp)) => resp,
+                Some(Err(e)) => return Err(e),
+                None => return Err(AppError::RateLimitExceeded),
+            };
 
             let ckan_resp: CkanResponse<PackageSearchResult> = resp
                 .json()
@@ -280,10 +373,18 @@ impl CkanClient {
             }
 
             start += PAGE_SIZE;
+
+            // Polite delay between pages to avoid triggering rate limits
+            sleep(page_delay).await;
         }
 
         Ok(all_datasets)
     }
+
+    /// Maximum retries for rate-limited (429) responses.
+    /// Higher than normal retries because rate limits are transient.
+    /// With 500ms base and 30s cap: 1s, 2s, 4s, 8s, 16s, 30s, 30s, 30s, 30s = ~151s total wait.
+    const RATE_LIMIT_MAX_RETRIES: u32 = 10;
 
     // TODO(observability): Add detailed retry logging
     // Should log: (1) Attempt number and delay, (2) Reason for retry,
@@ -293,8 +394,10 @@ impl CkanClient {
         let max_retries = http_config.max_retries;
         let base_delay = http_config.retry_base_delay;
         let mut last_error = AppError::Generic("No attempts made".to_string());
+        // Use higher retry count for 429s since they are transient
+        let effective_max = Self::RATE_LIMIT_MAX_RETRIES.max(max_retries);
 
-        for attempt in 1..=max_retries {
+        for attempt in 1..=effective_max {
             match self.client.get(url.clone()).send().await {
                 Ok(resp) => {
                     let status = resp.status();
@@ -305,8 +408,17 @@ impl CkanClient {
 
                     if status == StatusCode::TOO_MANY_REQUESTS {
                         last_error = AppError::RateLimitExceeded;
-                        if attempt < max_retries {
-                            let delay = base_delay * 2_u32.pow(attempt);
+                        if attempt < effective_max {
+                            // Respect Retry-After header if present, otherwise exponential backoff (capped)
+                            let delay = resp
+                                .headers()
+                                .get("retry-after")
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .map(Duration::from_secs)
+                                .unwrap_or_else(|| {
+                                    (base_delay * 2_u32.pow(attempt)).min(Self::MAX_RETRY_DELAY)
+                                });
                             sleep(delay).await;
                             continue;
                         }
@@ -354,12 +466,15 @@ impl CkanClient {
     /// Converts a CKAN dataset into Ceres' internal `NewDataset` model.
     ///
     /// This helper method transforms CKAN-specific data structures into the format
-    /// used by Ceres for database storage.
+    /// used by Ceres for database storage. Multilingual fields are resolved using
+    /// the specified language preference.
     ///
     /// # Arguments
     ///
     /// * `dataset` - The CKAN dataset to convert
     /// * `portal_url` - The base URL of the CKAN portal
+    /// * `url_template` - Optional URL template with `{id}` and `{name}` placeholders
+    /// * `language` - Preferred language for resolving multilingual fields
     ///
     /// # Returns
     ///
@@ -370,12 +485,13 @@ impl CkanClient {
     /// ```
     /// use ceres_client::CkanClient;
     /// use ceres_client::ckan::CkanDataset;
+    /// use ceres_core::LocalizedField;
     ///
     /// let ckan_dataset = CkanDataset {
     ///     id: "abc-123".to_string(),
     ///     name: "air-quality-data".to_string(),
-    ///     title: "Air Quality Monitoring".to_string(),
-    ///     notes: Some("Data from air quality sensors".to_string()),
+    ///     title: LocalizedField::Plain("Air Quality Monitoring".to_string()),
+    ///     notes: Some(LocalizedField::Plain("Data from air quality sensors".to_string())),
     ///     extras: serde_json::Map::new(),
     /// };
     ///
@@ -383,6 +499,7 @@ impl CkanClient {
     ///     ckan_dataset,
     ///     "https://dati.gov.it",
     ///     None,
+    ///     "en",
     /// );
     ///
     /// assert_eq!(new_dataset.original_id, "abc-123");
@@ -393,6 +510,7 @@ impl CkanClient {
         dataset: CkanDataset,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
     ) -> NewDataset {
         let landing_page = match url_template {
             Some(template) => template
@@ -407,16 +525,23 @@ impl CkanClient {
 
         let metadata_json = serde_json::Value::Object(dataset.extras.clone());
 
-        // Compute content hash for delta detection
-        let content_hash =
-            NewDataset::compute_content_hash(&dataset.title, dataset.notes.as_deref());
+        // Resolve multilingual fields using preferred language
+        let title = dataset.title.resolve(language);
+        let description = dataset.notes.map(|n| n.resolve(language));
+
+        // Content hash includes language for correct delta detection
+        let content_hash = NewDataset::compute_content_hash_with_language(
+            &title,
+            description.as_deref(),
+            language,
+        );
 
         NewDataset {
             original_id: dataset.id,
             source_portal: portal_url.to_string(),
             url: landing_page,
-            title: dataset.title,
-            description: dataset.notes,
+            title,
+            description,
             embedding: None,
             metadata: metadata_json,
             content_hash,
@@ -453,13 +578,13 @@ mod tests {
         let ckan_dataset = CkanDataset {
             id: "dataset-123".to_string(),
             name: "my-dataset".to_string(),
-            title: "My Dataset".to_string(),
-            notes: Some("This is a test dataset".to_string()),
+            title: LocalizedField::Plain("My Dataset".to_string()),
+            notes: Some(LocalizedField::Plain("This is a test dataset".to_string())),
             extras: serde_json::Map::new(),
         };
 
         let portal_url = "https://dati.gov.it";
-        let new_dataset = CkanClient::into_new_dataset(ckan_dataset.clone(), portal_url, None);
+        let new_dataset = CkanClient::into_new_dataset(ckan_dataset, portal_url, None, "en");
 
         assert_eq!(new_dataset.original_id, "dataset-123");
         assert_eq!(new_dataset.source_portal, "https://dati.gov.it");
@@ -467,9 +592,12 @@ mod tests {
         assert_eq!(new_dataset.title, "My Dataset");
         assert!(new_dataset.embedding.is_none());
 
-        // Verify content hash is computed correctly
-        let expected_hash =
-            NewDataset::compute_content_hash(&ckan_dataset.title, ckan_dataset.notes.as_deref());
+        // Verify content hash is computed correctly (includes language)
+        let expected_hash = NewDataset::compute_content_hash_with_language(
+            "My Dataset",
+            Some("This is a test dataset"),
+            "en",
+        );
         assert_eq!(new_dataset.content_hash, expected_hash);
         assert_eq!(new_dataset.content_hash.len(), 64);
     }
@@ -479,14 +607,17 @@ mod tests {
         let ckan_dataset = CkanDataset {
             id: "52db43b1-4d6a-446c-a3fc-b2e470fe5a45".to_string(),
             name: "raccolta-differenziata".to_string(),
-            title: "Raccolta Differenziata".to_string(),
-            notes: Some("Percentuale raccolta differenziata".to_string()),
+            title: LocalizedField::Plain("Raccolta Differenziata".to_string()),
+            notes: Some(LocalizedField::Plain(
+                "Percentuale raccolta differenziata".to_string(),
+            )),
             extras: serde_json::Map::new(),
         };
 
         let portal_url = "https://dati.gov.it/opendata/";
         let template = "https://www.dati.gov.it/view-dataset/dataset?id={id}";
-        let new_dataset = CkanClient::into_new_dataset(ckan_dataset, portal_url, Some(template));
+        let new_dataset =
+            CkanClient::into_new_dataset(ckan_dataset, portal_url, Some(template), "en");
 
         assert_eq!(
             new_dataset.url,
@@ -500,14 +631,14 @@ mod tests {
         let ckan_dataset = CkanDataset {
             id: "abc-123".to_string(),
             name: "air-quality-data".to_string(),
-            title: "Air Quality".to_string(),
+            title: LocalizedField::Plain("Air Quality".to_string()),
             notes: None,
             extras: serde_json::Map::new(),
         };
 
         let template = "https://example.com/datasets/{name}/view";
         let new_dataset =
-            CkanClient::into_new_dataset(ckan_dataset, "https://example.com", Some(template));
+            CkanClient::into_new_dataset(ckan_dataset, "https://example.com", Some(template), "en");
 
         assert_eq!(
             new_dataset.url,
@@ -542,7 +673,46 @@ mod tests {
         let dataset: CkanDataset = serde_json::from_str(json).unwrap();
         assert_eq!(dataset.id, "test-id");
         assert_eq!(dataset.name, "test-name");
+        assert_eq!(dataset.title.resolve("en"), "Test Title");
         assert!(dataset.extras.contains_key("organization"));
+    }
+
+    #[test]
+    fn test_ckan_dataset_multilingual_deserialization() {
+        let json = r#"{
+            "id": "swiss-123",
+            "name": "swiss-dataset",
+            "title": {"en": "English Title", "de": "Deutscher Titel", "fr": "Titre Francais"},
+            "notes": {"en": "English description", "de": "Deutsche Beschreibung"}
+        }"#;
+
+        let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+        assert_eq!(dataset.id, "swiss-123");
+        assert_eq!(dataset.title.resolve("en"), "English Title");
+        assert_eq!(dataset.title.resolve("de"), "Deutscher Titel");
+        assert_eq!(dataset.title.resolve("it"), "English Title"); // fallback to en
+        assert_eq!(
+            dataset.notes.as_ref().unwrap().resolve("de"),
+            "Deutsche Beschreibung"
+        );
+    }
+
+    #[test]
+    fn test_into_new_dataset_multilingual() {
+        let json = r#"{
+            "id": "swiss-dataset",
+            "name": "test-multilingual",
+            "title": {"en": "English Title", "de": "Deutscher Titel"},
+            "notes": {"en": "English description", "de": "Deutsche Beschreibung"}
+        }"#;
+        let dataset: CkanDataset = serde_json::from_str(json).unwrap();
+        let new_ds =
+            CkanClient::into_new_dataset(dataset, "https://ckan.opendata.swiss", None, "de");
+        assert_eq!(new_ds.title, "Deutscher Titel");
+        assert_eq!(
+            new_ds.description,
+            Some("Deutsche Beschreibung".to_string())
+        );
     }
 }
 
@@ -573,8 +743,9 @@ impl ceres_core::traits::PortalClient for CkanClient {
         data: Self::PortalData,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
     ) -> NewDataset {
-        CkanClient::into_new_dataset(data, portal_url, url_template)
+        CkanClient::into_new_dataset(data, portal_url, url_template, language)
     }
 
     async fn search_modified_since(
@@ -582,6 +753,10 @@ impl ceres_core::traits::PortalClient for CkanClient {
         since: DateTime<Utc>,
     ) -> Result<Vec<Self::PortalData>, AppError> {
         self.search_modified_since(since).await
+    }
+
+    async fn search_all_datasets(&self) -> Result<Vec<Self::PortalData>, AppError> {
+        self.search_all_datasets().await
     }
 }
 

@@ -130,9 +130,13 @@ impl PortalClient for MockPortalClient {
         data: Self::PortalData,
         portal_url: &str,
         url_template: Option<&str>,
+        language: &str,
     ) -> NewDataset {
-        let content_hash =
-            NewDataset::compute_content_hash(&data.title, data.description.as_deref());
+        let content_hash = NewDataset::compute_content_hash_with_language(
+            &data.title,
+            data.description.as_deref(),
+            language,
+        );
 
         // Mock uses `id` for both `{id}` and `{name}` since MockPortalData
         // has no separate name/slug field. This is sufficient for testing
@@ -161,6 +165,11 @@ impl PortalClient for MockPortalClient {
         _since: DateTime<Utc>,
     ) -> Result<Vec<Self::PortalData>, AppError> {
         // For testing, return all datasets as "modified"
+        Ok(self.datasets.clone())
+    }
+
+    async fn search_all_datasets(&self) -> Result<Vec<Self::PortalData>, AppError> {
+        // For testing, return all datasets
         Ok(self.datasets.clone())
     }
 }
