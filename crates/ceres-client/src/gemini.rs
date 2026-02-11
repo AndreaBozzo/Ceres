@@ -323,6 +323,14 @@ impl GeminiClient {
             .await
             .map_err(|e| AppError::ClientError(format!("Failed to parse batch response: {}", e)))?;
 
+        if batch_response.embeddings.len() != texts.len() {
+            return Err(AppError::ClientError(format!(
+                "Batch embedding count mismatch: expected {}, got {}",
+                texts.len(),
+                batch_response.embeddings.len()
+            )));
+        }
+
         Ok(batch_response
             .embeddings
             .into_iter()

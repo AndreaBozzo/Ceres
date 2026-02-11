@@ -80,7 +80,8 @@ pub trait EmbeddingProvider: Send + Sync + Clone {
     ///
     /// # Defaults
     ///
-    /// Returns `1` (no batching). Providers with native batch support should override.
+    /// Returns `1` (single-item batches). Providers with native batch support
+    /// should override to enable efficient batching.
     fn max_batch_size(&self) -> usize {
         1
     }

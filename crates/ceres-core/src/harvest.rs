@@ -977,6 +977,17 @@ where
             .await
         {
             Ok(embeddings) => {
+                if embeddings.len() != batch_size {
+                    tracing::warn!(
+                        expected = batch_size,
+                        got = embeddings.len(),
+                        "Batch embedding count mismatch, failing batch"
+                    );
+                    for _ in 0..batch_size {
+                        stats.record(SyncOutcome::Failed);
+                    }
+                    return;
+                }
                 // Assign embeddings and upsert each dataset
                 for (mut item, emb) in needs_embed.into_iter().zip(embeddings) {
                     item.dataset.embedding = Some(Vector::from(emb));
