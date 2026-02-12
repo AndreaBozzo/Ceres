@@ -500,6 +500,30 @@ impl DatasetRepository {
             last_update: row.last_update,
         })
     }
+
+    /// Returns lowercased titles that appear across multiple portals.
+    ///
+    /// Used for cross-portal duplicate detection in Parquet exports.
+    pub async fn get_cross_portal_duplicate_titles(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, AppError> {
+        let rows: Vec<DuplicateTitleRow> = sqlx::query_as(
+            "SELECT LOWER(title) as title FROM datasets \
+             GROUP BY LOWER(title) \
+             HAVING COUNT(DISTINCT TRIM(TRAILING '/' FROM source_portal)) > 1",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+        Ok(rows.into_iter().map(|r| r.title).collect())
+    }
+}
+
+/// Helper struct for deserializing duplicate title query results
+#[derive(sqlx::FromRow)]
+struct DuplicateTitleRow {
+    title: String,
 }
 
 /// Helper struct for deserializing stats query results
@@ -633,6 +657,10 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
             datasets_synced,
         )
         .await
+    }
+
+    async fn get_duplicate_titles(&self) -> Result<std::collections::HashSet<String>, AppError> {
+        DatasetRepository::get_cross_portal_duplicate_titles(self).await
     }
 
     async fn health_check(&self) -> Result<(), AppError> {

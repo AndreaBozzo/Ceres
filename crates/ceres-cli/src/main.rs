@@ -13,8 +13,8 @@ use ceres_core::config::EmbeddingProviderType;
 use ceres_core::traits::EmbeddingProvider;
 use ceres_core::{
     BatchHarvestSummary, DbConfig, ExportFormat as CoreExportFormat, ExportService, HarvestService,
-    PortalEntry, PortalType, SearchService, SyncConfig, SyncStats, TracingReporter,
-    load_portals_config,
+    ParquetExportConfig, ParquetExportResult, ParquetExportService, PortalEntry, PortalType,
+    SearchService, SyncConfig, SyncStats, TracingReporter, load_portals_config,
 };
 use ceres_db::DatasetRepository;
 use ceres_search::{Command, Config, ExportFormat};
@@ -87,10 +87,35 @@ async fn main() -> anyhow::Result<()> {
             format,
             portal,
             limit,
-        } => {
-            let export_service = ExportService::new(repo.clone());
-            export(&export_service, format, portal.as_deref(), limit).await?;
-        }
+            output,
+            config: config_path,
+        } => match format {
+            ExportFormat::Parquet => {
+                let output_dir = output.ok_or_else(|| {
+                    anyhow::anyhow!("--output <DIR> is required for parquet format")
+                })?;
+                if portal.is_some() {
+                    eprintln!(
+                        "Warning: --portal is ignored for parquet export (all portals are exported as separate files)"
+                    );
+                }
+                if limit.is_some() {
+                    eprintln!("Warning: --limit is ignored for parquet export");
+                }
+                let portals_config = load_portals_config(config_path)?;
+                let parquet_service = ParquetExportService::new(
+                    repo.clone(),
+                    portals_config,
+                    ParquetExportConfig::default(),
+                );
+                let result = parquet_service.export_to_directory(&output_dir).await?;
+                print_parquet_export_summary(&result);
+            }
+            _ => {
+                let export_service = ExportService::new(repo.clone());
+                export(&export_service, format, portal.as_deref(), limit).await?;
+            }
+        },
         Command::Stats => {
             show_stats(&repo).await?;
         }
@@ -347,6 +372,25 @@ async fn show_stats(repo: &DatasetRepository) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn print_parquet_export_summary(result: &ParquetExportResult) {
+    eprintln!();
+    eprintln!("═══════════════════════════════════════════════════════");
+    eprintln!("  PARQUET EXPORT COMPLETE");
+    eprintln!("═══════════════════════════════════════════════════════");
+    eprintln!("  Output:              {}", result.output_dir.display());
+    eprintln!("  Snapshot date:       {}", result.snapshot_date);
+    eprintln!("  Total exported:      {}", result.total_exported);
+    eprintln!("  Filtered (noise):    {}", result.total_filtered);
+    eprintln!("  Marked duplicate:    {}", result.total_duplicates);
+    eprintln!("───────────────────────────────────────────────────────");
+    eprintln!("  Portal breakdown:");
+    for portal in &result.portals {
+        eprintln!("    {:<25} {:>6} datasets", portal.name, portal.count);
+    }
+    eprintln!("═══════════════════════════════════════════════════════");
+    eprintln!();
+}
+
 async fn export(
     export_service: &ExportService<DatasetRepository>,
     format: ExportFormat,
@@ -359,6 +403,7 @@ async fn export(
         ExportFormat::Jsonl => CoreExportFormat::Jsonl,
         ExportFormat::Json => CoreExportFormat::Json,
         ExportFormat::Csv => CoreExportFormat::Csv,
+        ExportFormat::Parquet => unreachable!("parquet is handled separately"),
     };
 
     let stdout = io::stdout();

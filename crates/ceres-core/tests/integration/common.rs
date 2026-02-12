@@ -453,6 +453,23 @@ impl DatasetStore for MockDatasetStore {
         Ok(())
     }
 
+    async fn get_duplicate_titles(&self) -> Result<std::collections::HashSet<String>, AppError> {
+        // Find titles that appear in more than one portal
+        let datasets = self.datasets.lock().unwrap();
+        let mut title_portals: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        for ((portal, _), stored) in datasets.iter() {
+            title_portals
+                .entry(stored.dataset.title.to_lowercase())
+                .or_default()
+                .insert(portal.clone());
+        }
+        Ok(title_portals
+            .into_iter()
+            .filter(|(_, portals)| portals.len() > 1)
+            .map(|(title, _)| title)
+            .collect())
+    }
+
     async fn health_check(&self) -> Result<(), AppError> {
         // Mock is always healthy
         Ok(())

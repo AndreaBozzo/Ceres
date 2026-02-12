@@ -353,6 +353,14 @@ pub trait DatasetStore: Send + Sync + Clone {
         datasets_synced: i32,
     ) -> impl Future<Output = Result<(), AppError>> + Send;
 
+    /// Returns lowercased titles that appear across multiple portals.
+    ///
+    /// Used for cross-portal duplicate detection in Parquet exports.
+    /// Typically returns ~21k titles (~2MB) for the full dataset.
+    fn get_duplicate_titles(
+        &self,
+    ) -> impl Future<Output = Result<std::collections::HashSet<String>, AppError>> + Send;
+
     /// Checks database connectivity.
     ///
     /// Performs a simple query to verify the database is reachable and responsive.
