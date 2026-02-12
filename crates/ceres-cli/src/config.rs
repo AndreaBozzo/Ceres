@@ -102,7 +102,8 @@ pub enum Command {
     /// Export indexed datasets to various formats
     #[command(after_help = "Examples:
   ceres export --format jsonl > datasets.jsonl
-  ceres export --format json --portal https://dati.gov.it")]
+  ceres export --format json --portal https://dati.gov.it
+  ceres export --format parquet --output ./ceres-export")]
     Export {
         /// Output format for exported data
         #[arg(short, long, default_value = "jsonl")]
@@ -113,6 +114,12 @@ pub enum Command {
         /// Maximum number of datasets to export
         #[arg(short, long)]
         limit: Option<usize>,
+        /// Output directory (required for parquet format)
+        #[arg(short, long, value_name = "DIR")]
+        output: Option<std::path::PathBuf>,
+        /// Custom path to portals.toml (for portal name resolution in parquet export)
+        #[arg(short, long, value_name = "PATH")]
+        config: Option<std::path::PathBuf>,
     },
     /// Show database statistics
     Stats,
@@ -127,6 +134,8 @@ pub enum ExportFormat {
     Json,
     /// CSV format (comma-separated values)
     Csv,
+    /// Parquet format (curated, flattened for HuggingFace)
+    Parquet,
 }
 
 #[cfg(test)]

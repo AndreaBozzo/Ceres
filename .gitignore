@@ -53,3 +53,7 @@ yarn-error.log*
 # RustRover / JetBrains
 .idea/
 *.iml
+
+
+# Internal use exports
+ceres-open-data-index/

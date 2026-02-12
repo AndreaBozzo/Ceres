@@ -40,6 +40,10 @@ tokio.workspace = true
 tokio-util.workspace = true
 futures.workspace = true
 
+# Parquet/Arrow (for curated exports)
+arrow = { workspace = true }
+parquet = { workspace = true }
+
 [dev-dependencies]
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -49,6 +49,7 @@ pub mod i18n;
 pub mod job;
 pub mod job_queue;
 pub mod models;
+pub mod parquet_export;
 pub mod progress;
 pub mod search;
 pub mod sync;
@@ -90,6 +91,7 @@ pub use traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFact
 // Services (generic over trait implementations)
 pub use export::{ExportFormat, ExportService};
 pub use harvest::HarvestService;
+pub use parquet_export::{ParquetExportConfig, ParquetExportResult, ParquetExportService};
 pub use search::SearchService;
 
 // Job queue types

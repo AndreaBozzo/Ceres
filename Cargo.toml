@@ -67,6 +67,10 @@ sha2 = "0.10"
 toml = "0.9.8"
 dirs = "6.0"
 
+# Parquet/Arrow (for curated exports)
+arrow = { version = "55", default-features = false, features = ["prettyprint"] }
+parquet = { version = "55", default-features = false, features = ["arrow", "snap", "zstd"] }
+
 # Internal crates
 ceres-core = { version = "0.2.2", path = "crates/ceres-core" }
 ceres-client = { version = "0.2.2", path = "crates/ceres-client" }
