@@ -64,6 +64,10 @@ impl EmbeddingProvider for MockEmbeddingProvider {
         self.dimension
     }
 
+    fn max_batch_size(&self) -> usize {
+        100
+    }
+
     async fn generate(&self, text: &str) -> Result<Vec<f32>, AppError> {
         // Generate a deterministic embedding based on text length
         let seed = text.len() as f32;

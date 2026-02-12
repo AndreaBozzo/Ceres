@@ -87,6 +87,18 @@ struct EmbeddingData {
     values: Vec<f32>,
 }
 
+/// Request body for Gemini batch embedding API (`batchEmbedContents`)
+#[derive(Serialize)]
+struct BatchEmbeddingRequest {
+    requests: Vec<EmbeddingRequest>,
+}
+
+/// Response from Gemini batch embedding API
+#[derive(Deserialize)]
+struct BatchEmbeddingResponse {
+    embeddings: Vec<EmbeddingData>,
+}
+
 /// Error response from Gemini API
 #[derive(Deserialize)]
 struct GeminiError {
@@ -229,6 +241,102 @@ impl GeminiClient {
 
         Ok(embedding_response.embedding.values)
     }
+
+    /// Generates embeddings for multiple texts in a single API call.
+    ///
+    /// Uses the `batchEmbedContents` endpoint which supports up to 100 texts.
+    ///
+    /// # Arguments
+    ///
+    /// * `texts` - Slice of text references to embed
+    ///
+    /// # Returns
+    ///
+    /// A vector of embedding vectors, one per input text, in the same order.
+    pub async fn get_embeddings_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, AppError> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents";
+
+        let requests: Vec<EmbeddingRequest> = texts
+            .iter()
+            .map(|text| EmbeddingRequest {
+                model: "models/gemini-embedding-001".to_string(),
+                content: Content {
+                    parts: vec![Part {
+                        text: text.replace('\n', " "),
+                    }],
+                },
+                output_dimensionality: Some(768),
+            })
+            .collect();
+
+        let request_body = BatchEmbeddingRequest { requests };
+
+        let response = self
+            .client
+            .post(url)
+            .header("x-goog-api-key", self.api_key.clone())
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    AppError::Timeout(30)
+                } else if e.is_connect() {
+                    AppError::GeminiError(GeminiErrorDetails::new(
+                        GeminiErrorKind::NetworkError,
+                        format!("Connection failed: {}", e),
+                        0,
+                    ))
+                } else {
+                    AppError::ClientError(e.to_string())
+                }
+            })?;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            let status_code = status.as_u16();
+            let error_text = response.text().await.unwrap_or_default();
+
+            let message = if let Ok(gemini_error) = serde_json::from_str::<GeminiError>(&error_text)
+            {
+                gemini_error.error.message
+            } else {
+                format!("HTTP {}: {}", status_code, error_text)
+            };
+
+            let kind = classify_gemini_error(status_code, &message);
+
+            return Err(AppError::GeminiError(GeminiErrorDetails::new(
+                kind,
+                message,
+                status_code,
+            )));
+        }
+
+        let batch_response: BatchEmbeddingResponse = response
+            .json()
+            .await
+            .map_err(|e| AppError::ClientError(format!("Failed to parse batch response: {}", e)))?;
+
+        if batch_response.embeddings.len() != texts.len() {
+            return Err(AppError::ClientError(format!(
+                "Batch embedding count mismatch: expected {}, got {}",
+                texts.len(),
+                batch_response.embeddings.len()
+            )));
+        }
+
+        Ok(batch_response
+            .embeddings
+            .into_iter()
+            .map(|e| e.values)
+            .collect())
+    }
 }
 
 // =============================================================================
@@ -245,13 +353,18 @@ impl ceres_core::traits::EmbeddingProvider for GeminiClient {
         768
     }
 
+    fn max_batch_size(&self) -> usize {
+        100 // Gemini batchEmbedContents limit
+    }
+
     async fn generate(&self, text: &str) -> Result<Vec<f32>, AppError> {
         self.get_embeddings(text).await
     }
 
-    // Note: Gemini API supports batch embeddings via batchEmbedContents endpoint.
-    // For now, we use the default sequential implementation.
-    // TODO: Implement native batch API for improved efficiency.
+    async fn generate_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+        let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        self.get_embeddings_batch(&text_refs).await
+    }
 }
 
 #[cfg(test)]
@@ -329,5 +442,58 @@ mod tests {
     fn test_classify_gemini_error_unknown() {
         let kind = classify_gemini_error(400, "Bad request");
         assert_eq!(kind, GeminiErrorKind::Unknown);
+    }
+
+    #[test]
+    fn test_batch_request_serialization() {
+        let request = BatchEmbeddingRequest {
+            requests: vec![
+                EmbeddingRequest {
+                    model: "models/gemini-embedding-001".to_string(),
+                    content: Content {
+                        parts: vec![Part {
+                            text: "First text".to_string(),
+                        }],
+                    },
+                    output_dimensionality: Some(768),
+                },
+                EmbeddingRequest {
+                    model: "models/gemini-embedding-001".to_string(),
+                    content: Content {
+                        parts: vec![Part {
+                            text: "Second text".to_string(),
+                        }],
+                    },
+                    output_dimensionality: Some(768),
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("requests"));
+        assert!(json.contains("First text"));
+        assert!(json.contains("Second text"));
+
+        // Verify structure matches Gemini API expectations
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let requests = parsed["requests"].as_array().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0]["model"], "models/gemini-embedding-001");
+        assert_eq!(requests[0]["output_dimensionality"], 768);
+    }
+
+    #[test]
+    fn test_batch_response_deserialization() {
+        let json = r#"{
+            "embeddings": [
+                { "values": [0.1, 0.2, 0.3] },
+                { "values": [0.4, 0.5, 0.6] }
+            ]
+        }"#;
+
+        let response: BatchEmbeddingResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.embeddings.len(), 2);
+        assert_eq!(response.embeddings[0].values, vec![0.1, 0.2, 0.3]);
+        assert_eq!(response.embeddings[1].values, vec![0.4, 0.5, 0.6]);
     }
 }

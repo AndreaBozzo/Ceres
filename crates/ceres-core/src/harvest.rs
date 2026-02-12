@@ -31,9 +31,13 @@
 //! - Transitions through Closed -> Open -> HalfOpen -> Closed states
 //! - Skips datasets when open (recorded as `SyncOutcome::Skipped`)
 //!
-//! TODO(performance): Batch embedding API calls
-//! Each dataset embedding is generated individually. Gemini API may support
-//! batching multiple texts per request, reducing latency and API calls.
+//! # Batch Embedding
+//!
+//! The pipeline uses a two-phase architecture for efficient embedding:
+//! 1. **Pre-process** (parallel): fetch, hash check, text extraction
+//! 2. **Batch embed** (sequential batches): `generate_batch()` via circuit breaker
+//!
+//! Batch size is `min(SyncConfig::embedding_batch_size, provider.max_batch_size())`.
 //!
 //! # Job Queue
 //!
@@ -65,6 +69,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError};
 use crate::config::PortalType;
+use crate::models::NewDataset;
 use crate::progress::{HarvestEvent, ProgressReporter, SilentReporter};
 use crate::sync::{AtomicSyncStats, SyncOutcome, SyncResult, SyncStatus};
 use crate::traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFactory};
@@ -72,6 +77,17 @@ use crate::{
     AppError, BatchHarvestSummary, PortalEntry, PortalHarvestResult, SyncConfig, SyncStats,
     needs_reprocessing,
 };
+
+/// A dataset that has been pre-processed (hash check, text extraction)
+/// and is ready for batch embedding.
+struct PreProcessedDataset {
+    /// The dataset with all fields populated except possibly embedding.
+    dataset: NewDataset,
+    /// The combined text to embed, or None if embedding is not needed.
+    text_to_embed: Option<String>,
+    /// The sync outcome (Created or Updated).
+    outcome: SyncOutcome,
+}
 
 /// Mode of sync operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -610,284 +626,252 @@ where
         let url_template_arc: Option<Arc<str>> = url_template.map(Arc::from);
         let language_arc: Arc<str> = Arc::from(language);
 
-        // Build the processing closure shared by both Full and Incremental paths.
-        // The closure takes an already-fetched PortalData and processes it
-        // (hash check → embed → upsert).
-        macro_rules! process_dataset {
-            ($portal_data:expr) => {{
-                let embedding = self.embedding.clone();
-                let store = self.store.clone();
-                let portal_url = portal_url.to_string();
-                let url_template = url_template_arc.clone();
-                let language = Arc::clone(&language_arc);
-                let existing_hashes = existing_hashes.clone();
-                let stats = Arc::clone(&stats);
-                let unchanged_ids = Arc::clone(&unchanged_ids);
-                let cancel_token = cancel_token.clone();
-                let was_cancelled = Arc::clone(&was_cancelled);
-                let circuit_breaker = circuit_breaker.clone();
+        // Effective batch size respects both config and provider limits
+        let effective_batch_size = std::cmp::min(
+            self.config.embedding_batch_size,
+            self.embedding.max_batch_size(),
+        )
+        .max(1);
 
-                let portal_data = $portal_data;
-                async move {
-                    // Check cancellation before processing each item
+        // =====================================================================
+        // Two-phase pipeline
+        //
+        // Phase 1: Pre-process datasets in parallel (fetch if needed, hash check,
+        //          extract text). Unchanged datasets are handled inline and
+        //          filtered out. Produces a stream of PreProcessedDataset items.
+        //
+        // Phase 2: Collect items into batches, call generate_batch() once per
+        //          batch through the circuit breaker, then upsert all datasets.
+        // =====================================================================
+
+        // Phase 2 macro: consume a chunked stream of PreProcessedDatasets,
+        // batch-embed and upsert, with progress reporting and cancellation.
+        macro_rules! run_batch_phase {
+            ($pre_processed_stream:expr) => {{
+                use futures::stream::StreamExt as _;
+                let mut chunked =
+                    std::pin::pin!($pre_processed_stream.chunks(effective_batch_size));
+
+                while let Some(batch) = chunked.next().await {
                     if cancel_token.is_cancelled() {
                         was_cancelled.store(true, Ordering::SeqCst);
-                        return Ok::<(), AppError>(());
+                        break;
                     }
 
-                    let mut new_dataset = F::Client::into_new_dataset(
-                        portal_data,
-                        &portal_url,
-                        url_template.as_deref(),
-                        &language,
-                    );
-                    let decision = needs_reprocessing(
-                        existing_hashes.get(&new_dataset.original_id),
-                        &new_dataset.content_hash,
-                    );
+                    let batch_len = batch.len();
 
-                    match decision.outcome {
-                        SyncOutcome::Unchanged => {
-                            stats.record(SyncOutcome::Unchanged);
-                            if let Ok(mut ids) = unchanged_ids.lock() {
-                                ids.push(new_dataset.original_id);
-                            }
-                            return Ok(());
-                        }
-                        SyncOutcome::Updated | SyncOutcome::Created => {
-                            // Continue to embedding generation
-                        }
-                        SyncOutcome::Failed | SyncOutcome::Skipped => {
-                            unreachable!("needs_reprocessing never returns Failed or Skipped")
-                        }
-                    }
+                    Self::process_embedding_batch(
+                        batch,
+                        &self.embedding,
+                        &self.store,
+                        &circuit_breaker,
+                        &stats,
+                    )
+                    .await;
 
-                    // Check cancellation before expensive embedding generation
-                    if cancel_token.is_cancelled() {
-                        was_cancelled.store(true, Ordering::SeqCst);
-                        return Ok(());
-                    }
-
-                    if decision.needs_embedding {
-                        let combined_text = format!(
-                            "{} {}",
-                            new_dataset.title,
-                            new_dataset.description.as_deref().unwrap_or_default()
-                        );
-
-                        if !combined_text.trim().is_empty() {
-                            match circuit_breaker
-                                .call(|| embedding.generate(&combined_text))
-                                .await
-                            {
-                                Ok(emb) => {
-                                    new_dataset.embedding = Some(Vector::from(emb));
-                                }
-                                Err(CircuitBreakerError::Open { retry_after, .. }) => {
-                                    tracing::debug!(
-                                        dataset_id = %new_dataset.original_id,
-                                        retry_after_secs = retry_after.as_secs(),
-                                        "Skipping dataset - circuit breaker open"
-                                    );
-                                    stats.record(SyncOutcome::Skipped);
-                                    return Ok(());
-                                }
-                                Err(CircuitBreakerError::Inner(e)) => {
-                                    stats.record(SyncOutcome::Failed);
-                                    return Err(AppError::Generic(format!(
-                                        "Failed to generate embedding: {e}"
-                                    )));
-                                }
-                            }
-                        }
-                    }
-
-                    match store.upsert(&new_dataset).await {
-                        Ok(_uuid) => {
-                            stats.record(decision.outcome);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            stats.record(SyncOutcome::Failed);
-                            Err(e)
-                        }
+                    // Report progress for the batch
+                    let current =
+                        processed_count.fetch_add(batch_len, Ordering::Relaxed) + batch_len;
+                    let last = last_reported.load(Ordering::Relaxed);
+                    let should_report = current >= last + report_interval || current >= total;
+                    if should_report
+                        && last_reported
+                            .compare_exchange(last, current, Ordering::SeqCst, Ordering::Relaxed)
+                            .is_ok()
+                    {
+                        let current_stats = stats.to_stats();
+                        reporter.report(HarvestEvent::DatasetProcessed {
+                            current,
+                            total,
+                            created: current_stats.created,
+                            updated: current_stats.updated,
+                            unchanged: current_stats.unchanged,
+                            failed: current_stats.failed,
+                            skipped: current_stats.skipped,
+                        });
                     }
                 }
             }};
         }
 
-        // Progress + cancellation combinators shared by both stream paths
-        macro_rules! apply_stream_combinators {
-            ($stream:expr) => {
-                $stream
-                    .buffer_unordered(self.config.concurrency)
-                    .inspect(|_| {
-                        let current = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-                        let last = last_reported.load(Ordering::Relaxed);
+        match plan {
+            SyncPlan::Full { ids } => {
+                let pre_processed = stream::iter(ids)
+                    .map(|id| {
+                        let portal_client = portal_client.clone();
+                        let portal_url_owned = portal_url.to_string();
+                        let stats = Arc::clone(&stats);
+                        let cancel_token = cancel_token.clone();
+                        let was_cancelled = Arc::clone(&was_cancelled);
+                        let url_template = url_template_arc.clone();
+                        let language = Arc::clone(&language_arc);
+                        let existing_hashes = existing_hashes.clone();
+                        let unchanged_ids = Arc::clone(&unchanged_ids);
+                        let processed_count = Arc::clone(&processed_count);
 
-                        let should_report = current >= last + report_interval || current == total;
-                        if should_report
-                            && last_reported
-                                .compare_exchange(
-                                    last,
-                                    current,
-                                    Ordering::SeqCst,
-                                    Ordering::Relaxed,
-                                )
-                                .is_ok()
-                        {
-                            let current_stats = stats.to_stats();
-                            reporter.report(HarvestEvent::DatasetProcessed {
-                                current,
-                                total,
-                                created: current_stats.created,
-                                updated: current_stats.updated,
-                                unchanged: current_stats.unchanged,
-                                failed: current_stats.failed,
-                                skipped: current_stats.skipped,
-                            });
+                        async move {
+                            if cancel_token.is_cancelled() {
+                                was_cancelled.store(true, Ordering::SeqCst);
+                                return None;
+                            }
+
+                            // Fetch the dataset by ID
+                            let portal_data = match portal_client.get_dataset(&id).await {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        portal = portal_url_owned.as_str(),
+                                        dataset_id = id,
+                                        error = %e,
+                                        "Failed to fetch dataset, skipping"
+                                    );
+                                    stats.record(SyncOutcome::Failed);
+                                    processed_count.fetch_add(1, Ordering::Relaxed);
+                                    return None;
+                                }
+                            };
+
+                            if cancel_token.is_cancelled() {
+                                was_cancelled.store(true, Ordering::SeqCst);
+                                return None;
+                            }
+
+                            let new_dataset = F::Client::into_new_dataset(
+                                portal_data,
+                                &portal_url_owned,
+                                url_template.as_deref(),
+                                &language,
+                            );
+                            let decision = needs_reprocessing(
+                                existing_hashes.get(&new_dataset.original_id),
+                                &new_dataset.content_hash,
+                            );
+
+                            match decision.outcome {
+                                SyncOutcome::Unchanged => {
+                                    stats.record(SyncOutcome::Unchanged);
+                                    if let Ok(mut ids) = unchanged_ids.lock() {
+                                        ids.push(new_dataset.original_id);
+                                    }
+                                    processed_count.fetch_add(1, Ordering::Relaxed);
+                                    None
+                                }
+                                SyncOutcome::Updated | SyncOutcome::Created => {
+                                    let text_to_embed = if decision.needs_embedding {
+                                        let combined = format!(
+                                            "{} {}",
+                                            new_dataset.title,
+                                            new_dataset.description.as_deref().unwrap_or_default()
+                                        );
+                                        if combined.trim().is_empty() {
+                                            None
+                                        } else {
+                                            Some(combined)
+                                        }
+                                    } else {
+                                        None
+                                    };
+
+                                    Some(PreProcessedDataset {
+                                        dataset: new_dataset,
+                                        text_to_embed,
+                                        outcome: decision.outcome,
+                                    })
+                                }
+                                SyncOutcome::Failed | SyncOutcome::Skipped => {
+                                    unreachable!(
+                                        "needs_reprocessing never returns Failed or Skipped"
+                                    )
+                                }
+                            }
                         }
                     })
+                    .buffer_unordered(self.config.concurrency)
                     .take_while(|_| {
                         let is_cancelled = cancel_token.is_cancelled();
                         async move { !is_cancelled }
                     })
-                    .for_each(|_| async {})
-                    .await
-            };
-        }
+                    .filter_map(|opt| async { opt });
 
-        // Run the appropriate stream pipeline based on sync plan
-        match plan {
-            SyncPlan::Full { ids } => {
-                // Unified fetch+process stream: each item fetches a single dataset
-                // by ID and then processes it. Memory is bounded by concurrency,
-                // not total dataset count.
-                let stream = stream::iter(ids).map(|id| {
-                    let portal_client = portal_client.clone();
-                    let portal_url_owned = portal_url.to_string();
-                    let stats = Arc::clone(&stats);
-                    let cancel_token = cancel_token.clone();
-                    let was_cancelled = Arc::clone(&was_cancelled);
-                    let embedding = self.embedding.clone();
-                    let store = self.store.clone();
-                    let url_template = url_template_arc.clone();
-                    let language = Arc::clone(&language_arc);
-                    let existing_hashes = existing_hashes.clone();
-                    let unchanged_ids = Arc::clone(&unchanged_ids);
-                    let circuit_breaker = circuit_breaker.clone();
-
-                    async move {
-                        // Check cancellation before fetching
-                        if cancel_token.is_cancelled() {
-                            was_cancelled.store(true, Ordering::SeqCst);
-                            return Ok::<(), AppError>(());
-                        }
-
-                        // Fetch the dataset
-                        let portal_data = match portal_client.get_dataset(&id).await {
-                            Ok(data) => data,
-                            Err(e) => {
-                                tracing::warn!(
-                                    portal = portal_url_owned.as_str(),
-                                    dataset_id = id,
-                                    error = %e,
-                                    "Failed to fetch dataset, skipping"
-                                );
-                                stats.record(SyncOutcome::Failed);
-                                return Ok(());
-                            }
-                        };
-
-                        // Process: hash check → embed → upsert
-                        if cancel_token.is_cancelled() {
-                            was_cancelled.store(true, Ordering::SeqCst);
-                            return Ok(());
-                        }
-
-                        let mut new_dataset = F::Client::into_new_dataset(
-                            portal_data,
-                            &portal_url_owned,
-                            url_template.as_deref(),
-                            &language,
-                        );
-                        let decision = needs_reprocessing(
-                            existing_hashes.get(&new_dataset.original_id),
-                            &new_dataset.content_hash,
-                        );
-
-                        match decision.outcome {
-                            SyncOutcome::Unchanged => {
-                                stats.record(SyncOutcome::Unchanged);
-                                if let Ok(mut ids) = unchanged_ids.lock() {
-                                    ids.push(new_dataset.original_id);
-                                }
-                                return Ok(());
-                            }
-                            SyncOutcome::Updated | SyncOutcome::Created => {}
-                            SyncOutcome::Failed | SyncOutcome::Skipped => {
-                                unreachable!("needs_reprocessing never returns Failed or Skipped")
-                            }
-                        }
-
-                        if cancel_token.is_cancelled() {
-                            was_cancelled.store(true, Ordering::SeqCst);
-                            return Ok(());
-                        }
-
-                        if decision.needs_embedding {
-                            let combined_text = format!(
-                                "{} {}",
-                                new_dataset.title,
-                                new_dataset.description.as_deref().unwrap_or_default()
-                            );
-
-                            if !combined_text.trim().is_empty() {
-                                match circuit_breaker
-                                    .call(|| embedding.generate(&combined_text))
-                                    .await
-                                {
-                                    Ok(emb) => {
-                                        new_dataset.embedding = Some(Vector::from(emb));
-                                    }
-                                    Err(CircuitBreakerError::Open { retry_after, .. }) => {
-                                        tracing::debug!(
-                                            dataset_id = %new_dataset.original_id,
-                                            retry_after_secs = retry_after.as_secs(),
-                                            "Skipping dataset - circuit breaker open"
-                                        );
-                                        stats.record(SyncOutcome::Skipped);
-                                        return Ok(());
-                                    }
-                                    Err(CircuitBreakerError::Inner(e)) => {
-                                        stats.record(SyncOutcome::Failed);
-                                        return Err(AppError::Generic(format!(
-                                            "Failed to generate embedding: {e}"
-                                        )));
-                                    }
-                                }
-                            }
-                        }
-
-                        match store.upsert(&new_dataset).await {
-                            Ok(_uuid) => {
-                                stats.record(decision.outcome);
-                                Ok(())
-                            }
-                            Err(e) => {
-                                stats.record(SyncOutcome::Failed);
-                                Err(e)
-                            }
-                        }
-                    }
-                });
-                apply_stream_combinators!(stream);
+                run_batch_phase!(pre_processed);
             }
             SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
-                // Datasets already fetched (bulk or incremental), just process them
-                let stream =
-                    stream::iter(datasets).map(|portal_data| process_dataset!(portal_data));
-                apply_stream_combinators!(stream);
+                let pre_processed = stream::iter(datasets)
+                    .map(|portal_data| {
+                        let portal_url_owned = portal_url.to_string();
+                        let url_template = url_template_arc.clone();
+                        let language = Arc::clone(&language_arc);
+                        let existing_hashes = existing_hashes.clone();
+                        let unchanged_ids = Arc::clone(&unchanged_ids);
+                        let cancel_token = cancel_token.clone();
+                        let was_cancelled = Arc::clone(&was_cancelled);
+                        let stats = Arc::clone(&stats);
+                        let processed_count = Arc::clone(&processed_count);
+
+                        async move {
+                            if cancel_token.is_cancelled() {
+                                was_cancelled.store(true, Ordering::SeqCst);
+                                return None;
+                            }
+
+                            let new_dataset = F::Client::into_new_dataset(
+                                portal_data,
+                                &portal_url_owned,
+                                url_template.as_deref(),
+                                &language,
+                            );
+                            let decision = needs_reprocessing(
+                                existing_hashes.get(&new_dataset.original_id),
+                                &new_dataset.content_hash,
+                            );
+
+                            match decision.outcome {
+                                SyncOutcome::Unchanged => {
+                                    stats.record(SyncOutcome::Unchanged);
+                                    if let Ok(mut ids) = unchanged_ids.lock() {
+                                        ids.push(new_dataset.original_id);
+                                    }
+                                    processed_count.fetch_add(1, Ordering::Relaxed);
+                                    None
+                                }
+                                SyncOutcome::Updated | SyncOutcome::Created => {
+                                    let text_to_embed = if decision.needs_embedding {
+                                        let combined = format!(
+                                            "{} {}",
+                                            new_dataset.title,
+                                            new_dataset.description.as_deref().unwrap_or_default()
+                                        );
+                                        if combined.trim().is_empty() {
+                                            None
+                                        } else {
+                                            Some(combined)
+                                        }
+                                    } else {
+                                        None
+                                    };
+
+                                    Some(PreProcessedDataset {
+                                        dataset: new_dataset,
+                                        text_to_embed,
+                                        outcome: decision.outcome,
+                                    })
+                                }
+                                SyncOutcome::Failed | SyncOutcome::Skipped => {
+                                    unreachable!(
+                                        "needs_reprocessing never returns Failed or Skipped"
+                                    )
+                                }
+                            }
+                        }
+                    })
+                    .buffer_unordered(self.config.concurrency)
+                    .take_while(|_| {
+                        let is_cancelled = cancel_token.is_cancelled();
+                        async move { !is_cancelled }
+                    })
+                    .filter_map(|opt| async { opt });
+
+                run_batch_phase!(pre_processed);
             }
         }
 
@@ -945,6 +929,101 @@ where
             Ok(SyncResult::cancelled(final_stats))
         } else {
             Ok(SyncResult::completed(final_stats))
+        }
+    }
+
+    /// Processes a batch of pre-processed datasets: generates embeddings in a
+    /// single API call through the circuit breaker, then upserts all datasets.
+    async fn process_embedding_batch(
+        batch: Vec<PreProcessedDataset>,
+        embedding: &E,
+        store: &S,
+        circuit_breaker: &CircuitBreaker,
+        stats: &Arc<AtomicSyncStats>,
+    ) {
+        // Partition: items needing embedding vs those that don't
+        let (needs_embed, no_embed): (Vec<_>, Vec<_>) =
+            batch.into_iter().partition(|p| p.text_to_embed.is_some());
+
+        // Upsert items that don't need embedding immediately
+        for item in no_embed {
+            match store.upsert(&item.dataset).await {
+                Ok(_) => stats.record(item.outcome),
+                Err(e) => {
+                    tracing::warn!(
+                        dataset_id = %item.dataset.original_id,
+                        error = %e,
+                        "Failed to upsert dataset"
+                    );
+                    stats.record(SyncOutcome::Failed);
+                }
+            }
+        }
+
+        if needs_embed.is_empty() {
+            return;
+        }
+
+        // Collect texts for batch API call
+        let texts: Vec<String> = needs_embed
+            .iter()
+            .map(|p| p.text_to_embed.clone().unwrap())
+            .collect();
+
+        let batch_size = needs_embed.len();
+
+        match circuit_breaker
+            .call(|| embedding.generate_batch(&texts))
+            .await
+        {
+            Ok(embeddings) => {
+                if embeddings.len() != batch_size {
+                    tracing::warn!(
+                        expected = batch_size,
+                        got = embeddings.len(),
+                        "Batch embedding count mismatch, failing batch"
+                    );
+                    for _ in 0..batch_size {
+                        stats.record(SyncOutcome::Failed);
+                    }
+                    return;
+                }
+                // Assign embeddings and upsert each dataset
+                for (mut item, emb) in needs_embed.into_iter().zip(embeddings) {
+                    item.dataset.embedding = Some(Vector::from(emb));
+                    match store.upsert(&item.dataset).await {
+                        Ok(_) => stats.record(item.outcome),
+                        Err(e) => {
+                            tracing::warn!(
+                                dataset_id = %item.dataset.original_id,
+                                error = %e,
+                                "Failed to upsert dataset"
+                            );
+                            stats.record(SyncOutcome::Failed);
+                        }
+                    }
+                }
+            }
+            Err(CircuitBreakerError::Open { retry_after, .. }) => {
+                tracing::debug!(
+                    batch_size,
+                    retry_after_secs = retry_after.as_secs(),
+                    "Skipping batch - circuit breaker open"
+                );
+                for _ in 0..batch_size {
+                    stats.record(SyncOutcome::Skipped);
+                }
+            }
+            Err(CircuitBreakerError::Inner(e)) => {
+                tracing::warn!(
+                    batch_size,
+                    error = %e,
+                    "Batch embedding generation failed"
+                );
+                for _ in 0..batch_size {
+                    stats.record(SyncOutcome::Failed);
+                }
+            }
         }
     }
 

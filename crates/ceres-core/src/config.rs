@@ -162,6 +162,9 @@ impl Default for HttpConfig {
 pub struct SyncConfig {
     /// Number of concurrent dataset processing tasks.
     pub concurrency: usize,
+    /// Maximum number of texts per embedding API batch call.
+    /// The actual batch size is `min(this, provider.max_batch_size())`.
+    pub embedding_batch_size: usize,
     /// Force full sync even if incremental sync is available.
     pub force_full_sync: bool,
     /// Circuit breaker configuration for API resilience.
@@ -173,6 +176,7 @@ impl Default for SyncConfig {
         // TODO(config): Read from SYNC_CONCURRENCY env var
         Self {
             concurrency: 10,
+            embedding_batch_size: 64,
             force_full_sync: false,
             circuit_breaker: CircuitBreakerConfig::default(),
         }
@@ -183,6 +187,12 @@ impl SyncConfig {
     /// Creates a new SyncConfig with force_full_sync enabled.
     pub fn with_full_sync(mut self) -> Self {
         self.force_full_sync = true;
+        self
+    }
+
+    /// Creates a new SyncConfig with a custom embedding batch size.
+    pub fn with_embedding_batch_size(mut self, size: usize) -> Self {
+        self.embedding_batch_size = size.max(1);
         self
     }
 

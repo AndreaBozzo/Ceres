@@ -109,6 +109,190 @@ async fn test_harvest_skips_unchanged_dataset() {
 }
 
 // =============================================================================
+// Batch embedding tests (#95)
+// =============================================================================
+
+/// Test: Multiple new datasets are created with batch embedding.
+///
+/// Verifies that the two-phase pipeline (pre-process → batch embed → upsert)
+/// correctly processes multiple datasets in a single batch.
+#[tokio::test]
+async fn test_harvest_batch_creates_multiple_datasets() {
+    let datasets: Vec<MockPortalData> = (0..5)
+        .map(|i| MockPortalData {
+            id: format!("batch-ds-{}", i),
+            title: format!("Batch Dataset {}", i),
+            description: Some(format!("Description for dataset {}", i)),
+        })
+        .collect();
+
+    let store = MockDatasetStore::new();
+    let embedding = MockEmbeddingProvider::new();
+    let factory = MockPortalClientFactory::new(datasets);
+
+    let config = SyncConfig {
+        concurrency: 2,
+        force_full_sync: true,
+        ..Default::default()
+    };
+    let service = HarvestService::with_config(store.clone(), embedding, factory, config);
+
+    let stats = service.sync_portal(TEST_PORTAL_URL).await.unwrap();
+
+    assert_eq!(stats.created, 5, "Should have created 5 datasets");
+    assert_eq!(stats.failed, 0, "Should have 0 failed datasets");
+    assert_eq!(stats.total(), 5, "Total should be 5");
+
+    // Verify all datasets were stored with embeddings
+    for i in 0..5 {
+        let id = format!("batch-ds-{}", i);
+        assert!(
+            store.contains(TEST_PORTAL_URL, &id),
+            "Dataset {} should be stored",
+            id
+        );
+        let stored = store.get(TEST_PORTAL_URL, &id).unwrap();
+        assert!(
+            stored.embedding.is_some(),
+            "Dataset {} should have an embedding",
+            id
+        );
+    }
+}
+
+/// Test: Mix of new and unchanged datasets with batching.
+///
+/// First harvest creates all datasets. Second harvest should detect
+/// unchanged datasets in Phase 1 and only batch-embed new ones.
+#[tokio::test]
+async fn test_harvest_batch_with_unchanged_mixed() {
+    // First harvest: 3 datasets
+    let datasets = vec![
+        MockPortalData {
+            id: "ds-a".to_string(),
+            title: "Dataset A".to_string(),
+            description: Some("Description A".to_string()),
+        },
+        MockPortalData {
+            id: "ds-b".to_string(),
+            title: "Dataset B".to_string(),
+            description: Some("Description B".to_string()),
+        },
+        MockPortalData {
+            id: "ds-c".to_string(),
+            title: "Dataset C".to_string(),
+            description: Some("Description C".to_string()),
+        },
+    ];
+
+    let store = MockDatasetStore::new();
+    let embedding = MockEmbeddingProvider::new();
+    let factory = MockPortalClientFactory::new(datasets);
+
+    let config = SyncConfig {
+        concurrency: 1,
+        force_full_sync: true,
+        ..Default::default()
+    };
+    let service = HarvestService::with_config(store.clone(), embedding, factory, config);
+
+    // First harvest
+    let stats1 = service.sync_portal(TEST_PORTAL_URL).await.unwrap();
+    assert_eq!(stats1.created, 3, "First harvest should create 3 datasets");
+
+    // Second harvest with same data
+    let stats2 = service.sync_portal(TEST_PORTAL_URL).await.unwrap();
+    assert_eq!(
+        stats2.unchanged, 3,
+        "Second harvest should have 3 unchanged"
+    );
+    assert_eq!(stats2.created, 0, "Second harvest should create 0 datasets");
+    assert_eq!(stats2.failed, 0, "Should have 0 failed datasets");
+}
+
+/// Test: Small batch size creates multiple batches.
+///
+/// With embedding_batch_size=2 and 5 datasets, we should get 3 batches (2+2+1).
+/// All datasets should still be processed correctly.
+#[tokio::test]
+async fn test_harvest_batch_size_respected() {
+    let datasets: Vec<MockPortalData> = (0..5)
+        .map(|i| MockPortalData {
+            id: format!("small-batch-{}", i),
+            title: format!("Small Batch Dataset {}", i),
+            description: Some(format!("Description {}", i)),
+        })
+        .collect();
+
+    let store = MockDatasetStore::new();
+    let embedding = MockEmbeddingProvider::new();
+    let factory = MockPortalClientFactory::new(datasets);
+
+    let config = SyncConfig {
+        concurrency: 1,
+        embedding_batch_size: 2, // Small batch size
+        force_full_sync: true,
+        ..Default::default()
+    };
+    let service = HarvestService::with_config(store.clone(), embedding, factory, config);
+
+    let stats = service.sync_portal(TEST_PORTAL_URL).await.unwrap();
+
+    assert_eq!(stats.created, 5, "Should have created all 5 datasets");
+    assert_eq!(stats.failed, 0, "Should have 0 failed datasets");
+
+    // Verify all datasets stored correctly
+    for i in 0..5 {
+        let id = format!("small-batch-{}", i);
+        assert!(
+            store.contains(TEST_PORTAL_URL, &id),
+            "Dataset {} should be stored",
+            id
+        );
+    }
+}
+
+/// Test: Batch size of 1 is equivalent to sequential processing.
+///
+/// With embedding_batch_size=1, each dataset gets its own API call.
+/// This verifies backward compatibility with the pre-batching behavior.
+#[tokio::test]
+async fn test_harvest_batch_size_one_sequential() {
+    let datasets: Vec<MockPortalData> = (0..3)
+        .map(|i| MockPortalData {
+            id: format!("seq-{}", i),
+            title: format!("Sequential Dataset {}", i),
+            description: Some(format!("Description {}", i)),
+        })
+        .collect();
+
+    let store = MockDatasetStore::new();
+    let embedding = MockEmbeddingProvider::new();
+    let factory = MockPortalClientFactory::new(datasets);
+
+    let config = SyncConfig {
+        concurrency: 1,
+        embedding_batch_size: 1, // Sequential mode
+        force_full_sync: true,
+        ..Default::default()
+    };
+    let service = HarvestService::with_config(store.clone(), embedding, factory, config);
+
+    let stats = service.sync_portal(TEST_PORTAL_URL).await.unwrap();
+
+    assert_eq!(stats.created, 3, "Should have created 3 datasets");
+    assert_eq!(stats.failed, 0, "Should have 0 failed datasets");
+
+    for i in 0..3 {
+        let stored = store.get(TEST_PORTAL_URL, &format!("seq-{}", i)).unwrap();
+        assert!(
+            stored.embedding.is_some(),
+            "Dataset should have an embedding"
+        );
+    }
+}
+
+// =============================================================================
 // TODO: Future integration tests for ceres-core
 // =============================================================================
 //
