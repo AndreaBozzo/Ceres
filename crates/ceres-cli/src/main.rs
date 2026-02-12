@@ -94,6 +94,14 @@ async fn main() -> anyhow::Result<()> {
                 let output_dir = output.ok_or_else(|| {
                     anyhow::anyhow!("--output <DIR> is required for parquet format")
                 })?;
+                if portal.is_some() {
+                    eprintln!(
+                        "Warning: --portal is ignored for parquet export (all portals are exported as separate files)"
+                    );
+                }
+                if limit.is_some() {
+                    eprintln!("Warning: --limit is ignored for parquet export");
+                }
                 let portals_config = load_portals_config(config_path)?;
                 let parquet_service = ParquetExportService::new(
                     repo.clone(),

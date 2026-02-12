@@ -198,10 +198,12 @@ impl<S: DatasetStore> ParquetExportService<S> {
             ArrowWriter::try_new(all_file, schema.clone(), Some(writer_props.clone()))
                 .map_err(|e| AppError::Generic(format!("Failed to create ArrowWriter: {}", e)))?;
 
-        // Per-portal writers (opened lazily) and buffers
+        // Per-portal state keyed by normalized source_portal URL (stable, unique)
         let mut portal_writers: HashMap<String, ArrowWriter<fs::File>> = HashMap::new();
         let mut portal_buffers: HashMap<String, Vec<FlatRecord>> = HashMap::new();
         let mut portal_counts: HashMap<String, u64> = HashMap::new();
+        // Track portal_key -> (display_name, file_name) for stats and file creation
+        let mut portal_info: HashMap<String, (String, String)> = HashMap::new();
 
         // Main "all" buffer
         let mut all_buffer: Vec<FlatRecord> = Vec::with_capacity(self.config.batch_size);
@@ -227,7 +229,13 @@ impl<S: DatasetStore> ParquetExportService<S> {
             }
 
             let record = self.flatten_dataset(&dataset, is_duplicate);
-            let portal_key = portal_file_name(&record.portal_name);
+
+            // Use normalized source_portal URL as the stable partition key
+            let portal_key = normalize_portal_url(&record.source_portal);
+            let file_name = portal_file_name(&record.portal_name);
+            portal_info
+                .entry(portal_key.clone())
+                .or_insert_with(|| (record.portal_name.clone(), file_name));
 
             // Add to portal buffer
             portal_buffers
@@ -269,9 +277,11 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 if buf.len() >= self.config.batch_size {
                     let buf = portal_buffers.remove(&portal_key).unwrap();
                     let batch = build_record_batch(&buf, &schema)?;
+                    let (_, ref fname) = portal_info[&portal_key];
                     let writer = get_or_create_portal_writer(
                         &mut portal_writers,
                         &portal_key,
+                        fname,
                         &data_dir,
                         &schema,
                         &writer_props,
@@ -295,9 +305,11 @@ impl<S: DatasetStore> ParquetExportService<S> {
         for (portal_key, buf) in portal_buffers.drain() {
             if !buf.is_empty() {
                 let batch = build_record_batch(&buf, &schema)?;
+                let (_, ref fname) = portal_info[&portal_key];
                 let writer = get_or_create_portal_writer(
                     &mut portal_writers,
                     &portal_key,
+                    fname,
                     &data_dir,
                     &schema,
                     &writer_props,
@@ -313,23 +325,23 @@ impl<S: DatasetStore> ParquetExportService<S> {
             .close()
             .map_err(|e| AppError::Generic(format!("Failed to close all.parquet: {}", e)))?;
 
-        for (name, writer) in portal_writers {
+        for (portal_key, writer) in portal_writers {
+            let (_, ref fname) = portal_info[&portal_key];
             writer.close().map_err(|e| {
-                AppError::Generic(format!("Failed to close {}.parquet: {}", name, e))
+                AppError::Generic(format!("Failed to close {}.parquet: {}", fname, e))
             })?;
         }
 
-        // Build per-portal stats
+        // Build per-portal stats with accurate names and URLs
         let mut portal_stats: Vec<PortalExportStats> = portal_counts
             .into_iter()
-            .map(|(name, count)| {
-                let url = self
-                    .portal_names
-                    .iter()
-                    .find(|(_, v)| portal_file_name(v) == name)
-                    .map(|(k, _)| k.clone())
-                    .unwrap_or_default();
-                PortalExportStats { name, url, count }
+            .map(|(portal_key, count)| {
+                let (ref name, _) = portal_info[&portal_key];
+                PortalExportStats {
+                    name: name.clone(),
+                    url: portal_key,
+                    count,
+                }
             })
             .collect();
         portal_stats.sort_by(|a, b| b.count.cmp(&a.count));
@@ -438,7 +450,9 @@ fn arrow_schema() -> Arc<Schema> {
 /// Returns Parquet writer properties with Zstd compression.
 fn writer_properties() -> WriterProperties {
     WriterProperties::builder()
-        .set_compression(Compression::ZSTD(ZstdLevel::try_new(3).unwrap()))
+        .set_compression(Compression::ZSTD(
+            ZstdLevel::try_new(3).expect("zstd level 3 should be valid"),
+        ))
         .build()
 }
 
@@ -508,15 +522,19 @@ fn build_record_batch(
 // =============================================================================
 
 /// Gets or creates an ArrowWriter for a specific portal.
+///
+/// `portal_key` is the stable map key (normalized URL), `file_name` is the
+/// human-readable name used for the `.parquet` file on disk.
 fn get_or_create_portal_writer<'a>(
     writers: &'a mut HashMap<String, ArrowWriter<fs::File>>,
     portal_key: &str,
+    file_name: &str,
     data_dir: &Path,
     schema: &Arc<Schema>,
     writer_props: &WriterProperties,
 ) -> Result<&'a mut ArrowWriter<fs::File>, AppError> {
     if !writers.contains_key(portal_key) {
-        let path = data_dir.join(format!("{}.parquet", portal_key));
+        let path = data_dir.join(format!("{}.parquet", file_name));
         let file = fs::File::create(&path).map_err(|e| {
             AppError::Generic(format!("Failed to create {}: {}", path.display(), e))
         })?;

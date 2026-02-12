@@ -510,7 +510,7 @@ impl DatasetRepository {
         let rows: Vec<DuplicateTitleRow> = sqlx::query_as(
             "SELECT LOWER(title) as title FROM datasets \
              GROUP BY LOWER(title) \
-             HAVING COUNT(DISTINCT source_portal) > 1",
+             HAVING COUNT(DISTINCT TRIM(TRAILING '/' FROM source_portal)) > 1",
         )
         .fetch_all(&self.pool)
         .await
