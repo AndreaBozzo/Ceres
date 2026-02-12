@@ -121,25 +121,6 @@ Ceres comes with verified CKAN portals ready to use:
 
 See [`examples/portals.toml`](examples/portals.toml) for the full list. Want to add more? Check [issue #19](https://github.com/AndreaBozzo/Ceres/issues/19).
 
-## Cost-Effectiveness
-
-API costs, based on the Gemini embedding model, are almost negligible, making the solution extremely efficient even for personal projects or those with limited budgets.
-
-The main cost is for the initial creation of vector embeddings. Below is a cost breakdown for a large catalog.
-
-### Cost Analysis for Initial Indexing
-
-This scenario estimates the one-time cost to index a catalog of 50,000 datasets.
-
-| Metric | Detail |
-|--------------------------------|--------------------------------------------------------------------------------|
-| **Cost per 1M Input Tokens** | ~$0.15 USD (Standard rate for Google's `gemini-embedding-001` model) |
-| **Estimated Tokens per Dataset** | 500 tokens (A generous estimate for title, description, and tags) |
-| **Total Tokens** | `50,000 datasets * 500 tokens/dataset = 25,000,000 tokens` |
-| **Total Initial Cost** | `(25,000,000 / 1,000,000) * $0.15 =` **$3.75** |
-
-As shown, the initial cost to index a substantial number of datasets is just a few dollars. Monthly maintenance for incremental updates would be even lower, typically amounting to a few cents.
-
 ## Tech Stack
 
 | Component | Technology |
@@ -277,60 +258,13 @@ RATE_LIMIT_RPS         Requests per second per IP (default: 10)
 RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
 ```
 
-## Development
-
-The project includes a Makefile with convenient shortcuts for common development tasks:
-
-```bash
-# Start development environment (starts PostgreSQL with docker-compose)
-make dev
-
-# Run database migrations
-make migrate
-
-# Build the project
-make build
-
-# Build in release mode
-make release
-
-# Run tests
-make test
-
-# Format code
-make fmt
-
-# Run lints
-make clippy
-
-# See all available commands
-make help
-```
-
 ## Architecture
 
 ![Ceres Architecture Diagram](docs/assets/images/Ceres_architecture.png)
 
 ## Roadmap
 
-### v0.0.1 — Initial Release ✅
-- CKAN harvester with concurrent processing
-- Gemini embeddings (768 dimensions)
-- CLI with harvest, search, export, stats commands
-- PostgreSQL + pgvector backend
-- Multi-format export (JSON, JSONL, CSV)
-
-### v0.1 — Enhancements ✅
-- Portals configuration from `portals.toml`
-- Delta detection
-- Improved error handling and retry logic
-
-### v0.2 — Multi-portal & API ✅
-- Incremental harvesting (time-based metadata filtering)
-- REST API
-- Graceful shutdown
-- Persistent jobs
-- Streaming export/search
+For past releases, see the [CHANGELOG](CHANGELOG.md).
 
 ### v0.3.0 — Extensibility & Production Readiness
 - Streaming harvest for large portals ([#85](https://github.com/AndreaBozzo/Ceres/issues/85))
@@ -338,7 +272,6 @@ make help
 - Abstract PortalClient for Socrata / DCAT-AP support ([#61](https://github.com/AndreaBozzo/Ceres/issues/61))
 - Authentication middleware ([#72](https://github.com/AndreaBozzo/Ceres/issues/72))
 - Docker image ([#74](https://github.com/AndreaBozzo/Ceres/issues/74))
-- Multilingual CKAN field handling ([#40](https://github.com/AndreaBozzo/Ceres/issues/40))
 - Delta detection improvements ([#51](https://github.com/AndreaBozzo/Ceres/issues/51), [#53](https://github.com/AndreaBozzo/Ceres/issues/53))
 - Integration test suite ([#29](https://github.com/AndreaBozzo/Ceres/issues/29))
 
@@ -347,19 +280,14 @@ make help
 - Standalone library support ([#35](https://github.com/AndreaBozzo/Ceres/issues/35))
 - Cross-language semantic search
 - data.europa.eu integration
+
+## Related Projects
+
+- **[databricks-ceres-pipeline](https://github.com/AndreaBozzo/databricks-ceres-pipeline)** — A Databricks medallion architecture pipeline that provides batch analytics, ML features, and dashboards on top of the same open data index.
+
 ## Contributing
 
-Contributions are welcome! This project is in early stages, so there's plenty of room to shape its direction.
-
-```bash
-# Run tests
-cargo test
-
-# Run with debug logging
-RUST_LOG=debug cargo run -- harvest https://dati.comune.milano.it
-```
-
-See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
+Contributions are welcome! See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for setup instructions and guidelines.
 
 ## License
 
