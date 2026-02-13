@@ -28,7 +28,7 @@ Ceres harvests metadata from CKAN open data portals and indexes them with vector
 <div align="center">
   <img src="docs/assets/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" width="800"/>
   <br/>
-  <sub>106,657 datasets from 12 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar, GIF shows a 5k sample.</sub>
+  <sub>300,000 datasets from 20 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar, GIF shows a 15k sample.</sub>
   
 </div>
 
