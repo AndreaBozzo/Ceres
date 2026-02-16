@@ -140,3 +140,17 @@ description = "Open Data NRW (Germany)"
 # url = "https://data.gov.ua"
 # type = "ckan"
 # description = "Ukrainian Government Open Data Portal (~39,775 datasets, large)"
+
+# --- Asia-Pacific portals (Feb 2026) --- #
+
+# [[portals]]
+# name = "tokyo"
+# url = "https://catalog.data.metro.tokyo.lg.jp"
+# type = "ckan"
+# description = "Tokyo Metropolitan Open Data (~9,700 datasets, Japanese)"
+
+# [[portals]]
+# name = "australia"
+# url = "https://data.gov.au/data/"
+# type = "ckan"
+# description = "Australian Government Open Data (~109,000 datasets, English, very large)"
