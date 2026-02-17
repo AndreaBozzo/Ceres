@@ -793,7 +793,20 @@ where
                     })
                     .filter_map(|opt| async { opt });
 
-                run_batch_phase!(pre_processed);
+                if self.config.dry_run {
+                    // Consume stream to collect stats without embedding or persisting
+                    use futures::stream::StreamExt as _;
+                    let mut stream = std::pin::pin!(pre_processed);
+                    while let Some(item) = stream.next().await {
+                        stats.record(item.outcome);
+                        processed_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if cancel_token.is_cancelled() {
+                        was_cancelled.store(true, Ordering::SeqCst);
+                    }
+                } else {
+                    run_batch_phase!(pre_processed);
+                }
             }
             SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
                 let pre_processed = stream::iter(datasets)
@@ -871,7 +884,47 @@ where
                     })
                     .filter_map(|opt| async { opt });
 
-                run_batch_phase!(pre_processed);
+                if self.config.dry_run {
+                    use futures::stream::StreamExt as _;
+                    let mut stream = std::pin::pin!(pre_processed);
+                    while let Some(item) = stream.next().await {
+                        stats.record(item.outcome);
+                        processed_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if cancel_token.is_cancelled() {
+                        was_cancelled.store(true, Ordering::SeqCst);
+                    }
+                } else {
+                    run_batch_phase!(pre_processed);
+                }
+            }
+        }
+
+        // In dry-run mode, skip all DB writes and return stats early
+        if self.config.dry_run {
+            let final_stats = stats.to_stats();
+            let is_cancelled = was_cancelled.load(Ordering::SeqCst) || cancel_token.is_cancelled();
+
+            if is_cancelled {
+                tracing::info!(
+                    portal = portal_url,
+                    created = final_stats.created,
+                    updated = final_stats.updated,
+                    unchanged = final_stats.unchanged,
+                    failed = final_stats.failed,
+                    "Dry run cancelled — no changes written"
+                );
+                return Ok(SyncResult::cancelled(final_stats));
+            } else {
+                tracing::info!(
+                    portal = portal_url,
+                    created = final_stats.created,
+                    updated = final_stats.updated,
+                    unchanged = final_stats.unchanged,
+                    failed = final_stats.failed,
+                    "Dry run complete — no changes written"
+                );
+                return Ok(SyncResult::completed(final_stats));
             }
         }
 

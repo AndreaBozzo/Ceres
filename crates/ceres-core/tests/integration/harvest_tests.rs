@@ -293,6 +293,133 @@ async fn test_harvest_batch_size_one_sequential() {
 }
 
 // =============================================================================
+// Dry-run tests (#99)
+// =============================================================================
+
+/// Test: Dry run collects stats without writing to DB or generating embeddings.
+///
+/// With `dry_run: true`, the harvest should:
+/// - Fetch datasets from the portal (validates connectivity)
+/// - Compute content hashes and compare against existing data
+/// - Return accurate created/updated/unchanged counts
+/// - NOT upsert any datasets to the store
+/// - NOT record sync status
+#[tokio::test]
+async fn test_harvest_dry_run_no_side_effects() {
+    let datasets = vec![
+        MockPortalData {
+            id: "dry-1".to_string(),
+            title: "Dry Run Dataset 1".to_string(),
+            description: Some("Description 1".to_string()),
+        },
+        MockPortalData {
+            id: "dry-2".to_string(),
+            title: "Dry Run Dataset 2".to_string(),
+            description: Some("Description 2".to_string()),
+        },
+        MockPortalData {
+            id: "dry-3".to_string(),
+            title: "Dry Run Dataset 3".to_string(),
+            description: Some("Description 3".to_string()),
+        },
+    ];
+
+    let store = MockDatasetStore::new();
+    let embedding = MockEmbeddingProvider::new();
+    let factory = MockPortalClientFactory::new(datasets);
+
+    let config = SyncConfig {
+        concurrency: 1,
+        force_full_sync: true,
+        dry_run: true,
+        ..Default::default()
+    };
+    let service = HarvestService::with_config(store.clone(), embedding, factory, config);
+
+    let stats = service.sync_portal(TEST_PORTAL_URL).await.unwrap();
+
+    // Stats should reflect what would happen
+    assert_eq!(
+        stats.created, 3,
+        "Should report 3 datasets would be created"
+    );
+    assert_eq!(stats.failed, 0, "Should have 0 failed datasets");
+
+    // Store should be empty — no upserts in dry-run
+    assert!(
+        store.is_empty(),
+        "Store should be empty in dry-run mode (no upserts)"
+    );
+
+    // No sync status should be recorded
+    let sync_history = store.sync_history.lock().unwrap();
+    assert!(
+        sync_history.is_empty(),
+        "No sync status should be recorded in dry-run mode"
+    );
+}
+
+/// Test: Dry run correctly reports unchanged datasets.
+///
+/// When datasets already exist in the store, dry-run should detect them
+/// as unchanged without modifying anything.
+#[tokio::test]
+async fn test_harvest_dry_run_detects_unchanged() {
+    let datasets = vec![MockPortalData {
+        id: "existing-1".to_string(),
+        title: "Existing Dataset".to_string(),
+        description: Some("Already harvested".to_string()),
+    }];
+
+    let store = MockDatasetStore::new();
+    let embedding = MockEmbeddingProvider::new();
+    let factory = MockPortalClientFactory::new(datasets);
+
+    // First: normal harvest to populate the store
+    let normal_config = SyncConfig {
+        concurrency: 1,
+        force_full_sync: true,
+        ..Default::default()
+    };
+    let service = HarvestService::with_config(
+        store.clone(),
+        embedding.clone(),
+        factory.clone(),
+        normal_config,
+    );
+    let stats1 = service.sync_portal(TEST_PORTAL_URL).await.unwrap();
+    assert_eq!(stats1.created, 1, "Normal harvest should create 1 dataset");
+    assert_eq!(store.len(), 1, "Store should have 1 dataset");
+
+    // Clear sync history from the normal harvest
+    store.sync_history.lock().unwrap().clear();
+
+    // Second: dry-run harvest — should detect unchanged, not modify store
+    let dry_config = SyncConfig {
+        concurrency: 1,
+        force_full_sync: true,
+        dry_run: true,
+        ..Default::default()
+    };
+    let dry_service = HarvestService::with_config(store.clone(), embedding, factory, dry_config);
+    let stats2 = dry_service.sync_portal(TEST_PORTAL_URL).await.unwrap();
+
+    assert_eq!(
+        stats2.unchanged, 1,
+        "Dry run should detect 1 unchanged dataset"
+    );
+    assert_eq!(stats2.created, 0, "Dry run should report 0 created");
+    assert_eq!(store.len(), 1, "Store should still have exactly 1 dataset");
+
+    // No sync status should be recorded for dry-run
+    let sync_history = store.sync_history.lock().unwrap();
+    assert!(
+        sync_history.is_empty(),
+        "No sync status should be recorded in dry-run mode"
+    );
+}
+
+// =============================================================================
 // TODO: Future integration tests for ceres-core
 // =============================================================================
 //

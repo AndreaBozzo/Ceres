@@ -65,13 +65,16 @@ async fn main() -> anyhow::Result<()> {
             portal,
             config: config_path,
             full_sync,
+            dry_run,
         } => {
             // Create HarvestService with appropriate config
-            let sync_config = if full_sync {
-                SyncConfig::default().with_full_sync()
-            } else {
-                SyncConfig::default()
-            };
+            let mut sync_config = SyncConfig::default();
+            if full_sync {
+                sync_config = sync_config.with_full_sync();
+            }
+            if dry_run {
+                sync_config = sync_config.with_dry_run();
+            }
             let harvest_service = HarvestService::with_config(
                 repo.clone(),
                 embedding_client.clone(),
