@@ -89,6 +89,10 @@ pub enum Command {
         /// Force full sync even if incremental sync is available
         #[arg(long)]
         full_sync: bool,
+
+        /// Preview what would be harvested without writing to DB or calling embedding API
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Search indexed datasets using semantic similarity
     #[command(after_help = "Example: ceres search \"trasporto pubblico\" --limit 10")]

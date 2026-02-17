@@ -167,6 +167,8 @@ pub struct SyncConfig {
     pub embedding_batch_size: usize,
     /// Force full sync even if incremental sync is available.
     pub force_full_sync: bool,
+    /// Preview mode: fetch and compare datasets without writing to DB or calling embedding API.
+    pub dry_run: bool,
     /// Circuit breaker configuration for API resilience.
     pub circuit_breaker: CircuitBreakerConfig,
 }
@@ -178,6 +180,7 @@ impl Default for SyncConfig {
             concurrency: 10,
             embedding_batch_size: 64,
             force_full_sync: false,
+            dry_run: false,
             circuit_breaker: CircuitBreakerConfig::default(),
         }
     }
@@ -187,6 +190,12 @@ impl SyncConfig {
     /// Creates a new SyncConfig with force_full_sync enabled.
     pub fn with_full_sync(mut self) -> Self {
         self.force_full_sync = true;
+        self
+    }
+
+    /// Creates a new SyncConfig with dry_run enabled.
+    pub fn with_dry_run(mut self) -> Self {
+        self.dry_run = true;
         self
     }
 
