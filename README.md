@@ -260,7 +260,25 @@ RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
 
 ## Architecture
 
-![Ceres Architecture Diagram](docs/assets/images/Ceres_architecture.png)
+<div align="center">
+  <img src="docs/assets/images/Ceres_architecture.png" alt="Ceres Architecture Diagram" width="100%" />
+  <br/>
+  <sub>High-level architecture of Ceres components and data flow.</sub>
+</div>
+
+### Harvesting Internals
+
+<div align="center">
+  <img src="docs/assets/images/harvesting.png" alt="Harvesting Flow Diagram" width="900" />
+  <br/>
+  <sub>Two-tier optimization flow: incremental sync + delta detection.</sub>
+</div>
+
+<div align="center">
+  <img src="docs/assets/images/circuitbreaker.png" alt="Circuit Breaker Diagram" width="900" />
+  <br/>
+  <sub>Circuit breaker states and recovery behavior for embedding requests.</sub>
+</div>
 
 ## Roadmap
 

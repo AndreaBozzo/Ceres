@@ -4,31 +4,11 @@ Ceres harvests dataset metadata from open data portals and indexes them with vec
 
 ## Two-Tier Optimization
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                       HARVESTING FLOW                           │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────────────────────┐                                    │
-│  │  TIER 1                  │  Reduces portal API calls          │
-│  │  Incremental Sync        │                                    │
-│  │  (metadata_modified)     │  First sync: fetch all datasets    │
-│  └────────────┬─────────────┘  Later: fetch only modified ones   │
-│               │                                                  │
-│               ▼                                                  │
-│  ┌──────────────────────────┐                                    │
-│  │  TIER 2                  │  Reduces embedding API calls       │
-│  │  Delta Detection         │                                    │
-│  │  (content_hash)          │  Hash matches: skip embedding      │
-│  └────────────┬─────────────┘  Hash differs: regenerate          │
-│               │                                                  │
-│               ▼                                                  │
-│  ┌──────────────────────────┐                                    │
-│  │  UPSERT + STORE          │  Persist to PostgreSQL + pgvector  │
-│  └──────────────────────────┘                                    │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
-```
+<div align="center">
+	<img src="assets/images/harvesting.png" alt="Harvesting Flow Diagram" width="100%" />
+	<br/>
+	<sub>Incremental sync reduces portal calls, delta detection reduces embedding calls.</sub>
+</div>
 
 ### Tier 1: Incremental Sync
 
@@ -102,12 +82,11 @@ Content hashes are stored in the `datasets` table in the `content_hash` column (
 
 The embedding API (Gemini) is protected by a circuit breaker to prevent cascading failures during harvesting:
 
-```
-CLOSED ──[5 consecutive failures]──> OPEN ──[30s timeout]──> HALF-OPEN
-  ^                                                              │
-  │                                    <──[failure]──            │
-  └──────────────────[2 successes]───────────────────────────────┘
-```
+<div align="center">
+	<img src="assets/images/circuitbreaker.png" alt="Circuit Breaker Diagram" width="900" />
+	<br/>
+	<sub>Closed, Open, Half-Open states with adaptive recovery timeout on rate limits.</sub>
+</div>
 
 - **Closed**: requests flow normally
 - **Open**: all embedding requests are rejected immediately, datasets are recorded as `Skipped`
