@@ -78,8 +78,9 @@ pub use models::{DatabaseStats, Dataset, NewDataset, Portal, SearchResult};
 
 // Sync types and business logic
 pub use sync::{
-    AtomicSyncStats, BatchHarvestSummary, PortalHarvestResult, ReprocessingDecision, SyncOutcome,
-    SyncResult, SyncStats, SyncStatus, needs_reprocessing,
+    AlwaysReprocessDetector, AtomicSyncStats, BatchHarvestSummary, ContentHashDetector,
+    DeltaDetector, PortalHarvestResult, ReprocessingDecision, SyncOutcome, SyncResult, SyncStats,
+    SyncStatus, needs_reprocessing,
 };
 
 // Progress reporting
