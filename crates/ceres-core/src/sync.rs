@@ -229,8 +229,14 @@ impl ReprocessingDecision {
 pub trait DeltaDetector: Send + Sync + Clone {
     /// Determines if a dataset needs reprocessing.
     ///
+    /// Implementations must only return `Created`, `Updated`, or `Unchanged` outcomes.
+    /// `Failed` and `Skipped` are reserved for runtime errors in the harvest pipeline.
+    ///
     /// # Arguments
-    /// * `existing_hash` - The stored content hash for this dataset (None if new dataset)
+    /// * `existing_hash` - The stored content hash lookup result:
+    ///   - `None` — dataset not found in the store (new dataset)
+    ///   - `Some(None)` — dataset exists but has no stored hash (legacy record)
+    ///   - `Some(Some(hash))` — dataset exists with the given content hash
     /// * `new_hash` - The computed content hash from the portal data
     fn needs_reprocessing(
         &self,

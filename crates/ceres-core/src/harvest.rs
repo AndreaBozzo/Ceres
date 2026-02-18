@@ -741,6 +741,7 @@ where
 
         match plan {
             SyncPlan::Full { ids } => {
+                let delta_detector = self.delta_detector.clone();
                 let pre_processed = stream::iter(ids)
                     .map(|id| {
                         let portal_client = portal_client.clone();
@@ -753,7 +754,7 @@ where
                         let existing_hashes = existing_hashes.clone();
                         let unchanged_ids = Arc::clone(&unchanged_ids);
                         let processed_count = Arc::clone(&processed_count);
-                        let delta_detector = self.delta_detector.clone();
+                        let delta_detector = delta_detector.clone();
 
                         async move {
                             if cancel_token.is_cancelled() {
@@ -825,9 +826,9 @@ where
                                     })
                                 }
                                 SyncOutcome::Failed | SyncOutcome::Skipped => {
-                                    unreachable!(
-                                        "needs_reprocessing never returns Failed or Skipped"
-                                    )
+                                    stats.record(decision.outcome);
+                                    processed_count.fetch_add(1, Ordering::Relaxed);
+                                    None
                                 }
                             }
                         }
@@ -855,6 +856,7 @@ where
                 }
             }
             SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
+                let delta_detector = self.delta_detector.clone();
                 let pre_processed = stream::iter(datasets)
                     .map(|portal_data| {
                         let portal_url_owned = portal_url.to_string();
@@ -866,7 +868,7 @@ where
                         let was_cancelled = Arc::clone(&was_cancelled);
                         let stats = Arc::clone(&stats);
                         let processed_count = Arc::clone(&processed_count);
-                        let delta_detector = self.delta_detector.clone();
+                        let delta_detector = delta_detector.clone();
 
                         async move {
                             if cancel_token.is_cancelled() {
@@ -917,9 +919,9 @@ where
                                     })
                                 }
                                 SyncOutcome::Failed | SyncOutcome::Skipped => {
-                                    unreachable!(
-                                        "needs_reprocessing never returns Failed or Skipped"
-                                    )
+                                    stats.record(decision.outcome);
+                                    processed_count.fetch_add(1, Ordering::Relaxed);
+                                    None
                                 }
                             }
                         }
