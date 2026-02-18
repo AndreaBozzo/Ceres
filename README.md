@@ -28,10 +28,8 @@ Ceres harvests metadata from CKAN open data portals and indexes them with vector
 <div align="center">
   <img src="docs/assets/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" width="800"/>
   <br/>
-  <sub>300,000 datasets from 20 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar, GIF shows a 15k sample.</sub>
-  
+  <sub>354,000+ datasets from 25 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar.</sub>
 </div>
-
 
 Open data portals are everywhere, but finding the right dataset is still painful:
 
@@ -42,56 +40,21 @@ Open data portals are everywhere, but finding the right dataset is still painful
 Ceres solves this by creating a unified semantic index. Search by *meaning*, not just keywords.
 
 ```
-$ ceres harvest
+$ ceres search "trasporto pubblico" --limit 3
 
-INFO [Portal 1/12] milano (https://dati.comune.milano.it)
-INFO Found 2575 dataset(s) on portal
-INFO [Portal 1/12] milano completed: 2575 dataset(s)
-
-...
-
-═══════════════════════════════════════════════════════
-BATCH HARVEST COMPLETE
-═══════════════════════════════════════════════════════
-  Portals processed:   12
-  Successful:          12
-  Failed:              0
-  Total datasets:      106657
-═══════════════════════════════════════════════════════
-```
-
-```
-$ ceres search "trasporto pubblico" --limit 5
-
-🔍 Search Results for: "trasporto pubblico"
-
-Found 5 matching datasets:
+Found 3 matching datasets:
 
 1. [████████░░] [78%] TPL - Percorsi linee di superficie
    📍 https://dati.comune.milano.it
    🔗 https://dati.comune.milano.it/dataset/ds534-tpl-percorsi-linee-di-superficie
-   📝 Il dataset contiene i tracciati delle linee di trasporto pubblico di superficie...
 
 2. [████████░░] [76%] TPL - Fermate linee di superficie
    📍 https://dati.comune.milano.it
    🔗 https://dati.comune.milano.it/dataset/ds535-tpl-fermate-linee-di-superficie
-   📝 Il dataset contiene le fermate delle linee di trasporto pubblico di superficie...
 
 3. [███████░░░] [72%] Mobilità: flussi veicolari rilevati dai spire
    📍 https://dati.comune.milano.it
    🔗 https://dati.comune.milano.it/dataset/ds418-mobilita-flussi-veicolari
-   📝 Dati sul traffico veicolare rilevati dalle spire elettromagnetiche...
-```
-
-```
-$ ceres stats
-
-📊 Database Statistics
-
-  Total datasets:        106657
-  With embeddings:       106657
-  Unique portals:        12
-  Last update:           2026-02-06 15:31:06.250326 UTC
 ```
 
 ## Features
@@ -104,22 +67,41 @@ $ ceres stats
 - **Real-time Progress** — Live progress reporting during harvest with batch timestamp updates
 - **Semantic Search** — Find datasets by meaning using Gemini embeddings
 - **Pluggable Embeddings** — Switchable embedding backend via trait (Gemini, OpenAI)
-- **Multi-format Export** — Export to JSON, JSON Lines, or CSV
-- **Database Statistics** — Monitor indexed datasets and portals
+- **Multi-format Export** — Export to JSON, JSON Lines, CSV, or Parquet
 
 ## Pre-configured Portals
 
-Ceres comes with verified CKAN portals ready to use:
+Ceres comes with 25 verified CKAN portals ready to use, covering 354,000+ datasets:
 
 | Portal | Region | Datasets |
 |--------|--------|----------|
-| Milano | Italy | ~2,575 |
-| Sicilia | Italy | ~186 |
+| Australia | Australia | ~109,440 |
+| Italy (National) | Italy | ~70,141 |
+| Ukraine | Ukraine | ~39,790 |
+| HDX (Humanitarian) | Global | ~26,654 |
+| NRW | Germany | ~22,849 |
+| Ireland | Ireland | ~21,855 |
+| Switzerland | Switzerland | ~14,559 |
+| Toscana | Italy | ~12,886 |
+| Tokyo | Japan | ~9,707 |
+| Marche | Italy | ~5,440 |
+| Romania | Romania | ~5,038 |
+| Chile | Chile | ~2,897 |
+| Aragón | Spain | ~2,881 |
+| Emilia-Romagna | Italy | ~2,871 |
+| Milano | Italy | ~2,580 |
+| Puglia | Italy | ~1,801 |
 | Trentino | Italy | ~1,388 |
-| Aragón | Spain | ~2,879 |
-| NRW | Germany | ~10,926 |
+| Umbria | Italy | ~457 |
+| Lazio | Italy | ~407 |
+| Roma | Italy | ~365 |
+| Campania | Italy | ~332 |
+| Sicilia | Italy | ~186 |
+| Genova | Italy | ~171 |
+| Liguria | Italy | ~124 |
+| Napoli | Italy | ~33 |
 
-See [`examples/portals.toml`](examples/portals.toml) for the full list. Want to add more? Check [issue #19](https://github.com/AndreaBozzo/Ceres/issues/19).
+See [`examples/portals.toml`](examples/portals.toml) for the full configuration. Want to add more? Check [issue #19](https://github.com/AndreaBozzo/Ceres/issues/19).
 
 ## Tech Stack
 
@@ -163,13 +145,9 @@ cp .env.example .env
 
 # Run database migrations
 make migrate
-
-# Or manually with psql if you prefer
-# psql postgresql://ceres_user:password@localhost:5432/ceres_db \
-#   -f migrations/202511290001_init.sql
 ```
 
-> **💡 Tip**: This project includes a Makefile with convenient shortcuts. Run `make help` to see all available commands.
+> **Tip**: Run `make help` to see all available Makefile shortcuts.
 
 ## Usage
 
@@ -178,7 +156,8 @@ make migrate
 ```bash
 ceres harvest https://dati.comune.milano.it
 ```
-> **💡 Tip**: Running the first harvest commands fails and generates a pre-configured portals.toml if you didn't set it up before, now you can just run it again!
+
+> **Tip**: Running a harvest command for the first time without a config generates a pre-configured `portals.toml` automatically.
 
 ### Search indexed datasets
 
@@ -309,20 +288,10 @@ Contributions are welcome! See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for setup
 
 ## License
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+Apache-2.0 — see [LICENSE](LICENSE).
 
-    http://www.apache.org/licenses/LICENSE-2.0
+---
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-## Acknowledgments
-
-- [pgvector](https://github.com/pgvector/pgvector) — vector similarity for Postgres
-- [Google Gemini](https://ai.google.dev/) — embeddings API
-- [CKAN](https://ckan.org/) — the open source data portal platform
+<div align="center">
+  <sub>Built with <a href="https://github.com/pgvector/pgvector">pgvector</a>, <a href="https://ai.google.dev/">Google Gemini</a>, and <a href="https://ckan.org/">CKAN</a>.</sub>
+</div>
