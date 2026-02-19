@@ -359,6 +359,7 @@ pub trait DatasetStore: Send + Sync + Clone {
     /// * `portal_url` - The source portal URL
     /// * `sync_time` - The timestamp of this sync
     /// * `sync_mode` - Either "full" or "incremental"
+    ///   TODO(design): sync_mode/sync_status should be typed enums, not &str
     /// * `sync_status` - The outcome: "completed" or "cancelled"
     /// * `datasets_synced` - Number of datasets processed
     fn record_sync_status(

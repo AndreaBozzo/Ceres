@@ -12,6 +12,7 @@ version = "0.2.2"
 edition = "2024"
 authors = ["Andrea Bozzo"]
 license = "Apache-2.0"
+# TODO(build): ensure all crates inherit rust-version.workspace = true (#73)
 rust-version = "1.87"
 repository = "https://github.com/AndreaBozzo/Ceres"
 

@@ -578,10 +578,10 @@ mod tests {
         let result = CkanClient::new("not-a-valid-url");
         assert!(result.is_err());
 
-        if let Err(AppError::Generic(msg)) = result {
-            assert!(msg.contains("Invalid CKAN URL"));
+        if let Err(AppError::InvalidPortalUrl(url)) = result {
+            assert_eq!(url, "not-a-valid-url");
         } else {
-            panic!("Expected AppError::Generic");
+            panic!("Expected AppError::InvalidPortalUrl");
         }
     }
 

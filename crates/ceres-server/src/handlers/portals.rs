@@ -34,7 +34,7 @@ pub async fn list_portals(
     let mut portals = Vec::new();
 
     for portal in &config.portals {
-        // Get sync status for this portal
+        // TODO(correctness): .ok().flatten() silences DB errors — log or propagate (#108)
         let sync_status = state
             .dataset_repo
             .get_sync_status(&portal.url)

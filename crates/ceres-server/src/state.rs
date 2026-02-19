@@ -8,6 +8,7 @@ use ceres_db::{DatasetRepository, JobRepository};
 ///
 /// This is wrapped in Arc internally by Axum when using `with_state()`,
 /// so all fields must implement Clone (which they do via internal `Arc<Pool>`).
+// TODO(design): consider pub(crate) fields to enforce service-layer boundary
 #[derive(Clone)]
 pub struct AppState {
     /// Search service for semantic search operations

@@ -97,6 +97,7 @@ impl From<JobRow> for HarvestJob {
             id: row.id,
             portal_url: row.portal_url,
             portal_name: row.portal_name,
+            // TODO(correctness): log warning when unknown job status falls back to Pending
             status: row.status.parse().unwrap_or(JobStatus::Pending),
             created_at: row.created_at,
             updated_at: row.updated_at,

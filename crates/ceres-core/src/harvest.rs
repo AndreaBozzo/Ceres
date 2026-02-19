@@ -742,6 +742,7 @@ where
         match plan {
             SyncPlan::Full { ids } => {
                 let delta_detector = self.delta_detector.clone();
+                // TODO(perf): portal_url.to_string() allocates per-dataset — use Arc<str> like url_template_arc
                 let pre_processed = stream::iter(ids)
                     .map(|id| {
                         let portal_client = portal_client.clone();
@@ -857,6 +858,7 @@ where
             }
             SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
                 let delta_detector = self.delta_detector.clone();
+                // TODO(perf): portal_url.to_string() allocates per-dataset — use Arc<str> like url_template_arc
                 let pre_processed = stream::iter(datasets)
                     .map(|portal_data| {
                         let portal_url_owned = portal_url.to_string();
