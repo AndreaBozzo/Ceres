@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/images/logo.jpeg" alt="Ceres Logo" width="800" height='auto'/>
+  <img src="docs/assets/images/logo.png" alt="Ceres Logo" width="800" height='auto'/>
   <h1>Ceres</h1>
   <p><strong>Semantic search engine for open data portals</strong></p>
   <p>
