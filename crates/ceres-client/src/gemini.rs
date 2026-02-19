@@ -191,7 +191,7 @@ impl GeminiClient {
         let response = self
             .client
             .post(url)
-            .header("x-goog-api-key", self.api_key.clone())
+            .header("x-goog-api-key", self.api_key.as_str())
             .json(&request_body)
             .send()
             .await
@@ -278,7 +278,7 @@ impl GeminiClient {
         let response = self
             .client
             .post(url)
-            .header("x-goog-api-key", self.api_key.clone())
+            .header("x-goog-api-key", self.api_key.as_str())
             .json(&request_body)
             .send()
             .await

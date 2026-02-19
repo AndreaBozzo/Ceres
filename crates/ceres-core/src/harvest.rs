@@ -981,7 +981,7 @@ where
         let unchanged_list = unchanged_ids
             .lock()
             .ok()
-            .map(|g| g.clone())
+            .map(|g| g.to_vec())
             .unwrap_or_default();
         if !unchanged_list.is_empty() {
             tracing::info!(

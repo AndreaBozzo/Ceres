@@ -139,7 +139,9 @@ async fn main() -> anyhow::Result<()> {
     .context("Server error")?;
 
     // Wait for worker to finish
-    let _ = worker_handle.await;
+    if let Err(e) = worker_handle.await {
+        tracing::error!("Worker task failed: {:?}", e);
+    }
 
     info!("Server shutdown complete");
     Ok(())

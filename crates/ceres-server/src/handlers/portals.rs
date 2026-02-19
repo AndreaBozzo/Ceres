@@ -79,9 +79,7 @@ pub async fn get_portal_stats(
     };
 
     let portal = config
-        .portals
-        .iter()
-        .find(|p| p.name.to_lowercase() == name.to_lowercase())
+        .find_by_name(&name)
         .ok_or_else(|| ApiError::NotFound(format!("Portal not found: {}", name)))?;
 
     // Get sync status
@@ -142,9 +140,7 @@ pub async fn trigger_portal_harvest(
     };
 
     let portal = config
-        .portals
-        .iter()
-        .find(|p| p.name.to_lowercase() == name.to_lowercase())
+        .find_by_name(&name)
         .ok_or_else(|| ApiError::NotFound(format!("Portal not found: {}", name)))?;
 
     // Only CKAN portals are supported for job-based harvesting for now

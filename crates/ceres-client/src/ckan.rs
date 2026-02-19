@@ -153,7 +153,7 @@ impl CkanClient {
     // Add: pub async fn new_validated(url: &str) -> Result<Self, AppError>
     pub fn new(base_url_str: &str) -> Result<Self, AppError> {
         let base_url = Url::parse(base_url_str)
-            .map_err(|_| AppError::Generic(format!("Invalid CKAN URL: {}", base_url_str)))?;
+            .map_err(|_| AppError::InvalidPortalUrl(base_url_str.to_string()))?;
 
         let http_config = HttpConfig::default();
         let client = Client::builder()
@@ -822,12 +822,7 @@ impl ceres_core::traits::PortalClient for CkanClient {
 #[derive(Debug, Clone, Default)]
 pub struct CkanClientFactory;
 
-impl CkanClientFactory {
-    /// Creates a new CKAN client factory.
-    pub fn new() -> Self {
-        Self
-    }
-}
+impl CkanClientFactory {}
 
 impl ceres_core::traits::PortalClientFactory for CkanClientFactory {
     type Client = CkanClient;

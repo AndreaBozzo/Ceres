@@ -256,7 +256,10 @@ where
             .queue
             .release_worker_jobs(&self.config.worker_id)
             .await
-            .unwrap_or(0);
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to release worker jobs on shutdown: {}", e);
+                0
+            });
 
         worker_reporter.report(WorkerEvent::ShuttingDown {
             worker_id: &self.config.worker_id,
