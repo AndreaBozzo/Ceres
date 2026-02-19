@@ -263,19 +263,24 @@ RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
 
 For past releases, see the [CHANGELOG](CHANGELOG.md).
 
-### v0.3.0 — Extensibility & Production Readiness
+### v0.3.0 — Extensibility
 - Streaming harvest for large portals ([#85](https://github.com/AndreaBozzo/Ceres/issues/85))
 - Local embeddings via Ollama ([#79](https://github.com/AndreaBozzo/Ceres/issues/79))
 - Abstract PortalClient for Socrata / DCAT-AP support ([#61](https://github.com/AndreaBozzo/Ceres/issues/61))
 - Authentication middleware ([#72](https://github.com/AndreaBozzo/Ceres/issues/72))
 - Docker image ([#74](https://github.com/AndreaBozzo/Ceres/issues/74))
 - Delta detection improvements ([#51](https://github.com/AndreaBozzo/Ceres/issues/51), [#53](https://github.com/AndreaBozzo/Ceres/issues/53))
-- Integration test suite ([#29](https://github.com/AndreaBozzo/Ceres/issues/29))
+
+
+### v0.4.0 Multi-Tenancy, DCAT
+- Authentication middleware ([#72](https://github.com/AndreaBozzo/Ceres/issues/72))
+- Schema-level search ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
+- DCAT Client
+- More.
 
 ### Backlog
 - Schema-level search ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
 - Standalone library support ([#35](https://github.com/AndreaBozzo/Ceres/issues/35))
-- Cross-language semantic search
 - data.europa.eu integration
 
 ## Related Projects
