@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use pgvector::Vector;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::prelude::FromRow;
 use sqlx::types::Json;
@@ -197,64 +197,9 @@ pub struct DatabaseStats {
     pub last_update: Option<DateTime<Utc>>,
 }
 
-/// Portal configured in portals.toml.
-///
-/// Represents an open data portal configured for harvesting.
-/// Supports different portal types (CKAN, Socrata, DCAT).
-///
-/// # Examples
-///
-/// ```
-/// use ceres_core::Portal;
-///
-/// let json = r#"{
-///     "name": "Dati.gov.it",
-///     "url": "https://dati.gov.it",
-///     "type": "ckan",
-///     "description": "Italian national open data portal"
-/// }"#;
-///
-/// let portal: Portal = serde_json::from_str(json).unwrap();
-/// assert_eq!(portal.name, "Dati.gov.it");
-/// assert_eq!(portal.portal_type, "ckan");
-/// assert!(portal.enabled); // Default is true
-/// ```
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Portal {
-    /// Portal name (human-readable)
-    pub name: String,
-    /// Base URL of the portal
-    pub url: String,
-    /// Portal type ("ckan", "socrata", "dcat")
-    #[serde(rename = "type")]
-    pub portal_type: String,
-    /// Whether the portal is enabled for harvesting
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-    /// Optional portal description
-    pub description: Option<String>,
-}
-
-/// Default value for Portal.enabled field
-fn default_enabled() -> bool {
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_portal_default_enabled() {
-        let json = r#"{
-            "name": "Test Portal",
-            "url": "https://example.com",
-            "type": "ckan"
-        }"#;
-
-        let portal: Portal = serde_json::from_str(json).unwrap();
-        assert!(portal.enabled);
-    }
 
     #[test]
     fn test_new_dataset_creation() {

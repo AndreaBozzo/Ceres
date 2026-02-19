@@ -90,7 +90,7 @@ impl DatasetRepository {
         .bind(&new_data.title)
         .bind(&new_data.description)
         .bind(embedding_vector)
-        .bind(serde_json::to_value(&new_data.metadata).unwrap_or(serde_json::json!({})))
+        .bind(serde_json::to_value(&new_data.metadata)?)
         .bind(&new_data.content_hash)
         .fetch_one(&self.pool)
         .await
@@ -133,7 +133,7 @@ impl DatasetRepository {
             titles.push(d.title.clone());
             descriptions.push(d.description.clone());
             embeddings.push(d.embedding.clone());
-            metadatas.push(serde_json::to_value(&d.metadata).unwrap_or(serde_json::json!({})));
+            metadatas.push(serde_json::to_value(&d.metadata)?);
             content_hashes.push(d.content_hash.clone());
         }
 

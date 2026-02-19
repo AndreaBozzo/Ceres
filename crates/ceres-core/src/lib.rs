@@ -74,7 +74,7 @@ pub use error::AppError;
 pub use i18n::LocalizedField;
 
 // Domain models
-pub use models::{DatabaseStats, Dataset, NewDataset, Portal, SearchResult};
+pub use models::{DatabaseStats, Dataset, NewDataset, SearchResult};
 
 // Sync types and business logic
 pub use sync::{

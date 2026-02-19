@@ -436,15 +436,6 @@ where
                 );
                 Err(AppError::RateLimitExceeded)
             }
-            Err(e) if e.to_string().contains("429") => {
-                // Catch rate limit errors wrapped in ClientError too
-                tracing::warn!(
-                    portal = portal_url,
-                    error = %e,
-                    "Bulk fetch rate-limited, not falling back to ID-by-ID (would be worse)"
-                );
-                Err(AppError::RateLimitExceeded)
-            }
             Err(e) => {
                 tracing::info!(
                     portal = portal_url,
@@ -1089,10 +1080,10 @@ where
         // Collect texts for batch API call
         let texts: Vec<String> = needs_embed
             .iter()
-            .map(|p| p.text_to_embed.clone().unwrap())
+            .filter_map(|p| p.text_to_embed.clone())
             .collect();
 
-        let batch_size = needs_embed.len();
+        let batch_size = texts.len();
 
         match circuit_breaker
             .call(|| embedding.generate_batch(&texts))

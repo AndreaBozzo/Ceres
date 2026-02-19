@@ -22,7 +22,6 @@ serde_json.workspace = true
 
 # Domain types
 url.workspace = true
-pgvector.workspace = true
 
 # Async
 tokio.workspace = true

@@ -94,7 +94,10 @@ impl From<AppError> for ApiError {
             AppError::NetworkError(_) | AppError::Timeout(_) | AppError::ClientError(_) => {
                 ApiError::ServiceUnavailable("External service unavailable".to_string())
             }
-            _ => ApiError::Internal(err.to_string()),
+            _ => {
+                tracing::error!(error = %err, "Unhandled AppError mapped to 500");
+                ApiError::Internal("An internal error occurred".to_string())
+            }
         }
     }
 }

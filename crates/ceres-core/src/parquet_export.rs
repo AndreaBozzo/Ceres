@@ -275,7 +275,9 @@ impl<S: DatasetStore> ParquetExportService<S> {
             // Flush portal buffer when full
             if let Some(buf) = portal_buffers.get(&portal_key) {
                 if buf.len() >= self.config.batch_size {
-                    let buf = portal_buffers.remove(&portal_key).unwrap();
+                    let buf = portal_buffers
+                        .remove(&portal_key)
+                        .expect("buffer must exist: checked by get() above");
                     let batch = build_record_batch(&buf, &schema)?;
                     let (_, ref fname) = portal_info[&portal_key];
                     let writer = get_or_create_portal_writer(
@@ -542,7 +544,9 @@ fn get_or_create_portal_writer<'a>(
             .map_err(|e| AppError::Generic(format!("Failed to create ArrowWriter: {}", e)))?;
         writers.insert(portal_key.to_string(), writer);
     }
-    Ok(writers.get_mut(portal_key).unwrap())
+    Ok(writers
+        .get_mut(portal_key)
+        .expect("writer just inserted above"))
 }
 
 // =============================================================================

@@ -674,7 +674,6 @@ version = "0.2.2"
 dependencies = [
  "ceres-core",
  "chrono",
- "pgvector",
  "reqwest",
  "serde",
  "serde_json",
