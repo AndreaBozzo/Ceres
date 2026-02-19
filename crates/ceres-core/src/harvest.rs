@@ -71,11 +71,12 @@ use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError};
 use crate::config::PortalType;
 use crate::models::NewDataset;
 use crate::progress::{HarvestEvent, ProgressReporter, SilentReporter};
-use crate::sync::{AtomicSyncStats, SyncOutcome, SyncResult, SyncStatus};
+use crate::sync::{
+    AtomicSyncStats, ContentHashDetector, DeltaDetector, SyncOutcome, SyncResult, SyncStatus,
+};
 use crate::traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFactory};
 use crate::{
     AppError, BatchHarvestSummary, PortalEntry, PortalHarvestResult, SyncConfig, SyncStats,
-    needs_reprocessing,
 };
 
 /// A dataset that has been pre-processed (hash check, text extraction)
@@ -155,6 +156,7 @@ impl<PD: Send> SyncPlan<PD> {
 /// * `S` - Dataset store implementation (e.g., `DatasetRepository`)
 /// * `E` - Embedding provider implementation (e.g., `GeminiClient`)
 /// * `F` - Portal client factory implementation
+/// * `D` - Delta detector strategy (defaults to [`ContentHashDetector`])
 ///
 /// # Example
 ///
@@ -168,41 +170,47 @@ impl<PD: Send> SyncPlan<PD> {
 /// let stats = harvest_service.sync_portal("https://data.gov/api/3").await?;
 /// println!("Synced {} datasets ({} created)", stats.total(), stats.created);
 /// ```
-pub struct HarvestService<S, E, F>
+pub struct HarvestService<S, E, F, D = ContentHashDetector>
 where
     S: DatasetStore,
     E: EmbeddingProvider,
     F: PortalClientFactory,
+    D: DeltaDetector,
 {
     store: S,
     embedding: E,
     portal_factory: F,
+    delta_detector: D,
     config: SyncConfig,
 }
 
-impl<S, E, F> Clone for HarvestService<S, E, F>
+impl<S, E, F, D> Clone for HarvestService<S, E, F, D>
 where
     S: DatasetStore + Clone,
     E: EmbeddingProvider + Clone,
     F: PortalClientFactory + Clone,
+    D: DeltaDetector + Clone,
 {
     fn clone(&self) -> Self {
         Self {
             store: self.store.clone(),
             embedding: self.embedding.clone(),
             portal_factory: self.portal_factory.clone(),
+            delta_detector: self.delta_detector.clone(),
             config: self.config.clone(),
         }
     }
 }
 
-impl<S, E, F> HarvestService<S, E, F>
+impl<S, E, F> HarvestService<S, E, F, ContentHashDetector>
 where
     S: DatasetStore,
     E: EmbeddingProvider,
     F: PortalClientFactory,
 {
     /// Creates a new harvest service with default configuration.
+    ///
+    /// Uses [`ContentHashDetector`] as the default delta detection strategy.
     ///
     /// # Arguments
     ///
@@ -214,11 +222,14 @@ where
             store,
             embedding,
             portal_factory,
+            delta_detector: ContentHashDetector,
             config: SyncConfig::default(),
         }
     }
 
     /// Creates a harvest service with custom configuration.
+    ///
+    /// Uses [`ContentHashDetector`] as the default delta detection strategy.
     ///
     /// # Arguments
     ///
@@ -231,6 +242,40 @@ where
             store,
             embedding,
             portal_factory,
+            delta_detector: ContentHashDetector,
+            config,
+        }
+    }
+}
+
+impl<S, E, F, D> HarvestService<S, E, F, D>
+where
+    S: DatasetStore,
+    E: EmbeddingProvider,
+    F: PortalClientFactory,
+    D: DeltaDetector,
+{
+    /// Creates a harvest service with a custom delta detection strategy.
+    ///
+    /// # Arguments
+    ///
+    /// * `store` - Dataset store for persistence
+    /// * `embedding` - Embedding provider for vector generation
+    /// * `portal_factory` - Factory for creating portal clients
+    /// * `delta_detector` - Delta detection strategy
+    /// * `config` - Sync configuration (concurrency, etc.)
+    pub fn with_delta_detector(
+        store: S,
+        embedding: E,
+        portal_factory: F,
+        delta_detector: D,
+        config: SyncConfig,
+    ) -> Self {
+        Self {
+            store,
+            embedding,
+            portal_factory,
+            delta_detector,
             config,
         }
     }
@@ -696,6 +741,7 @@ where
 
         match plan {
             SyncPlan::Full { ids } => {
+                let delta_detector = self.delta_detector.clone();
                 let pre_processed = stream::iter(ids)
                     .map(|id| {
                         let portal_client = portal_client.clone();
@@ -708,6 +754,7 @@ where
                         let existing_hashes = existing_hashes.clone();
                         let unchanged_ids = Arc::clone(&unchanged_ids);
                         let processed_count = Arc::clone(&processed_count);
+                        let delta_detector = delta_detector.clone();
 
                         async move {
                             if cancel_token.is_cancelled() {
@@ -742,7 +789,7 @@ where
                                 url_template.as_deref(),
                                 &language,
                             );
-                            let decision = needs_reprocessing(
+                            let decision = delta_detector.needs_reprocessing(
                                 existing_hashes.get(&new_dataset.original_id),
                                 &new_dataset.content_hash,
                             );
@@ -779,9 +826,9 @@ where
                                     })
                                 }
                                 SyncOutcome::Failed | SyncOutcome::Skipped => {
-                                    unreachable!(
-                                        "needs_reprocessing never returns Failed or Skipped"
-                                    )
+                                    stats.record(decision.outcome);
+                                    processed_count.fetch_add(1, Ordering::Relaxed);
+                                    None
                                 }
                             }
                         }
@@ -809,6 +856,7 @@ where
                 }
             }
             SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
+                let delta_detector = self.delta_detector.clone();
                 let pre_processed = stream::iter(datasets)
                     .map(|portal_data| {
                         let portal_url_owned = portal_url.to_string();
@@ -820,6 +868,7 @@ where
                         let was_cancelled = Arc::clone(&was_cancelled);
                         let stats = Arc::clone(&stats);
                         let processed_count = Arc::clone(&processed_count);
+                        let delta_detector = delta_detector.clone();
 
                         async move {
                             if cancel_token.is_cancelled() {
@@ -833,7 +882,7 @@ where
                                 url_template.as_deref(),
                                 &language,
                             );
-                            let decision = needs_reprocessing(
+                            let decision = delta_detector.needs_reprocessing(
                                 existing_hashes.get(&new_dataset.original_id),
                                 &new_dataset.content_hash,
                             );
@@ -870,9 +919,9 @@ where
                                     })
                                 }
                                 SyncOutcome::Failed | SyncOutcome::Skipped => {
-                                    unreachable!(
-                                        "needs_reprocessing never returns Failed or Skipped"
-                                    )
+                                    stats.record(decision.outcome);
+                                    processed_count.fetch_add(1, Ordering::Relaxed);
+                                    None
                                 }
                             }
                         }
