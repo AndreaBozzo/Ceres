@@ -283,6 +283,23 @@ pub trait DatasetStore: Send + Sync + Clone {
     /// The UUID of the affected row.
     fn upsert(&self, dataset: &NewDataset) -> impl Future<Output = Result<Uuid, AppError>> + Send;
 
+    /// Batch upserts multiple datasets in a single operation.
+    ///
+    /// Much faster than calling `upsert` in a loop because it reduces
+    /// database round-trips and amortizes index update costs.
+    ///
+    /// # Arguments
+    ///
+    /// * `datasets` - Slice of datasets to upsert
+    ///
+    /// # Returns
+    ///
+    /// The UUIDs of all affected rows.
+    fn batch_upsert(
+        &self,
+        datasets: &[NewDataset],
+    ) -> impl Future<Output = Result<Vec<Uuid>, AppError>> + Send;
+
     /// Performs vector similarity search.
     ///
     /// # Arguments

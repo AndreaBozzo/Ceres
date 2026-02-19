@@ -984,6 +984,11 @@ where
             .map(|g| g.clone())
             .unwrap_or_default();
         if !unchanged_list.is_empty() {
+            tracing::info!(
+                portal = portal_url,
+                count = unchanged_list.len(),
+                "Finalizing: updating timestamps for unchanged datasets..."
+            );
             if let Err(e) = self
                 .store
                 .batch_update_timestamps(portal_url, &unchanged_list)
@@ -1008,6 +1013,11 @@ where
         };
 
         // Record sync status
+        tracing::info!(
+            portal = portal_url,
+            status = status.as_str(),
+            "Finalizing: recording sync status..."
+        );
         if let Err(e) = self
             .store
             .record_sync_status(
@@ -1035,7 +1045,7 @@ where
     }
 
     /// Processes a batch of pre-processed datasets: generates embeddings in a
-    /// single API call through the circuit breaker, then upserts all datasets.
+    /// single API call through the circuit breaker, then batch-upserts all datasets.
     async fn process_embedding_batch(
         batch: Vec<PreProcessedDataset>,
         embedding: &E,
@@ -1047,17 +1057,25 @@ where
         let (needs_embed, no_embed): (Vec<_>, Vec<_>) =
             batch.into_iter().partition(|p| p.text_to_embed.is_some());
 
-        // Upsert items that don't need embedding immediately
-        for item in no_embed {
-            match store.upsert(&item.dataset).await {
-                Ok(_) => stats.record(item.outcome),
+        // Batch upsert items that don't need embedding
+        if !no_embed.is_empty() {
+            let outcomes: Vec<SyncOutcome> = no_embed.iter().map(|i| i.outcome).collect();
+            let datasets: Vec<NewDataset> = no_embed.into_iter().map(|i| i.dataset).collect();
+            match store.batch_upsert(&datasets).await {
+                Ok(_) => {
+                    for outcome in outcomes {
+                        stats.record(outcome);
+                    }
+                }
                 Err(e) => {
                     tracing::warn!(
-                        dataset_id = %item.dataset.original_id,
+                        count = datasets.len(),
                         error = %e,
-                        "Failed to upsert dataset"
+                        "Failed to batch upsert datasets (no embedding)"
                     );
-                    stats.record(SyncOutcome::Failed);
+                    for _ in 0..datasets.len() {
+                        stats.record(SyncOutcome::Failed);
+                    }
                 }
             }
         }
@@ -1090,17 +1108,27 @@ where
                     }
                     return;
                 }
-                // Assign embeddings and upsert each dataset
+                // Assign embeddings and batch upsert all datasets at once
+                let mut outcomes = Vec::with_capacity(batch_size);
+                let mut datasets = Vec::with_capacity(batch_size);
                 for (mut item, emb) in needs_embed.into_iter().zip(embeddings) {
                     item.dataset.embedding = Some(Vector::from(emb));
-                    match store.upsert(&item.dataset).await {
-                        Ok(_) => stats.record(item.outcome),
-                        Err(e) => {
-                            tracing::warn!(
-                                dataset_id = %item.dataset.original_id,
-                                error = %e,
-                                "Failed to upsert dataset"
-                            );
+                    outcomes.push(item.outcome);
+                    datasets.push(item.dataset);
+                }
+                match store.batch_upsert(&datasets).await {
+                    Ok(_) => {
+                        for outcome in outcomes {
+                            stats.record(outcome);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            count = datasets.len(),
+                            error = %e,
+                            "Failed to batch upsert datasets with embeddings"
+                        );
+                        for _ in 0..datasets.len() {
                             stats.record(SyncOutcome::Failed);
                         }
                     }

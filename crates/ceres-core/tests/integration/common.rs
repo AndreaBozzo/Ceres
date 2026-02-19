@@ -364,6 +364,14 @@ impl DatasetStore for MockDatasetStore {
         Ok(id)
     }
 
+    async fn batch_upsert(&self, datasets: &[NewDataset]) -> Result<Vec<Uuid>, AppError> {
+        let mut ids = Vec::with_capacity(datasets.len());
+        for dataset in datasets {
+            ids.push(self.upsert(dataset).await?);
+        }
+        Ok(ids)
+    }
+
     async fn search(
         &self,
         _query_vector: Vector,

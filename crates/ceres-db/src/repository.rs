@@ -99,6 +99,96 @@ impl DatasetRepository {
         Ok(rec.0)
     }
 
+    /// Batch upserts multiple datasets in a single SQL statement using UNNEST.
+    ///
+    /// This is significantly faster than individual upserts because it:
+    /// - Reduces round-trips to the database from N to 1
+    /// - Amortizes HNSW index update cost across the batch
+    ///
+    /// Returns the UUIDs of all affected rows.
+    pub async fn batch_upsert(&self, datasets: &[NewDataset]) -> Result<Vec<Uuid>, AppError> {
+        if datasets.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // For single items, fall back to regular upsert to avoid UNNEST overhead
+        if datasets.len() == 1 {
+            let id = self.upsert(&datasets[0]).await?;
+            return Ok(vec![id]);
+        }
+
+        let mut original_ids: Vec<String> = Vec::with_capacity(datasets.len());
+        let mut source_portals: Vec<String> = Vec::with_capacity(datasets.len());
+        let mut urls: Vec<String> = Vec::with_capacity(datasets.len());
+        let mut titles: Vec<String> = Vec::with_capacity(datasets.len());
+        let mut descriptions: Vec<Option<String>> = Vec::with_capacity(datasets.len());
+        let mut embeddings: Vec<Option<Vector>> = Vec::with_capacity(datasets.len());
+        let mut metadatas: Vec<serde_json::Value> = Vec::with_capacity(datasets.len());
+        let mut content_hashes: Vec<String> = Vec::with_capacity(datasets.len());
+
+        for d in datasets {
+            original_ids.push(d.original_id.clone());
+            source_portals.push(d.source_portal.clone());
+            urls.push(d.url.clone());
+            titles.push(d.title.clone());
+            descriptions.push(d.description.clone());
+            embeddings.push(d.embedding.clone());
+            metadatas.push(serde_json::to_value(&d.metadata).unwrap_or(serde_json::json!({})));
+            content_hashes.push(d.content_hash.clone());
+        }
+
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            r#"
+            INSERT INTO datasets (
+                original_id,
+                source_portal,
+                url,
+                title,
+                description,
+                embedding,
+                metadata,
+                content_hash,
+                last_updated_at
+            )
+            SELECT * FROM UNNEST(
+                $1::varchar[],
+                $2::varchar[],
+                $3::varchar[],
+                $4::text[],
+                $5::text[],
+                $6::vector[],
+                $7::jsonb[],
+                $8::varchar[],
+                (SELECT array_agg(NOW()) FROM generate_series(1, $9))::timestamptz[]
+            )
+            ON CONFLICT (source_portal, original_id)
+            DO UPDATE SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                url = EXCLUDED.url,
+                embedding = COALESCE(EXCLUDED.embedding, datasets.embedding),
+                metadata = EXCLUDED.metadata,
+                content_hash = EXCLUDED.content_hash,
+                last_updated_at = NOW()
+            RETURNING id
+            "#,
+        )
+        .bind(&original_ids)
+        .bind(&source_portals)
+        .bind(&urls)
+        .bind(&titles)
+        .bind(&descriptions)
+        .bind(&embeddings)
+        .bind(&metadatas)
+        .bind(&content_hashes)
+        .bind(datasets.len() as i32)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
     /// Returns a map of original_id → content_hash for all datasets from a portal.
     ///
     /// TODO(performance): Optimize for large portals (100k+ datasets)
@@ -154,8 +244,8 @@ impl DatasetRepository {
 
     /// Batch updates timestamps for multiple unchanged datasets.
     ///
-    /// Uses a single UPDATE with ANY() for efficiency instead of N individual updates.
-    /// Returns the number of rows actually updated.
+    /// Chunks the IDs into groups of 500 to avoid oversized queries and long locks.
+    /// Returns the total number of rows actually updated.
     pub async fn batch_update_timestamps(
         &self,
         portal_url: &str,
@@ -165,20 +255,27 @@ impl DatasetRepository {
             return Ok(0);
         }
 
-        let result = sqlx::query(
-            r#"
-            UPDATE datasets
-            SET last_updated_at = NOW()
-            WHERE source_portal = $1 AND original_id = ANY($2)
-            "#,
-        )
-        .bind(portal_url)
-        .bind(original_ids)
-        .execute(&self.pool)
-        .await
-        .map_err(AppError::DatabaseError)?;
+        const CHUNK_SIZE: usize = 500;
+        let mut total_affected = 0u64;
 
-        Ok(result.rows_affected())
+        for chunk in original_ids.chunks(CHUNK_SIZE) {
+            let result = sqlx::query(
+                r#"
+                UPDATE datasets
+                SET last_updated_at = NOW()
+                WHERE source_portal = $1 AND original_id = ANY($2)
+                "#,
+            )
+            .bind(portal_url)
+            .bind(chunk)
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::DatabaseError)?;
+
+            total_affected += result.rows_affected();
+        }
+
+        Ok(total_affected)
     }
 
     /// Retrieves a dataset by UUID.
@@ -614,6 +711,10 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
 
     async fn upsert(&self, dataset: &NewDataset) -> Result<Uuid, AppError> {
         DatasetRepository::upsert(self, dataset).await
+    }
+
+    async fn batch_upsert(&self, datasets: &[NewDataset]) -> Result<Vec<Uuid>, AppError> {
+        DatasetRepository::batch_upsert(self, datasets).await
     }
 
     async fn search(
