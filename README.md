@@ -267,7 +267,6 @@ For past releases, see the [CHANGELOG](CHANGELOG.md).
 - Streaming harvest for large portals ([#85](https://github.com/AndreaBozzo/Ceres/issues/85))
 - Local embeddings via Ollama ([#79](https://github.com/AndreaBozzo/Ceres/issues/79))
 - Abstract PortalClient for Socrata / DCAT-AP support ([#61](https://github.com/AndreaBozzo/Ceres/issues/61))
-- Authentication middleware ([#72](https://github.com/AndreaBozzo/Ceres/issues/72))
 - Docker image ([#74](https://github.com/AndreaBozzo/Ceres/issues/74))
 - Delta detection improvements ([#51](https://github.com/AndreaBozzo/Ceres/issues/51), [#53](https://github.com/AndreaBozzo/Ceres/issues/53))
 
