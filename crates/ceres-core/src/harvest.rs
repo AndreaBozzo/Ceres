@@ -63,8 +63,6 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
-use pgvector::Vector;
-
 use tokio_util::sync::CancellationToken;
 
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError};
@@ -1105,7 +1103,7 @@ where
                 let mut outcomes = Vec::with_capacity(batch_size);
                 let mut datasets = Vec::with_capacity(batch_size);
                 for (mut item, emb) in needs_embed.into_iter().zip(embeddings) {
-                    item.dataset.embedding = Some(Vector::from(emb));
+                    item.dataset.embedding = Some(emb);
                     outcomes.push(item.outcome);
                     datasets.push(item.dataset);
                 }

@@ -11,7 +11,6 @@
 //!
 //! ```
 //! use ceres_core::traits::{EmbeddingProvider, DatasetStore};
-//! use pgvector::Vector;
 //!
 //! // Business logic uses traits, not concrete types
 //! async fn search_datasets<E, S>(
@@ -23,7 +22,7 @@
 //!     E: EmbeddingProvider,
 //!     S: DatasetStore,
 //! {
-//!     let vector: Vector = embedding.generate(query).await?.into();
+//!     let vector: Vec<f32> = embedding.generate(query).await?;
 //!     store.search(vector, 10).await
 //! }
 //! ```
@@ -33,7 +32,6 @@ use std::future::Future;
 
 use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
-use pgvector::Vector;
 use uuid::Uuid;
 
 use crate::config::PortalType;
@@ -312,7 +310,7 @@ pub trait DatasetStore: Send + Sync + Clone {
     /// Datasets ranked by similarity score (highest first).
     fn search(
         &self,
-        query_vector: Vector,
+        query_vector: Vec<f32>,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<SearchResult>, AppError>> + Send;
 

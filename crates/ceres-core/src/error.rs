@@ -9,10 +9,9 @@ use thiserror::Error;
 /// # Error Conversion
 ///
 /// Most errors automatically convert from their source types using the `#[from]` attribute:
-/// - `sqlx::Error` → `AppError::DatabaseError`
-/// - `reqwest::Error` → `AppError::ClientError`
 /// - `serde_json::Error` → `AppError::SerializationError`
-/// - `url::ParseError` → `AppError::InvalidUrl`
+///
+/// Database errors are converted explicitly in the database layer.
 ///
 /// # Examples
 ///
@@ -80,10 +79,10 @@ impl std::fmt::Display for GeminiErrorDetails {
 pub enum AppError {
     /// Database operation failed.
     ///
-    /// This error wraps all errors from SQLx database operations, including
-    /// connection failures, query errors, and constraint violations.
+    /// This error wraps database operation failures as plain strings,
+    /// keeping the domain layer independent of any specific database library.
     #[error("Database error: {0}")]
-    DatabaseError(#[from] sqlx::Error),
+    DatabaseError(String),
 
     /// HTTP client request failed.
     ///
@@ -451,10 +450,9 @@ mod tests {
 
     #[test]
     fn test_user_message_database_connection() {
-        // PoolTimedOut message contains "connection", so it triggers the connection error branch
-        let err = AppError::DatabaseError(sqlx::Error::PoolTimedOut);
+        let err = AppError::DatabaseError("Pool timed out: connection".to_string());
         let msg = err.user_message();
-        assert!(msg.contains("Cannot connect to database") || msg.contains("Database error"));
+        assert!(msg.contains("Cannot connect to database"));
     }
 
     #[test]

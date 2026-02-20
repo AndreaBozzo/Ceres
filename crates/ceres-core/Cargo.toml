@@ -21,10 +21,6 @@ thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 
-# Database types (for Vector in models)
-pgvector.workspace = true
-sqlx.workspace = true
-
 # Hashing for delta detection
 sha2.workspace = true
 

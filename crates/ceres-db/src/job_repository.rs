@@ -138,7 +138,8 @@ impl JobQueue for JobRepository {
         .bind(&request.url_template)
         .bind(&request.language)
         .fetch_one(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(row.into())
     }
@@ -175,7 +176,8 @@ impl JobQueue for JobRepository {
         )
         .bind(worker_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(row.map(Into::into))
     }
@@ -200,7 +202,8 @@ impl JobQueue for JobRepository {
         .bind(job_id)
         .bind(stats_json)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }
@@ -240,7 +243,8 @@ impl JobQueue for JobRepository {
         .bind(next_retry_at)
         .bind(should_increment)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }
@@ -267,7 +271,8 @@ impl JobQueue for JobRepository {
         .bind(job_id)
         .bind(stats_json)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }
@@ -276,7 +281,8 @@ impl JobQueue for JobRepository {
         let row: Option<JobRow> = sqlx::query_as("SELECT * FROM harvest_jobs WHERE id = $1")
             .bind(job_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(row.map(Into::into))
     }
@@ -298,7 +304,8 @@ impl JobQueue for JobRepository {
             .bind(s.as_str())
             .bind(limit as i64)
             .fetch_all(&self.pool)
-            .await?
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?
         } else {
             sqlx::query_as(
                 r#"
@@ -309,7 +316,8 @@ impl JobQueue for JobRepository {
             )
             .bind(limit as i64)
             .fetch_all(&self.pool)
-            .await?
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?
         };
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -329,7 +337,8 @@ impl JobQueue for JobRepository {
         )
         .bind(job_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }
@@ -348,7 +357,8 @@ impl JobQueue for JobRepository {
         )
         .bind(worker_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(result.rows_affected())
     }
@@ -358,7 +368,8 @@ impl JobQueue for JobRepository {
             sqlx::query_as("SELECT COUNT(*) FROM harvest_jobs WHERE status = $1")
                 .bind(status.as_str())
                 .fetch_one(&self.pool)
-                .await?;
+                .await
+                .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(count)
     }
