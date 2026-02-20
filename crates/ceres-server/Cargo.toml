@@ -52,6 +52,9 @@ tracing-subscriber.workspace = true
 clap.workspace = true
 dotenvy.workspace = true
 
+# Security
+subtle = "2"
+
 # Utilities
 uuid.workspace = true
 chrono.workspace = true
