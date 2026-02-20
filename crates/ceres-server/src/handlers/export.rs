@@ -25,8 +25,11 @@ use crate::state::AppState;
     responses(
         (status = 200, description = "Dataset export stream"),
         (status = 400, description = "Invalid format"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden (admin endpoints disabled)"),
         (status = 500, description = "Internal server error"),
     ),
+    security(("bearer" = [])),
     tag = "export"
 )]
 pub async fn export_datasets(

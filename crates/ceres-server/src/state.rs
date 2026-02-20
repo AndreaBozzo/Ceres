@@ -32,6 +32,9 @@ pub struct AppState {
 
     /// Cancellation token for graceful shutdown
     pub shutdown_token: CancellationToken,
+
+    /// Admin API key for protecting write endpoints (None = admin endpoints disabled)
+    pub admin_token: Option<String>,
 }
 
 impl AppState {
@@ -41,6 +44,7 @@ impl AppState {
         embedding_client: EmbeddingProviderEnum,
         portals_config: Option<PortalsConfig>,
         shutdown_token: CancellationToken,
+        admin_token: Option<String>,
     ) -> Self {
         let dataset_repo = DatasetRepository::new(pool.clone());
         let job_repo = JobRepository::new(pool);
@@ -58,6 +62,7 @@ impl AppState {
             job_repo,
             portals_config,
             shutdown_token,
+            admin_token,
         }
     }
 }

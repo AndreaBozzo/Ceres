@@ -82,12 +82,20 @@ async fn main() -> anyhow::Result<()> {
     // Create shutdown token for graceful shutdown
     let shutdown_token = CancellationToken::new();
 
+    // Log authentication status
+    if config.admin_token.is_some() {
+        info!("Admin authentication: enabled");
+    } else {
+        info!("Admin authentication: disabled (set CERES_ADMIN_TOKEN to enable)");
+    }
+
     // Create application state
     let app_state = AppState::new(
         pool,
         embedding_client,
         portals_config,
         shutdown_token.clone(),
+        config.admin_token.clone(),
     );
 
     // Build router with rate limiting and CORS configuration

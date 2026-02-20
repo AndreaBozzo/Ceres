@@ -19,8 +19,11 @@ use crate::state::AppState;
     responses(
         (status = 202, description = "Harvest jobs created", body = Vec<HarvestJobResponse>),
         (status = 400, description = "No portals configured"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden (admin endpoints disabled)"),
         (status = 500, description = "Internal server error"),
     ),
+    security(("bearer" = [])),
     tag = "harvest"
 )]
 pub async fn trigger_harvest_all(

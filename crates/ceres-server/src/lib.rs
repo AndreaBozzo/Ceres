@@ -12,6 +12,7 @@
 //! When running the server, interactive API documentation is available
 //! at `/swagger-ui`.
 
+pub mod auth;
 pub mod config;
 pub mod dto;
 pub mod error;
