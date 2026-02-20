@@ -133,7 +133,7 @@ impl DatasetRepository {
             titles.push(d.title.clone());
             descriptions.push(d.description.clone());
             embeddings.push(d.embedding.as_ref().map(|v| Vector::from(v.clone())));
-            metadatas.push(serde_json::to_value(&d.metadata)?);
+            metadatas.push(d.metadata.clone());
             content_hashes.push(d.content_hash.clone());
         }
 
