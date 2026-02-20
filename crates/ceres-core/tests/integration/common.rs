@@ -11,8 +11,6 @@ use ceres_core::traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalCl
 use ceres_core::{AppError, Dataset, SearchResult};
 use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
-use pgvector::Vector;
-use sqlx::types::Json;
 use uuid::Uuid;
 
 // =============================================================================
@@ -297,7 +295,7 @@ impl DatasetStore for MockDatasetStore {
                     title: stored.dataset.title.clone(),
                     description: stored.dataset.description.clone(),
                     embedding: stored.dataset.embedding.clone(),
-                    metadata: Json(stored.dataset.metadata.clone()),
+                    metadata: stored.dataset.metadata.clone(),
                     first_seen_at: chrono::Utc::now(),
                     last_updated_at: chrono::Utc::now(),
                     content_hash: Some(stored.dataset.content_hash.clone()),
@@ -374,7 +372,7 @@ impl DatasetStore for MockDatasetStore {
 
     async fn search(
         &self,
-        _query_vector: Vector,
+        _query_vector: Vec<f32>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
         // Simple mock: return first `limit` datasets with fake similarity scores
@@ -394,7 +392,7 @@ impl DatasetStore for MockDatasetStore {
                         title: stored.dataset.title.clone(),
                         description: stored.dataset.description.clone(),
                         embedding: stored.dataset.embedding.clone(),
-                        metadata: Json(stored.dataset.metadata.clone()),
+                        metadata: stored.dataset.metadata.clone(),
                         first_seen_at: chrono::Utc::now(),
                         last_updated_at: chrono::Utc::now(),
                         content_hash: Some(stored.dataset.content_hash.clone()),
@@ -426,7 +424,7 @@ impl DatasetStore for MockDatasetStore {
                     title: stored.dataset.title.clone(),
                     description: stored.dataset.description.clone(),
                     embedding: stored.dataset.embedding.clone(),
-                    metadata: Json(stored.dataset.metadata.clone()),
+                    metadata: stored.dataset.metadata.clone(),
                     first_seen_at: chrono::Utc::now(),
                     last_updated_at: chrono::Utc::now(),
                     content_hash: Some(stored.dataset.content_hash.clone()),

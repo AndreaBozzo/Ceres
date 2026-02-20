@@ -4,7 +4,6 @@
 //! with pgvector extension for each test.
 
 use ceres_core::models::NewDataset;
-use pgvector::Vector;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use testcontainers::core::{ContainerPort, WaitFor};
@@ -122,7 +121,7 @@ pub fn sample_new_dataset(id: &str, portal: &str) -> NewDataset {
         url: format!("{}/dataset/{}", portal, id),
         title,
         description,
-        embedding: Some(Vector::from(embedding_vec)),
+        embedding: Some(embedding_vec),
         metadata: serde_json::json!({
             "test": true,
             "id": id
@@ -135,9 +134,8 @@ pub fn sample_new_dataset(id: &str, portal: &str) -> NewDataset {
 ///
 /// Useful for testing vector similarity search with varied embeddings.
 #[allow(dead_code)]
-pub fn random_vector(dims: usize) -> Vector {
+pub fn random_vector(dims: usize) -> Vec<f32> {
     use rand::Rng;
     let mut rng = rand::rng();
-    let vec: Vec<f32> = (0..dims).map(|_| rng.random::<f32>()).collect();
-    Vector::from(vec)
+    (0..dims).map(|_| rng.random::<f32>()).collect()
 }

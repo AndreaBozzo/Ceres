@@ -263,7 +263,7 @@ impl From<ceres_core::Dataset> for DatasetResponse {
             url: d.url,
             title: d.title,
             description: d.description,
-            metadata: d.metadata.0,
+            metadata: d.metadata,
             first_seen_at: d.first_seen_at,
             last_updated_at: d.last_updated_at,
         }

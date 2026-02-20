@@ -279,7 +279,7 @@ fn create_export_record(dataset: &Dataset) -> ExportRecord {
         url: dataset.url.clone(),
         title: dataset.title.clone(),
         description: dataset.description.clone(),
-        metadata: dataset.metadata.0.clone(),
+        metadata: dataset.metadata.clone(),
         first_seen_at: dataset.first_seen_at,
         last_updated_at: dataset.last_updated_at,
     }

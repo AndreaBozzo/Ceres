@@ -56,7 +56,7 @@ impl DatasetRepository {
     /// Consider: `pub enum UpsertOutcome { Created(Uuid), Updated(Uuid) }`
     /// This enables accurate progress reporting in sync statistics.
     pub async fn upsert(&self, new_data: &NewDataset) -> Result<Uuid, AppError> {
-        let embedding_vector = new_data.embedding.as_ref().cloned();
+        let embedding_vector = new_data.embedding.as_ref().map(|v| Vector::from(v.clone()));
 
         let rec: (Uuid,) = sqlx::query_as(
             r#"
@@ -94,7 +94,7 @@ impl DatasetRepository {
         .bind(&new_data.content_hash)
         .fetch_one(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(rec.0)
     }
@@ -132,8 +132,8 @@ impl DatasetRepository {
             urls.push(d.url.clone());
             titles.push(d.title.clone());
             descriptions.push(d.description.clone());
-            embeddings.push(d.embedding.clone());
-            metadatas.push(serde_json::to_value(&d.metadata)?);
+            embeddings.push(d.embedding.as_ref().map(|v| Vector::from(v.clone())));
+            metadatas.push(d.metadata.clone());
             content_hashes.push(d.content_hash.clone());
         }
 
@@ -184,7 +184,7 @@ impl DatasetRepository {
         .bind(datasets.len() as i32)
         .fetch_all(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
@@ -210,7 +210,7 @@ impl DatasetRepository {
         .bind(portal_url)
         .fetch_all(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         let hash_map: HashMap<String, Option<String>> = rows
             .into_iter()
@@ -237,7 +237,7 @@ impl DatasetRepository {
         .bind(original_id)
         .execute(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -270,7 +270,7 @@ impl DatasetRepository {
             .bind(chunk)
             .execute(&self.pool)
             .await
-            .map_err(AppError::DatabaseError)?;
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
             total_affected += result.rows_affected();
         }
@@ -281,31 +281,32 @@ impl DatasetRepository {
     /// Retrieves a dataset by UUID.
     pub async fn get(&self, id: Uuid) -> Result<Option<Dataset>, AppError> {
         let query = format!("SELECT {} FROM datasets WHERE id = $1", DATASET_COLUMNS);
-        let result = sqlx::query_as::<_, Dataset>(&query)
+        let result = sqlx::query_as::<_, DatasetRow>(&query)
             .bind(id)
             .fetch_optional(&self.pool)
             .await
-            .map_err(AppError::DatabaseError)?;
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        Ok(result)
+        Ok(result.map(Dataset::from))
     }
 
     /// Semantic search using cosine similarity. Returns results ordered by similarity.
     pub async fn search(
         &self,
-        query_vector: Vector,
+        query_vector: Vec<f32>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
+        let pg_vector = Vector::from(query_vector);
         let query = format!(
             "SELECT {}, 1 - (embedding <=> $1) as similarity_score FROM datasets WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2",
             DATASET_COLUMNS
         );
         let results = sqlx::query_as::<_, SearchResultRow>(&query)
-            .bind(query_vector)
+            .bind(pg_vector)
             .bind(limit as i64)
             .fetch_all(&self.pool)
             .await
-            .map_err(AppError::DatabaseError)?;
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(results
             .into_iter()
@@ -317,8 +318,8 @@ impl DatasetRepository {
                     url: row.url,
                     title: row.title,
                     description: row.description,
-                    embedding: row.embedding,
-                    metadata: row.metadata,
+                    embedding: row.embedding.map(|v| v.to_vec()),
+                    metadata: row.metadata.0,
                     first_seen_at: row.first_seen_at,
                     last_updated_at: row.last_updated_at,
                     content_hash: row.content_hash,
@@ -342,30 +343,30 @@ impl DatasetRepository {
         // TODO(config): Read default from DEFAULT_EXPORT_LIMIT env var
         let limit_val = limit.unwrap_or(10000) as i64;
 
-        let datasets = if let Some(portal) = portal_filter {
+        let rows = if let Some(portal) = portal_filter {
             let query = format!(
                 "SELECT {} FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2",
                 DATASET_COLUMNS
             );
-            sqlx::query_as::<_, Dataset>(&query)
+            sqlx::query_as::<_, DatasetRow>(&query)
                 .bind(portal)
                 .bind(limit_val)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(AppError::DatabaseError)?
+                .map_err(|e| AppError::DatabaseError(e.to_string()))?
         } else {
             let query = format!(
                 "SELECT {} FROM datasets ORDER BY last_updated_at DESC LIMIT $1",
                 DATASET_COLUMNS
             );
-            sqlx::query_as::<_, Dataset>(&query)
+            sqlx::query_as::<_, DatasetRow>(&query)
                 .bind(limit_val)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(AppError::DatabaseError)?
+                .map_err(|e| AppError::DatabaseError(e.to_string()))?
         };
 
-        Ok(datasets)
+        Ok(rows.into_iter().map(Dataset::from).collect())
     }
 
     /// Lists datasets as a stream with optional portal filter.
@@ -384,28 +385,40 @@ impl DatasetRepository {
     ) -> BoxStream<'a, Result<Dataset, AppError>> {
         match (portal_filter, limit) {
             (Some(portal), Some(lim)) => Box::pin(
-                sqlx::query_as::<_, Dataset>(LIST_ALL_PORTAL_LIMIT_QUERY)
+                sqlx::query_as::<_, DatasetRow>(LIST_ALL_PORTAL_LIMIT_QUERY)
                     .bind(portal)
                     .bind(lim as i64)
                     .fetch(&self.pool)
-                    .map(|r| r.map_err(AppError::DatabaseError)),
+                    .map(|r| {
+                        r.map_err(|e| AppError::DatabaseError(e.to_string()))
+                            .map(Dataset::from)
+                    }),
             ),
             (Some(portal), None) => Box::pin(
-                sqlx::query_as::<_, Dataset>(LIST_ALL_PORTAL_QUERY)
+                sqlx::query_as::<_, DatasetRow>(LIST_ALL_PORTAL_QUERY)
                     .bind(portal)
                     .fetch(&self.pool)
-                    .map(|r| r.map_err(AppError::DatabaseError)),
+                    .map(|r| {
+                        r.map_err(|e| AppError::DatabaseError(e.to_string()))
+                            .map(Dataset::from)
+                    }),
             ),
             (None, Some(lim)) => Box::pin(
-                sqlx::query_as::<_, Dataset>(LIST_ALL_LIMIT_QUERY)
+                sqlx::query_as::<_, DatasetRow>(LIST_ALL_LIMIT_QUERY)
                     .bind(lim as i64)
                     .fetch(&self.pool)
-                    .map(|r| r.map_err(AppError::DatabaseError)),
+                    .map(|r| {
+                        r.map_err(|e| AppError::DatabaseError(e.to_string()))
+                            .map(Dataset::from)
+                    }),
             ),
             (None, None) => Box::pin(
-                sqlx::query_as::<_, Dataset>(LIST_ALL_QUERY)
+                sqlx::query_as::<_, DatasetRow>(LIST_ALL_QUERY)
                     .fetch(&self.pool)
-                    .map(|r| r.map_err(AppError::DatabaseError)),
+                    .map(|r| {
+                        r.map_err(|e| AppError::DatabaseError(e.to_string()))
+                            .map(Dataset::from)
+                    }),
             ),
         }
     }
@@ -430,7 +443,7 @@ impl DatasetRepository {
         .bind(portal_url)
         .fetch_optional(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(result)
     }
@@ -478,7 +491,7 @@ impl DatasetRepository {
         .bind(datasets_synced)
         .execute(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }
@@ -488,7 +501,7 @@ impl DatasetRepository {
         sqlx::query("SELECT 1")
             .execute(&self.pool)
             .await
-            .map_err(AppError::DatabaseError)?;
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -509,7 +522,7 @@ impl DatasetRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(result)
     }
@@ -569,7 +582,7 @@ impl DatasetRepository {
         .bind(dimension as i32)
         .execute(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }
@@ -588,7 +601,7 @@ impl DatasetRepository {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(DatabaseStats {
             total_datasets: row.total.unwrap_or(0),
@@ -611,9 +624,43 @@ impl DatasetRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(AppError::DatabaseError)?;
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(rows.into_iter().map(|r| r.title).collect())
+    }
+}
+
+/// Internal struct for sqlx row mapping. Converts to the domain `Dataset` type.
+#[derive(sqlx::FromRow)]
+struct DatasetRow {
+    id: Uuid,
+    original_id: String,
+    source_portal: String,
+    url: String,
+    title: String,
+    description: Option<String>,
+    embedding: Option<Vector>,
+    metadata: Json<serde_json::Value>,
+    first_seen_at: DateTime<Utc>,
+    last_updated_at: DateTime<Utc>,
+    content_hash: Option<String>,
+}
+
+impl From<DatasetRow> for Dataset {
+    fn from(row: DatasetRow) -> Self {
+        Dataset {
+            id: row.id,
+            original_id: row.original_id,
+            source_portal: row.source_portal,
+            url: row.url,
+            title: row.title,
+            description: row.description,
+            embedding: row.embedding.map(|v| v.to_vec()),
+            metadata: row.metadata.0,
+            first_seen_at: row.first_seen_at,
+            last_updated_at: row.last_updated_at,
+            content_hash: row.content_hash,
+        }
     }
 }
 
@@ -719,7 +766,7 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
 
     async fn search(
         &self,
-        query_vector: Vector,
+        query_vector: Vec<f32>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
         DatasetRepository::search(self, query_vector, limit).await
@@ -786,7 +833,7 @@ mod tests {
             url: "https://example.com/dataset/test".to_string(),
             title: title.to_string(),
             description,
-            embedding: Some(Vector::from(vec![0.1, 0.2, 0.3])),
+            embedding: Some(vec![0.1, 0.2, 0.3]),
             metadata: json!({"key": "value"}),
             content_hash,
         };
@@ -795,13 +842,6 @@ mod tests {
         assert_eq!(new_dataset.title, "Test Dataset");
         assert!(new_dataset.embedding.is_some());
         assert_eq!(new_dataset.content_hash.len(), 64);
-    }
-
-    #[test]
-    fn test_embedding_vector_conversion() {
-        let vec_f32 = vec![0.1_f32, 0.2, 0.3, 0.4];
-        let vector = Vector::from(vec_f32.clone());
-        assert_eq!(vector.as_slice().len(), vec_f32.len());
     }
 
     #[test]

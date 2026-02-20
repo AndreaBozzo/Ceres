@@ -5,7 +5,6 @@
 
 use ceres_core::models::NewDataset;
 use ceres_db::DatasetRepository;
-use pgvector::Vector;
 
 use crate::integration::common::{sample_new_dataset, setup_test_db};
 
@@ -115,7 +114,7 @@ async fn test_search_returns_ordered_by_similarity() {
     let mut ds_a = sample_new_dataset("ds-a", "https://example.com");
     ds_a.title = "High Similarity Dataset".to_string();
     ds_a.content_hash = NewDataset::compute_content_hash(&ds_a.title, ds_a.description.as_deref());
-    ds_a.embedding = Some(Vector::from(vec![1.0_f32; 768]));
+    ds_a.embedding = Some(vec![1.0_f32; 768]);
     repo.upsert(&ds_a)
         .await
         .expect("insert ds_a should succeed");
@@ -127,7 +126,7 @@ async fn test_search_returns_ordered_by_similarity() {
     // Create a vector pointing in a different direction
     let mut b_vec = vec![0.1_f32; 768];
     b_vec[0] = 0.9; // Mostly different
-    ds_b.embedding = Some(Vector::from(b_vec));
+    ds_b.embedding = Some(b_vec);
     repo.upsert(&ds_b)
         .await
         .expect("insert ds_b should succeed");
@@ -143,7 +142,7 @@ async fn test_search_returns_ordered_by_similarity() {
 
     // Perform vector search
     let results = repo
-        .search(Vector::from(query_vec), 10)
+        .search(query_vec, 10)
         .await
         .expect("search should succeed");
 

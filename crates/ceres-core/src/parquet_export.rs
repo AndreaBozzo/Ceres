@@ -385,7 +385,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
 
     /// Flattens a Dataset into an export record with extracted metadata.
     fn flatten_dataset(&self, dataset: &Dataset, is_duplicate: bool) -> FlatRecord {
-        let metadata = &dataset.metadata.0;
+        let metadata = &dataset.metadata;
         let normalized_url = normalize_portal_url(&dataset.source_portal);
 
         let portal_name = self

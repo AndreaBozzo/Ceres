@@ -3,8 +3,6 @@
 //! This module provides a high-level service for performing semantic searches
 //! across the dataset index using vector embeddings.
 
-use pgvector::Vector;
-
 use crate::traits::{DatasetStore, EmbeddingProvider};
 use crate::{AppError, SearchResult};
 
@@ -89,8 +87,7 @@ where
     /// - The embedding generation fails (API error, network error, etc.)
     /// - The database query fails
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, AppError> {
-        let embedding = self.embedding.generate(query).await?;
-        let query_vector = Vector::from(embedding);
+        let query_vector = self.embedding.generate(query).await?;
         self.store.search(query_vector, limit).await
     }
 }
