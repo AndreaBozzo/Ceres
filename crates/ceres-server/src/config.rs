@@ -50,4 +50,9 @@ pub struct ServerConfig {
     /// Rate limit: burst size (max requests allowed in a burst)
     #[arg(long, env = "RATE_LIMIT_BURST", default_value = "30")]
     pub rate_limit_burst: u32,
+
+    /// Admin API key for protecting write endpoints.
+    /// If unset, admin endpoints return 403 Forbidden.
+    #[arg(long, env = "CERES_ADMIN_TOKEN")]
+    pub admin_token: Option<String>,
 }

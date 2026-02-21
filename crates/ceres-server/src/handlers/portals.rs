@@ -125,9 +125,12 @@ pub async fn get_portal_stats(
     request_body = TriggerHarvestRequest,
     responses(
         (status = 202, description = "Harvest job created", body = HarvestJobResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden (admin endpoints disabled)"),
         (status = 404, description = "Portal not found"),
         (status = 500, description = "Internal server error"),
     ),
+    security(("bearer" = [])),
     tag = "portals"
 )]
 pub async fn trigger_portal_harvest(

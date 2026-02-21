@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::http::{HeaderValue, Method};
 use axum::{
-    Router,
+    Router, middleware,
     routing::{get, post},
 };
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
@@ -13,6 +13,7 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::auth::require_api_key;
 use crate::config::ServerConfig;
 use crate::handlers::{datasets, export, harvest, health, portals, search, stats};
 use crate::openapi::ApiDoc;
@@ -20,23 +21,30 @@ use crate::state::AppState;
 
 /// Creates the main application router with all routes and middleware.
 pub fn create_router(state: AppState, config: &ServerConfig) -> Router {
-    let api_routes = Router::new()
-        // System endpoints
+    // Public routes (no authentication required)
+    let public_routes = Router::new()
         .route("/health", get(health::health_check))
         .route("/stats", get(stats::get_stats))
-        // Search
         .route("/search", get(search::search))
-        // Portals
         .route("/portals", get(portals::list_portals))
         .route("/portals/:name/stats", get(portals::get_portal_stats))
-        .route("/portals/:name/harvest", post(portals::trigger_portal_harvest))
-        // Harvest
-        .route("/harvest", post(harvest::trigger_harvest_all))
         .route("/harvest/status", get(harvest::get_harvest_status))
-        // Export
-        .route("/export", get(export::export_datasets))
-        // Datasets
         .route("/datasets/:id", get(datasets::get_dataset_by_id));
+
+    // Protected routes (require Bearer token)
+    let protected_routes = Router::new()
+        .route(
+            "/portals/:name/harvest",
+            post(portals::trigger_portal_harvest),
+        )
+        .route("/harvest", post(harvest::trigger_harvest_all))
+        .route("/export", get(export::export_datasets))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_api_key,
+        ));
+
+    let api_routes = public_routes.merge(protected_routes);
 
     // Configure rate limiting (Arc required for cloning in layers)
     let governor_config = Arc::new(
