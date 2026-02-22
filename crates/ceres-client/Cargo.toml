@@ -13,6 +13,9 @@ categories = ["web-programming::http-client"]
 # Internal
 ceres-core.workspace = true
 
+# Error handling
+anyhow.workspace = true
+
 # HTTP client
 reqwest.workspace = true
 

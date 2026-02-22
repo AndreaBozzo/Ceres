@@ -107,6 +107,70 @@ impl SyncMode {
     }
 }
 
+/// Shared state passed to the per-dataset pre-processing step.
+#[derive(Clone)]
+struct PreprocessContext<D: DeltaDetector> {
+    existing_hashes: std::collections::HashMap<String, Option<String>>,
+    unchanged_ids: Arc<Mutex<Vec<String>>>,
+    stats: Arc<AtomicSyncStats>,
+    processed_count: Arc<AtomicUsize>,
+    delta_detector: D,
+}
+
+/// Pre-processes a single portal dataset: converts to `NewDataset`, runs delta detection,
+/// and returns a `PreProcessedDataset` if it needs embedding/persistence, or `None` if unchanged/skipped.
+fn preprocess_dataset<C: PortalClient, D: DeltaDetector>(
+    portal_data: C::PortalData,
+    portal_url: &str,
+    url_template: Option<&str>,
+    language: &str,
+    ctx: &PreprocessContext<D>,
+) -> Option<PreProcessedDataset> {
+    let new_dataset = C::into_new_dataset(portal_data, portal_url, url_template, language);
+    let decision = ctx.delta_detector.needs_reprocessing(
+        ctx.existing_hashes.get(&new_dataset.original_id),
+        &new_dataset.content_hash,
+    );
+
+    match decision.outcome {
+        SyncOutcome::Unchanged => {
+            ctx.stats.record(SyncOutcome::Unchanged);
+            if let Ok(mut ids) = ctx.unchanged_ids.lock() {
+                ids.push(new_dataset.original_id);
+            }
+            ctx.processed_count.fetch_add(1, Ordering::Relaxed);
+            None
+        }
+        SyncOutcome::Updated | SyncOutcome::Created => {
+            let text_to_embed = if decision.needs_embedding {
+                let combined = format!(
+                    "{} {}",
+                    new_dataset.title,
+                    new_dataset.description.as_deref().unwrap_or_default()
+                );
+                if combined.trim().is_empty() {
+                    None
+                } else {
+                    Some(combined)
+                }
+            } else {
+                None
+            };
+
+            Some(PreProcessedDataset {
+                dataset: new_dataset,
+                text_to_embed,
+                outcome: decision.outcome,
+            })
+        }
+        SyncOutcome::Failed | SyncOutcome::Skipped => {
+            ctx.stats.record(decision.outcome);
+            ctx.processed_count.fetch_add(1, Ordering::Relaxed);
+            None
+        }
+    }
+}
+
 /// Describes what data is available for the sync pipeline.
 ///
 /// For full sync, we only have dataset IDs — each dataset must be fetched
@@ -730,21 +794,23 @@ where
 
         match plan {
             SyncPlan::Full { ids } => {
-                let delta_detector = self.delta_detector.clone();
+                let ctx = PreprocessContext {
+                    existing_hashes,
+                    unchanged_ids: Arc::clone(&unchanged_ids),
+                    stats: Arc::clone(&stats),
+                    processed_count: Arc::clone(&processed_count),
+                    delta_detector: self.delta_detector.clone(),
+                };
                 // TODO(perf): portal_url.to_string() allocates per-dataset — use Arc<str> like url_template_arc
                 let pre_processed = stream::iter(ids)
                     .map(|id| {
                         let portal_client = portal_client.clone();
                         let portal_url_owned = portal_url.to_string();
-                        let stats = Arc::clone(&stats);
                         let cancel_token = cancel_token.clone();
                         let was_cancelled = Arc::clone(&was_cancelled);
                         let url_template = url_template_arc.clone();
                         let language = Arc::clone(&language_arc);
-                        let existing_hashes = existing_hashes.clone();
-                        let unchanged_ids = Arc::clone(&unchanged_ids);
-                        let processed_count = Arc::clone(&processed_count);
-                        let delta_detector = delta_detector.clone();
+                        let ctx = ctx.clone();
 
                         async move {
                             if cancel_token.is_cancelled() {
@@ -762,8 +828,8 @@ where
                                         error = %e,
                                         "Failed to fetch dataset, skipping"
                                     );
-                                    stats.record(SyncOutcome::Failed);
-                                    processed_count.fetch_add(1, Ordering::Relaxed);
+                                    ctx.stats.record(SyncOutcome::Failed);
+                                    ctx.processed_count.fetch_add(1, Ordering::Relaxed);
                                     return None;
                                 }
                             };
@@ -773,54 +839,13 @@ where
                                 return None;
                             }
 
-                            let new_dataset = F::Client::into_new_dataset(
+                            preprocess_dataset::<F::Client, D>(
                                 portal_data,
                                 &portal_url_owned,
                                 url_template.as_deref(),
                                 &language,
-                            );
-                            let decision = delta_detector.needs_reprocessing(
-                                existing_hashes.get(&new_dataset.original_id),
-                                &new_dataset.content_hash,
-                            );
-
-                            match decision.outcome {
-                                SyncOutcome::Unchanged => {
-                                    stats.record(SyncOutcome::Unchanged);
-                                    if let Ok(mut ids) = unchanged_ids.lock() {
-                                        ids.push(new_dataset.original_id);
-                                    }
-                                    processed_count.fetch_add(1, Ordering::Relaxed);
-                                    None
-                                }
-                                SyncOutcome::Updated | SyncOutcome::Created => {
-                                    let text_to_embed = if decision.needs_embedding {
-                                        let combined = format!(
-                                            "{} {}",
-                                            new_dataset.title,
-                                            new_dataset.description.as_deref().unwrap_or_default()
-                                        );
-                                        if combined.trim().is_empty() {
-                                            None
-                                        } else {
-                                            Some(combined)
-                                        }
-                                    } else {
-                                        None
-                                    };
-
-                                    Some(PreProcessedDataset {
-                                        dataset: new_dataset,
-                                        text_to_embed,
-                                        outcome: decision.outcome,
-                                    })
-                                }
-                                SyncOutcome::Failed | SyncOutcome::Skipped => {
-                                    stats.record(decision.outcome);
-                                    processed_count.fetch_add(1, Ordering::Relaxed);
-                                    None
-                                }
-                            }
+                                &ctx,
+                            )
                         }
                     })
                     .buffer_unordered(self.config.concurrency)
@@ -846,20 +871,22 @@ where
                 }
             }
             SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
-                let delta_detector = self.delta_detector.clone();
+                let ctx = PreprocessContext {
+                    existing_hashes,
+                    unchanged_ids: Arc::clone(&unchanged_ids),
+                    stats: Arc::clone(&stats),
+                    processed_count: Arc::clone(&processed_count),
+                    delta_detector: self.delta_detector.clone(),
+                };
                 // TODO(perf): portal_url.to_string() allocates per-dataset — use Arc<str> like url_template_arc
                 let pre_processed = stream::iter(datasets)
                     .map(|portal_data| {
                         let portal_url_owned = portal_url.to_string();
                         let url_template = url_template_arc.clone();
                         let language = Arc::clone(&language_arc);
-                        let existing_hashes = existing_hashes.clone();
-                        let unchanged_ids = Arc::clone(&unchanged_ids);
                         let cancel_token = cancel_token.clone();
                         let was_cancelled = Arc::clone(&was_cancelled);
-                        let stats = Arc::clone(&stats);
-                        let processed_count = Arc::clone(&processed_count);
-                        let delta_detector = delta_detector.clone();
+                        let ctx = ctx.clone();
 
                         async move {
                             if cancel_token.is_cancelled() {
@@ -867,54 +894,13 @@ where
                                 return None;
                             }
 
-                            let new_dataset = F::Client::into_new_dataset(
+                            preprocess_dataset::<F::Client, D>(
                                 portal_data,
                                 &portal_url_owned,
                                 url_template.as_deref(),
                                 &language,
-                            );
-                            let decision = delta_detector.needs_reprocessing(
-                                existing_hashes.get(&new_dataset.original_id),
-                                &new_dataset.content_hash,
-                            );
-
-                            match decision.outcome {
-                                SyncOutcome::Unchanged => {
-                                    stats.record(SyncOutcome::Unchanged);
-                                    if let Ok(mut ids) = unchanged_ids.lock() {
-                                        ids.push(new_dataset.original_id);
-                                    }
-                                    processed_count.fetch_add(1, Ordering::Relaxed);
-                                    None
-                                }
-                                SyncOutcome::Updated | SyncOutcome::Created => {
-                                    let text_to_embed = if decision.needs_embedding {
-                                        let combined = format!(
-                                            "{} {}",
-                                            new_dataset.title,
-                                            new_dataset.description.as_deref().unwrap_or_default()
-                                        );
-                                        if combined.trim().is_empty() {
-                                            None
-                                        } else {
-                                            Some(combined)
-                                        }
-                                    } else {
-                                        None
-                                    };
-
-                                    Some(PreProcessedDataset {
-                                        dataset: new_dataset,
-                                        text_to_embed,
-                                        outcome: decision.outcome,
-                                    })
-                                }
-                                SyncOutcome::Failed | SyncOutcome::Skipped => {
-                                    stats.record(decision.outcome);
-                                    processed_count.fetch_add(1, Ordering::Relaxed);
-                                    None
-                                }
-                            }
+                                &ctx,
+                            )
                         }
                     })
                     .buffer_unordered(self.config.concurrency)

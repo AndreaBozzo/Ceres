@@ -8,8 +8,7 @@ use sqlx::postgres::PgPoolOptions;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
-use ceres_client::{EmbeddingProviderEnum, PortalClientFactoryEnum};
-use ceres_core::config::EmbeddingProviderType;
+use ceres_client::{EmbeddingConfig, EmbeddingProviderEnum, PortalClientFactoryEnum};
 use ceres_core::traits::EmbeddingProvider;
 use ceres_core::{
     BatchHarvestSummary, DbConfig, ExportFormat as CoreExportFormat, ExportService, HarvestService,
@@ -42,7 +41,12 @@ async fn main() -> anyhow::Result<()> {
     let repo = DatasetRepository::new(pool);
 
     // Create embedding provider based on configuration
-    let embedding_client = create_embedding_provider(&config)?;
+    let embedding_client = EmbeddingProviderEnum::from_config(&EmbeddingConfig {
+        provider: config.embedding_provider.clone(),
+        gemini_api_key: config.gemini_api_key.clone(),
+        openai_api_key: config.openai_api_key.clone(),
+        embedding_model: config.embedding_model.clone(),
+    })?;
 
     // Validate embedding dimension matches database configuration
     repo.validate_embedding_dimension(embedding_client.dimension())
@@ -125,35 +129,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Creates an embedding provider based on CLI configuration.
-fn create_embedding_provider(config: &Config) -> anyhow::Result<EmbeddingProviderEnum> {
-    let provider_type: EmbeddingProviderType = config
-        .embedding_provider
-        .parse()
-        .context("Invalid embedding provider")?;
-
-    match provider_type {
-        EmbeddingProviderType::Gemini => {
-            let api_key = config.gemini_api_key.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("GEMINI_API_KEY required when using gemini provider")
-            })?;
-            EmbeddingProviderEnum::gemini(api_key).context("Failed to initialize Gemini client")
-        }
-        EmbeddingProviderType::OpenAI => {
-            let api_key = config.openai_api_key.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("OPENAI_API_KEY required when using openai provider")
-            })?;
-
-            if let Some(model) = &config.embedding_model {
-                EmbeddingProviderEnum::openai_with_model(api_key, model)
-                    .context("Failed to initialize OpenAI client")
-            } else {
-                EmbeddingProviderEnum::openai(api_key).context("Failed to initialize OpenAI client")
-            }
-        }
-    }
 }
 
 /// Handle the harvest command with its three modes:

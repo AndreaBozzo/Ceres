@@ -43,4 +43,4 @@ pub use ckan::{CkanClient, CkanClientFactory};
 pub use gemini::GeminiClient;
 pub use openai::OpenAIClient;
 pub use portal::{PortalClientEnum, PortalClientFactoryEnum, PortalDataEnum};
-pub use provider::EmbeddingProviderEnum;
+pub use provider::{EmbeddingConfig, EmbeddingProviderEnum};

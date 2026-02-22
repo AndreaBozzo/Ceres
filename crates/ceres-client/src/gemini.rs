@@ -140,6 +140,45 @@ fn classify_gemini_error(status_code: u16, message: &str) -> GeminiErrorKind {
     }
 }
 
+/// Maps a reqwest send error to the appropriate `AppError` variant.
+fn map_send_error(e: reqwest::Error) -> AppError {
+    if e.is_timeout() {
+        AppError::Timeout(30)
+    } else if e.is_connect() {
+        AppError::GeminiError(GeminiErrorDetails::new(
+            GeminiErrorKind::NetworkError,
+            format!("Connection failed: {}", e),
+            0,
+        ))
+    } else {
+        AppError::ClientError(e.to_string())
+    }
+}
+
+/// Checks a Gemini API response status and returns a structured error on failure.
+async fn check_response(response: reqwest::Response) -> Result<reqwest::Response, AppError> {
+    let status = response.status();
+    if !status.is_success() {
+        let status_code = status.as_u16();
+        let error_text = response.text().await.unwrap_or_default();
+
+        let message = if let Ok(gemini_error) = serde_json::from_str::<GeminiError>(&error_text) {
+            gemini_error.error.message
+        } else {
+            format!("HTTP {}: {}", status_code, error_text)
+        };
+
+        let kind = classify_gemini_error(status_code, &message);
+
+        return Err(AppError::GeminiError(GeminiErrorDetails::new(
+            kind,
+            message,
+            status_code,
+        )));
+    }
+    Ok(response)
+}
+
 impl GeminiClient {
     /// Creates a new Gemini client with the specified API key.
     pub fn new(api_key: &str) -> Result<Self, AppError> {
@@ -195,44 +234,9 @@ impl GeminiClient {
             .json(&request_body)
             .send()
             .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    AppError::Timeout(30)
-                } else if e.is_connect() {
-                    AppError::GeminiError(GeminiErrorDetails::new(
-                        GeminiErrorKind::NetworkError,
-                        format!("Connection failed: {}", e),
-                        0, // No HTTP status for connection failures
-                    ))
-                } else {
-                    AppError::ClientError(e.to_string())
-                }
-            })?;
+            .map_err(map_send_error)?;
 
-        let status = response.status();
-
-        if !status.is_success() {
-            let status_code = status.as_u16();
-            let error_text = response.text().await.unwrap_or_default();
-
-            // Try to parse as structured Gemini error
-            let message = if let Ok(gemini_error) = serde_json::from_str::<GeminiError>(&error_text)
-            {
-                gemini_error.error.message
-            } else {
-                format!("HTTP {}: {}", status_code, error_text)
-            };
-
-            // Classify the error
-            let kind = classify_gemini_error(status_code, &message);
-
-            // Return structured error
-            return Err(AppError::GeminiError(GeminiErrorDetails::new(
-                kind,
-                message,
-                status_code,
-            )));
-        }
+        let response = check_response(response).await?;
 
         let embedding_response: EmbeddingResponse = response
             .json()
@@ -282,41 +286,9 @@ impl GeminiClient {
             .json(&request_body)
             .send()
             .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    AppError::Timeout(30)
-                } else if e.is_connect() {
-                    AppError::GeminiError(GeminiErrorDetails::new(
-                        GeminiErrorKind::NetworkError,
-                        format!("Connection failed: {}", e),
-                        0,
-                    ))
-                } else {
-                    AppError::ClientError(e.to_string())
-                }
-            })?;
+            .map_err(map_send_error)?;
 
-        let status = response.status();
-
-        if !status.is_success() {
-            let status_code = status.as_u16();
-            let error_text = response.text().await.unwrap_or_default();
-
-            let message = if let Ok(gemini_error) = serde_json::from_str::<GeminiError>(&error_text)
-            {
-                gemini_error.error.message
-            } else {
-                format!("HTTP {}: {}", status_code, error_text)
-            };
-
-            let kind = classify_gemini_error(status_code, &message);
-
-            return Err(AppError::GeminiError(GeminiErrorDetails::new(
-                kind,
-                message,
-                status_code,
-            )));
-        }
+        let response = check_response(response).await?;
 
         let batch_response: BatchEmbeddingResponse = response
             .json()
