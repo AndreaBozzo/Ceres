@@ -26,10 +26,23 @@
 //! # }
 //! ```
 
+use anyhow::Context;
+use ceres_core::config::EmbeddingProviderType;
 use ceres_core::error::AppError;
 use ceres_core::traits::EmbeddingProvider;
 
 use crate::{GeminiClient, OpenAIClient};
+
+/// Configuration needed to create an embedding provider.
+///
+/// This struct extracts the embedding-related fields shared between
+/// CLI and server configurations, avoiding duplication of the factory logic.
+pub struct EmbeddingConfig {
+    pub provider: String,
+    pub gemini_api_key: Option<String>,
+    pub openai_api_key: Option<String>,
+    pub embedding_model: Option<String>,
+}
 
 /// Unified embedding provider that wraps concrete implementations.
 ///
@@ -72,6 +85,38 @@ impl EmbeddingProviderEnum {
     /// * `model` - Model name (e.g., `text-embedding-3-large`)
     pub fn openai_with_model(api_key: &str, model: &str) -> Result<Self, AppError> {
         Ok(Self::OpenAI(OpenAIClient::with_model(api_key, model)?))
+    }
+
+    /// Creates an embedding provider from configuration.
+    ///
+    /// Parses the provider type and initializes the appropriate client
+    /// with the given API key and optional model override.
+    pub fn from_config(config: &EmbeddingConfig) -> anyhow::Result<Self> {
+        let provider_type: EmbeddingProviderType = config
+            .provider
+            .parse()
+            .context("Invalid embedding provider")?;
+
+        match provider_type {
+            EmbeddingProviderType::Gemini => {
+                let api_key = config.gemini_api_key.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("GEMINI_API_KEY required when using gemini provider")
+                })?;
+                Self::gemini(api_key).context("Failed to initialize Gemini client")
+            }
+            EmbeddingProviderType::OpenAI => {
+                let api_key = config.openai_api_key.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("OPENAI_API_KEY required when using openai provider")
+                })?;
+
+                if let Some(model) = &config.embedding_model {
+                    Self::openai_with_model(api_key, model)
+                        .context("Failed to initialize OpenAI client")
+                } else {
+                    Self::openai(api_key).context("Failed to initialize OpenAI client")
+                }
+            }
+        }
     }
 }
 

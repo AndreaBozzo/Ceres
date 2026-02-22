@@ -672,6 +672,7 @@ dependencies = [
 name = "ceres-client"
 version = "0.2.2"
 dependencies = [
+ "anyhow",
  "ceres-core",
  "chrono",
  "reqwest",
