@@ -187,4 +187,57 @@ mod tests {
         let provider = provider.unwrap();
         assert_eq!(provider.dimension(), 3072);
     }
+
+    fn base_config(provider: &str) -> EmbeddingConfig {
+        EmbeddingConfig {
+            provider: provider.to_string(),
+            gemini_api_key: None,
+            openai_api_key: None,
+            embedding_model: None,
+        }
+    }
+
+    #[test]
+    fn test_from_config_gemini() {
+        let mut config = base_config("gemini");
+        config.gemini_api_key = Some("test-key".to_string());
+        let provider = EmbeddingProviderEnum::from_config(&config).unwrap();
+        assert!(matches!(provider, EmbeddingProviderEnum::Gemini(_)));
+    }
+
+    #[test]
+    fn test_from_config_openai_default_model() {
+        let mut config = base_config("openai");
+        config.openai_api_key = Some("sk-test".to_string());
+        let provider = EmbeddingProviderEnum::from_config(&config).unwrap();
+        assert!(matches!(provider, EmbeddingProviderEnum::OpenAI(_)));
+        assert_eq!(provider.dimension(), 1536);
+    }
+
+    #[test]
+    fn test_from_config_openai_custom_model() {
+        let mut config = base_config("openai");
+        config.openai_api_key = Some("sk-test".to_string());
+        config.embedding_model = Some("text-embedding-3-large".to_string());
+        let provider = EmbeddingProviderEnum::from_config(&config).unwrap();
+        assert_eq!(provider.dimension(), 3072);
+    }
+
+    #[test]
+    fn test_from_config_invalid_provider() {
+        let config = base_config("invalid");
+        assert!(EmbeddingProviderEnum::from_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_from_config_missing_gemini_key() {
+        let config = base_config("gemini");
+        assert!(EmbeddingProviderEnum::from_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_from_config_missing_openai_key() {
+        let config = base_config("openai");
+        assert!(EmbeddingProviderEnum::from_config(&config).is_err());
+    }
 }
