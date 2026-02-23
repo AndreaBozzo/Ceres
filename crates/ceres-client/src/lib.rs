@@ -43,4 +43,6 @@ pub use ckan::{CkanClient, CkanClientFactory};
 pub use gemini::GeminiClient;
 pub use openai::OpenAIClient;
 pub use portal::{PortalClientEnum, PortalClientFactoryEnum, PortalDataEnum};
+#[cfg(feature = "test-support")]
+pub use provider::MockEmbeddingClient;
 pub use provider::{EmbeddingConfig, EmbeddingProviderEnum};

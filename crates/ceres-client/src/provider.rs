@@ -44,6 +44,48 @@ pub struct EmbeddingConfig {
     pub embedding_model: Option<String>,
 }
 
+/// Mock embedding client for testing (returns deterministic 768-dim vectors).
+///
+/// Available only with the `test-support` feature.
+#[cfg(feature = "test-support")]
+#[derive(Clone, Debug)]
+pub struct MockEmbeddingClient {
+    dimension: usize,
+}
+
+#[cfg(feature = "test-support")]
+impl MockEmbeddingClient {
+    pub fn new() -> Self {
+        Self { dimension: 768 }
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl Default for MockEmbeddingClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl EmbeddingProvider for MockEmbeddingClient {
+    fn name(&self) -> &'static str {
+        "mock"
+    }
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+    fn max_batch_size(&self) -> usize {
+        100
+    }
+    async fn generate(&self, text: &str) -> Result<Vec<f32>, AppError> {
+        let seed = text.len() as f32;
+        Ok((0..self.dimension)
+            .map(|i| (seed + i as f32) / 1000.0)
+            .collect())
+    }
+}
+
 /// Unified embedding provider that wraps concrete implementations.
 ///
 /// This enum allows runtime selection of embedding providers while
@@ -54,6 +96,9 @@ pub enum EmbeddingProviderEnum {
     Gemini(GeminiClient),
     /// OpenAI embedding provider (1536 or 3072 dimensions).
     OpenAI(OpenAIClient),
+    /// Mock embedding provider for testing (768 dimensions).
+    #[cfg(feature = "test-support")]
+    Mock(MockEmbeddingClient),
 }
 
 impl EmbeddingProviderEnum {
@@ -85,6 +130,12 @@ impl EmbeddingProviderEnum {
     /// * `model` - Model name (e.g., `text-embedding-3-large`)
     pub fn openai_with_model(api_key: &str, model: &str) -> Result<Self, AppError> {
         Ok(Self::OpenAI(OpenAIClient::with_model(api_key, model)?))
+    }
+
+    /// Creates a mock embedding provider for testing.
+    #[cfg(feature = "test-support")]
+    pub fn mock() -> Self {
+        Self::Mock(MockEmbeddingClient::new())
     }
 
     /// Creates an embedding provider from configuration.
@@ -125,6 +176,8 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.name(),
             Self::OpenAI(c) => c.name(),
+            #[cfg(feature = "test-support")]
+            Self::Mock(c) => c.name(),
         }
     }
 
@@ -132,6 +185,8 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.dimension(),
             Self::OpenAI(c) => c.dimension(),
+            #[cfg(feature = "test-support")]
+            Self::Mock(c) => c.dimension(),
         }
     }
 
@@ -139,6 +194,8 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.max_batch_size(),
             Self::OpenAI(c) => c.max_batch_size(),
+            #[cfg(feature = "test-support")]
+            Self::Mock(c) => c.max_batch_size(),
         }
     }
 
@@ -146,6 +203,8 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.generate(text).await,
             Self::OpenAI(c) => c.generate(text).await,
+            #[cfg(feature = "test-support")]
+            Self::Mock(c) => c.generate(text).await,
         }
     }
 
@@ -153,6 +212,8 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.generate_batch(texts).await,
             Self::OpenAI(c) => c.generate_batch(texts).await,
+            #[cfg(feature = "test-support")]
+            Self::Mock(c) => c.generate_batch(texts).await,
         }
     }
 }

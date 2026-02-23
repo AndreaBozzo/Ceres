@@ -58,3 +58,11 @@ subtle = "2"
 # Utilities
 uuid.workspace = true
 chrono.workspace = true
+
+[dev-dependencies]
+testcontainers = "0.26"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"
+serde_json = { workspace = true }
+ceres-client = { workspace = true, features = ["test-support"] }
