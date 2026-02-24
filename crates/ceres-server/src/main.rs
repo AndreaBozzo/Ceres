@@ -41,9 +41,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Connect to database
     info!("Connecting to database...");
-    // TODO(config): max_connections(10) hardcoded — use DbConfig (#71)
     let pool = PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(config.max_connections)
         .connect(&config.database_url)
         .await
         .context("Failed to connect to database")?;

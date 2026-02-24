@@ -133,6 +133,7 @@ impl TestApp {
             cors_origins: "*".to_string(),
             rate_limit_rps: 1000,
             rate_limit_burst: 2000,
+            max_connections: 5,
             admin_token: None,
         };
 

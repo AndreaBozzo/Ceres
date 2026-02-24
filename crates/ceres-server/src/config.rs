@@ -51,6 +51,10 @@ pub struct ServerConfig {
     #[arg(long, env = "RATE_LIMIT_BURST", default_value = "30")]
     pub rate_limit_burst: u32,
 
+    /// Maximum number of database connections in the pool
+    #[arg(long, env = "DB_MAX_CONNECTIONS", default_value = "10")]
+    pub max_connections: u32,
+
     /// Admin API key for protecting write endpoints.
     /// If unset, admin endpoints return 403 Forbidden.
     #[arg(long, env = "CERES_ADMIN_TOKEN")]

@@ -1,0 +1,11 @@
+target/
+pgdata/
+.env
+.env.local
+.git/
+.github/
+docs/
+*.md
+.vscode/
+.idea/
+.claude/
