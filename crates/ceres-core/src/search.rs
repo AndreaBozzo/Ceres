@@ -91,8 +91,3 @@ where
         self.store.search(query_vector, limit).await
     }
 }
-
-#[cfg(test)]
-mod tests {
-    // Tests require concrete implementations - see integration tests
-}

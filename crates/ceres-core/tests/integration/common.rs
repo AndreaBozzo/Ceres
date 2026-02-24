@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use ceres_core::job::{CreateJobRequest, HarvestJob, JobStatus};
+use ceres_core::job_queue::JobQueue;
 use ceres_core::models::NewDataset;
 use ceres_core::traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFactory};
-use ceres_core::{AppError, Dataset, SearchResult};
+use ceres_core::{AppError, Dataset, SearchResult, SyncStats};
 use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
 use uuid::Uuid;
@@ -479,5 +481,239 @@ impl DatasetStore for MockDatasetStore {
     async fn health_check(&self) -> Result<(), AppError> {
         // Mock is always healthy
         Ok(())
+    }
+}
+
+// =============================================================================
+// MockJobQueue
+// =============================================================================
+
+/// In-memory job queue for testing worker state machine logic.
+#[derive(Clone)]
+pub struct MockJobQueue {
+    jobs: Arc<Mutex<HashMap<Uuid, HarvestJob>>>,
+    claim_error: Arc<Mutex<Option<String>>>,
+}
+
+impl MockJobQueue {
+    pub fn new() -> Self {
+        Self {
+            jobs: Arc::new(Mutex::new(HashMap::new())),
+            claim_error: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Insert a pending job and return its ID.
+    pub fn with_pending_job(self, portal_url: &str) -> (Self, Uuid) {
+        self.with_pending_job_config(portal_url, 0, 3)
+    }
+
+    /// Insert a pending job with specific retry configuration.
+    pub fn with_pending_job_config(
+        self,
+        portal_url: &str,
+        retry_count: u32,
+        max_retries: u32,
+    ) -> (Self, Uuid) {
+        let id = Uuid::new_v4();
+        let job = HarvestJob {
+            id,
+            portal_url: portal_url.to_string(),
+            portal_name: None,
+            status: JobStatus::Pending,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+            retry_count,
+            max_retries,
+            next_retry_at: None,
+            error_message: None,
+            sync_stats: None,
+            worker_id: None,
+            force_full_sync: false,
+            url_template: None,
+            language: None,
+        };
+        self.jobs.lock().unwrap().insert(id, job);
+        (self, id)
+    }
+
+    /// Get the current status of a job.
+    pub fn job_status(&self, job_id: Uuid) -> Option<JobStatus> {
+        self.jobs.lock().unwrap().get(&job_id).map(|j| j.status)
+    }
+
+    /// Get the job by ID (for inspecting full state in tests).
+    #[allow(dead_code)]
+    pub fn get_job_snapshot(&self, job_id: Uuid) -> Option<HarvestJob> {
+        self.jobs.lock().unwrap().get(&job_id).cloned()
+    }
+
+    /// Inject an error for the next claim_job call.
+    #[allow(dead_code)]
+    pub fn set_claim_error(&self, error: Option<String>) {
+        *self.claim_error.lock().unwrap() = error;
+    }
+}
+
+impl Default for MockJobQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl JobQueue for MockJobQueue {
+    async fn create_job(&self, request: CreateJobRequest) -> Result<HarvestJob, AppError> {
+        let id = Uuid::new_v4();
+        let job = HarvestJob {
+            id,
+            portal_url: request.portal_url,
+            portal_name: request.portal_name,
+            status: JobStatus::Pending,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+            retry_count: 0,
+            max_retries: request.max_retries.unwrap_or(3),
+            next_retry_at: None,
+            error_message: None,
+            sync_stats: None,
+            worker_id: None,
+            force_full_sync: request.force_full_sync,
+            url_template: request.url_template,
+            language: request.language,
+        };
+        self.jobs.lock().unwrap().insert(id, job.clone());
+        Ok(job)
+    }
+
+    async fn claim_job(&self, worker_id: &str) -> Result<Option<HarvestJob>, AppError> {
+        // Check for injected error
+        if let Some(err_msg) = self.claim_error.lock().unwrap().take() {
+            return Err(AppError::DatabaseError(err_msg));
+        }
+
+        let mut jobs = self.jobs.lock().unwrap();
+        // Find first pending job that is ready to be claimed
+        // (no next_retry_at, or next_retry_at <= now)
+        let now = Utc::now();
+        let pending_id = jobs
+            .values()
+            .find(|j| {
+                j.status == JobStatus::Pending
+                    && j.next_retry_at.is_none_or(|retry_at| retry_at <= now)
+            })
+            .map(|j| j.id);
+
+        if let Some(id) = pending_id {
+            let job = jobs.get_mut(&id).unwrap();
+            job.status = JobStatus::Running;
+            job.worker_id = Some(worker_id.to_string());
+            job.started_at = Some(Utc::now());
+            job.updated_at = Utc::now();
+            Ok(Some(job.clone()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn complete_job(&self, job_id: Uuid, stats: SyncStats) -> Result<(), AppError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.get_mut(&job_id) {
+            job.status = JobStatus::Completed;
+            job.completed_at = Some(Utc::now());
+            job.sync_stats = Some(stats);
+            job.updated_at = Utc::now();
+        }
+        Ok(())
+    }
+
+    async fn fail_job(
+        &self,
+        job_id: Uuid,
+        error: &str,
+        next_retry_at: Option<DateTime<Utc>>,
+    ) -> Result<(), AppError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.get_mut(&job_id) {
+            if next_retry_at.is_some() {
+                // Retryable: reset to pending
+                job.status = JobStatus::Pending;
+                job.next_retry_at = next_retry_at;
+                job.retry_count += 1;
+            } else {
+                // Permanent failure
+                job.status = JobStatus::Failed;
+                job.completed_at = Some(Utc::now());
+            }
+            job.error_message = Some(error.to_string());
+            job.worker_id = None;
+            job.updated_at = Utc::now();
+        }
+        Ok(())
+    }
+
+    async fn cancel_job(&self, job_id: Uuid, stats: Option<SyncStats>) -> Result<(), AppError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.get_mut(&job_id) {
+            job.status = JobStatus::Cancelled;
+            job.completed_at = Some(Utc::now());
+            job.sync_stats = stats;
+            job.updated_at = Utc::now();
+        }
+        Ok(())
+    }
+
+    async fn get_job(&self, job_id: Uuid) -> Result<Option<HarvestJob>, AppError> {
+        Ok(self.jobs.lock().unwrap().get(&job_id).cloned())
+    }
+
+    async fn list_jobs(
+        &self,
+        status: Option<JobStatus>,
+        limit: usize,
+    ) -> Result<Vec<HarvestJob>, AppError> {
+        let jobs = self.jobs.lock().unwrap();
+        let mut result: Vec<HarvestJob> = jobs
+            .values()
+            .filter(|j| status.is_none_or(|s| j.status == s))
+            .cloned()
+            .collect();
+        result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        result.truncate(limit);
+        Ok(result)
+    }
+
+    async fn release_job(&self, job_id: Uuid) -> Result<(), AppError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.get_mut(&job_id) {
+            if job.status == JobStatus::Running {
+                job.status = JobStatus::Pending;
+                job.worker_id = None;
+                job.updated_at = Utc::now();
+            }
+        }
+        Ok(())
+    }
+
+    async fn release_worker_jobs(&self, worker_id: &str) -> Result<u64, AppError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        let mut released = 0u64;
+        for job in jobs.values_mut() {
+            if job.status == JobStatus::Running && job.worker_id.as_deref() == Some(worker_id) {
+                job.status = JobStatus::Pending;
+                job.worker_id = None;
+                job.updated_at = Utc::now();
+                released += 1;
+            }
+        }
+        Ok(released)
+    }
+
+    async fn count_by_status(&self, status: JobStatus) -> Result<i64, AppError> {
+        let jobs = self.jobs.lock().unwrap();
+        Ok(jobs.values().filter(|j| j.status == status).count() as i64)
     }
 }

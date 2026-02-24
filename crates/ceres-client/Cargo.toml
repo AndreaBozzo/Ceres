@@ -9,6 +9,10 @@ description = "HTTP clients for CKAN portals and Gemini embeddings API"
 keywords = ["ckan", "gemini", "embeddings", "http-client"]
 categories = ["web-programming::http-client"]
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
 # Internal
 ceres-core.workspace = true

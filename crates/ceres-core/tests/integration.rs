@@ -19,4 +19,6 @@ mod integration {
     pub mod common;
     pub mod export_tests;
     pub mod harvest_tests;
+    pub mod search_tests;
+    pub mod worker_tests;
 }
