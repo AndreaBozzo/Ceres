@@ -163,8 +163,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/ceres-server:${{ needs.validate.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/ceres-server:latest
+            ghcr.io/${{ toLower(github.repository_owner) }}/ceres-server:${{ needs.validate.outputs.version }}
+            ghcr.io/${{ toLower(github.repository_owner) }}/ceres-server:latest
 
   dry-run:
     name: Publish Dry Run
