@@ -59,15 +59,21 @@ Found 3 matching datasets:
 
 ## Features
 
-- **CKAN Harvester** — Fetch datasets from any CKAN-compatible portal
+- **CKAN Harvester** — Fetch datasets from any CKAN-compatible portal, including multilingual portals
 - **Multi-portal Batch Harvest** — Configure multiple portals in `portals.toml` and harvest them all at once
+- **Streaming Harvest** — Memory-efficient streaming pipeline for large portals (100k+ datasets)
 - **Delta Detection** — Only regenerate embeddings for changed datasets (99.8% API cost savings). See [Harvesting Architecture](docs/HARVESTING.md)
+- **Batch Embeddings** — Batched embedding API calls for higher throughput during harvest
 - **Persistent Jobs** — Recoverable database-backed job queue with automatic retries and exponential backoff
 - **Graceful Shutdown** — Safely interrupt harvesting to ensure data consistency and release in-progress jobs back to the queue
 - **Real-time Progress** — Live progress reporting during harvest with batch timestamp updates
-- **Semantic Search** — Find datasets by meaning using Gemini embeddings
+- **Dry Run Mode** — Preview what a harvest would do without writing to DB or calling embedding APIs
+- **Semantic Search** — Find datasets by meaning using vector embeddings
 - **Pluggable Embeddings** — Switchable embedding backend via trait (Gemini, OpenAI)
+- **Bearer Token Auth** — Protected admin endpoints with configurable API key authentication
+- **Docker Support** — Production-ready multi-stage Docker image and Docker Compose setup
 - **Multi-format Export** — Export to JSON, JSON Lines, CSV, or Parquet
+- **Custom URL Templates** — Support portals with non-standard frontend URLs
 
 ## Pre-configured Portals
 
@@ -109,7 +115,7 @@ See [`examples/portals.toml`](examples/portals.toml) for the full configuration.
 |-----------|------------|
 | Language | Rust (async with Tokio) |
 | Database | PostgreSQL 16+ with pgvector |
-| Embeddings | Google Gemini gemini-embedding-001 |
+| Embeddings | Pluggable: Google Gemini, OpenAI (trait-based) |
 | Portal Protocol | CKAN API v3 |
 | REST API | Axum with OpenAPI/Swagger UI |
 
@@ -119,9 +125,22 @@ See [`examples/portals.toml`](examples/portals.toml) for the full configuration.
 
 - Rust 1.87+
 - Docker & Docker Compose
-- Google Gemini API key ([get one free](https://aistudio.google.com/apikey))
+- Google Gemini API key ([get one free](https://aistudio.google.com/apikey)) or OpenAI API key
 
-### Installation
+### Docker (recommended)
+
+```bash
+# Clone and configure
+git clone https://github.com/AndreaBozzo/Ceres.git
+cd Ceres
+cp .env.example .env
+# Edit .env with your API key and settings
+
+# Start everything (DB + server)
+docker compose up -d
+```
+
+### From source
 
 ```bash
 # Install from crates.io
@@ -133,15 +152,15 @@ cd Ceres
 cargo build --release
 ```
 
-### Setup
+### Setup (from source)
 
 ```bash
 # Start PostgreSQL with pgvector
-docker-compose up -d
+docker compose up db -d
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your Gemini API key
+# Edit .env with your API key
 
 # Run database migrations
 make migrate
@@ -199,9 +218,17 @@ Commands:
   stats    Show database statistics
   help     Print help information
 
+Harvest Flags:
+  --full-sync       Force full sync even if incremental is available
+  --dry-run         Preview what would be harvested without writing to DB
+  --portal <NAME>   Harvest a specific portal by name from config
+  --config <PATH>   Use custom portals.toml location
+
 Environment Variables:
-  DATABASE_URL     PostgreSQL connection string
-  GEMINI_API_KEY   Google Gemini API key for embeddings
+  DATABASE_URL          PostgreSQL connection string
+  EMBEDDING_PROVIDER    Embedding backend: gemini or openai (default: gemini)
+  GEMINI_API_KEY        Google Gemini API key (when using gemini provider)
+  OPENAI_API_KEY        OpenAI API key (when using openai provider)
 ```
 
 ## REST API
@@ -231,6 +258,7 @@ PORT                   Server port (default: 3000)
 HOST                   Server host (default: 0.0.0.0)
 EMBEDDING_PROVIDER     Embedding backend: gemini or openai (default: gemini)
 EMBEDDING_MODEL        Model name (uses provider default if unset)
+ADMIN_API_KEY          Bearer token for protected endpoints (harvest, etc.)
 PORTALS_CONFIG         Path to portals.toml (optional)
 CORS_ALLOWED_ORIGINS   Comma-separated allowed origins (default: *)
 RATE_LIMIT_RPS         Requests per second per IP (default: 10)
@@ -263,22 +291,15 @@ RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
 
 For past releases, see the [CHANGELOG](CHANGELOG.md).
 
-### v0.3.0 — Extensibility
-- Streaming harvest for large portals ([#85](https://github.com/AndreaBozzo/Ceres/issues/85))
+### v0.4.0 — Scale & Ecosystem
+- Parquet export endpoint in REST API ([#98](https://github.com/AndreaBozzo/Ceres/issues/98))
+- HNSW index tuning for production ([#92](https://github.com/AndreaBozzo/Ceres/issues/92))
+- Multi-tenancy support ([#91](https://github.com/AndreaBozzo/Ceres/issues/91))
 - Local embeddings via Ollama ([#79](https://github.com/AndreaBozzo/Ceres/issues/79))
-- Abstract PortalClient for Socrata / DCAT-AP support ([#61](https://github.com/AndreaBozzo/Ceres/issues/61))
-- Docker image ([#74](https://github.com/AndreaBozzo/Ceres/issues/74))
-- Delta detection improvements ([#51](https://github.com/AndreaBozzo/Ceres/issues/51), [#53](https://github.com/AndreaBozzo/Ceres/issues/53))
-
-
-### v0.4.0 Multi-Tenancy, DCAT
-- Authentication middleware ([#72](https://github.com/AndreaBozzo/Ceres/issues/72))
 - Schema-level search ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
-- DCAT Client
-- More.
+- Socrata / DCAT-AP portal support ([#61](https://github.com/AndreaBozzo/Ceres/issues/61))
 
 ### Backlog
-- Schema-level search ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
 - Standalone library support ([#35](https://github.com/AndreaBozzo/Ceres/issues/35))
 - data.europa.eu integration
 

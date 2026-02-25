@@ -10,6 +10,10 @@ Ceres harvests dataset metadata from open data portals and indexes them with vec
 	<sub>Incremental sync reduces portal calls, delta detection reduces embedding calls.</sub>
 </div>
 
+### Streaming Pipeline
+
+Since v0.3.0, the harvest pipeline streams datasets through the processing stages instead of loading all datasets into memory at once. This allows Ceres to handle very large portals (100k+ datasets) with a constant memory footprint. Batched embedding API calls further improve throughput by sending multiple texts per request.
+
 ### Tier 1: Incremental Sync
 
 Incremental sync uses CKAN's `package_search` API with a `metadata_modified` filter to fetch only datasets that have changed since the last successful sync. The last sync timestamp is stored in the `portal_sync_status` table.
@@ -58,6 +62,7 @@ These are tracked via `SyncStats` and reported at the end of each sync operation
 |------|---------------------|-------------------------|----------|
 | *(none)* | Incremental if previous sync exists | Always active | Normal operation |
 | `--full-sync` | Full sync forced | Still active | Re-scan portal after known issues |
+| `--dry-run` | Dry run (no writes) | Still active | Preview what would happen |
 
 Delta detection is always active regardless of flags. There is no flag to bypass it — if you need to force full re-embedding, delete the stored content hashes from the database.
 

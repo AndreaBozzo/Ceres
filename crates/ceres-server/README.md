@@ -6,6 +6,8 @@
 
 ### What it provides
 * **REST API**: HTTP endpoints for search, harvest, export, and stats.
+* **Bearer Token Auth**: Admin endpoints protected with configurable API key authentication.
 * **OpenAPI Documentation**: Interactive Swagger UI at `/swagger-ui`.
 * **Rate Limiting**: Configurable request throttling per IP.
 * **CORS Support**: Configurable cross-origin resource sharing.
+* **Docker Ready**: Production multi-stage Docker image included.

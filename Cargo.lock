@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "ceres-client"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "ceres-core",
@@ -684,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "ceres-core"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "ceres-db"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "ceres-core",
  "chrono",
@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "ceres-search"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "ceres-client",
@@ -743,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "ceres-server"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",

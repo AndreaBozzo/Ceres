@@ -115,6 +115,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Compute lowercase registry owner
+        id: owner
+        run: echo "value=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -163,8 +167,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ toLower(github.repository_owner) }}/ceres-server:${{ needs.validate.outputs.version }}
-            ghcr.io/${{ toLower(github.repository_owner) }}/ceres-server:latest
+            ghcr.io/${{ steps.owner.outputs.value }}/ceres-server:${{ needs.validate.outputs.version }}
+            ghcr.io/${{ steps.owner.outputs.value }}/ceres-server:latest
 
   dry-run:
     name: Publish Dry Run

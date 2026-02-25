@@ -17,10 +17,10 @@ Thank you for considering contributing to Ceres! This document provides guidelin
 
 ```bash
 # Start PostgreSQL with pgvector
-docker-compose up -d
+docker compose up db -d
 
 # Run migrations
-psql $DATABASE_URL -f migrations/202511290001_init.sql
+make migrate
 
 # Run tests
 cargo test
@@ -53,8 +53,8 @@ RUST_LOG=debug cargo run
 
 ## Areas for Contribution
 
-- **Harvesters**: Add support for new portal types (Socrata, DCAT-AP)
-- **Embeddings**: Implement alternative embedding providers
+- **Portal Types**: Add support for new portal types (Socrata, DCAT-AP) via the `PortalClient` trait
+- **Embeddings**: Implement alternative embedding providers (e.g., Ollama for local inference)
 - **CLI**: Improve user experience and add new commands
 - **Documentation**: Improve guides, examples, and API docs
 - **Tests**: Increase test coverage
