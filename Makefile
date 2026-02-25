@@ -4,7 +4,7 @@
 -include .env
 export
 
-.PHONY: help build test fmt clippy clean docker-up docker-down migrate
+.PHONY: help build test fmt clippy clean docker-build docker-up docker-down migrate
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -33,11 +33,14 @@ clippy: ## Run clippy lints
 clean: ## Clean build artifacts
 	cargo clean
 
-docker-up: ## Start PostgreSQL with docker-compose
-	docker-compose up -d
+docker-build: ## Build the Docker image
+	docker build -t ceres-server .
 
-docker-down: ## Stop PostgreSQL
-	docker-compose down
+docker-up: ## Start services with docker compose
+	docker compose up -d
+
+docker-down: ## Stop services
+	docker compose down
 
 migrate: ## Run database migrations
 	@echo "Initializing migration tracking..."

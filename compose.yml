@@ -17,6 +17,21 @@ services:
       timeout: 5s
       retries: 5
 
+  server:
+    build: .
+    container_name: ceres_server
+    restart: always
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://ceres_user:password@db:5432/ceres_db
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
   # Optional: pgAdmin for database management
   pgadmin:
     image: dpage/pgadmin4

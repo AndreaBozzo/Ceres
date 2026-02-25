@@ -122,16 +122,12 @@ pub fn embedding_dimension(provider: EmbeddingProviderType, model: Option<&str>)
 }
 
 /// Database connection pool configuration.
-///
-/// TODO(config): Support environment variable `DB_MAX_CONNECTIONS`
-/// Default of 5 may be insufficient for high-concurrency scenarios.
 pub struct DbConfig {
     pub max_connections: u32,
 }
 
 impl Default for DbConfig {
     fn default() -> Self {
-        // TODO(config): Read from DB_MAX_CONNECTIONS env var
         Self { max_connections: 5 }
     }
 }
