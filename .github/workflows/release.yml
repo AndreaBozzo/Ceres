@@ -77,21 +77,34 @@ jobs:
         id: changelog
         run: |
           # Extract just the current version's changelog for GitHub Release
-          if ! CHANGELOG=$(git-cliff --current --strip header); then
+          if ! CHANGELOG=$(git-cliff --current --strip header 2>&1); then
             echo "::error::Failed to extract changelog with git-cliff"
             exit 1
           fi
 
+          # Debug: show what git-cliff produced
+          echo "--- git-cliff output (first 20 lines) ---"
+          echo "$CHANGELOG" | head -20
+          echo "--- end ---"
+
           if [[ -z "${CHANGELOG//[[:space:]]/}" ]]; then
             echo "::error::git-cliff returned empty changelog content"
+            echo "::notice::Falling back to CHANGELOG.md extraction"
+            VERSION="${{ steps.version.outputs.version }}"
+            CHANGELOG=$(sed -n "/^## \[$VERSION\]/,/^## \[/{ /^## \[$VERSION\]/p; /^## \[/!p; }" CHANGELOG.md)
+          fi
+
+          if [[ -z "${CHANGELOG//[[:space:]]/}" ]]; then
+            echo "::error::No changelog content found from git-cliff or CHANGELOG.md"
             exit 1
           fi
 
-          # Handle multiline output
+          # Use a unique delimiter to avoid collisions with content
+          DELIMITER="CHANGELOG_$(date +%s)"
           {
-            echo 'content<<EOF'
+            echo "content<<${DELIMITER}"
             echo "$CHANGELOG"
-            echo 'EOF'
+            echo "${DELIMITER}"
           } >> "$GITHUB_OUTPUT"
 
   test:
