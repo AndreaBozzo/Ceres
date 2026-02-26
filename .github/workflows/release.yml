@@ -77,7 +77,8 @@ jobs:
         id: changelog
         run: |
           # Extract just the current version's changelog for GitHub Release
-          if ! CHANGELOG=$(git-cliff --current --strip header 2>&1); then
+          # Capture stdout only; stderr goes to the log for diagnostics
+          if ! CHANGELOG=$(git-cliff --current --strip header); then
             echo "::error::Failed to extract changelog with git-cliff"
             exit 1
           fi
@@ -99,10 +100,17 @@ jobs:
             exit 1
           fi
 
+          # Prepend logo to release body
+          LOGO_URL="https://raw.githubusercontent.com/${{ github.repository }}/master/docs/assets/images/logo.png"
+
           # Use a unique delimiter to avoid collisions with content
           DELIMITER="CHANGELOG_$(date +%s)"
           {
             echo "content<<${DELIMITER}"
+            echo '<div align="center">'
+            echo "  <img src=\"${LOGO_URL}\" alt=\"Ceres\" width=\"600\" />"
+            echo '</div>'
+            echo ""
             echo "$CHANGELOG"
             echo "${DELIMITER}"
           } >> "$GITHUB_OUTPUT"
