@@ -306,6 +306,7 @@ For past releases, see the [CHANGELOG](CHANGELOG.md).
 ## Related Projects
 
 - **[databricks-ceres-pipeline](https://github.com/AndreaBozzo/databricks-ceres-pipeline)** — A Databricks medallion architecture pipeline that provides batch analytics, ML features, and dashboards on top of the same open data index.
+- **[Ceres-Claude-Skill](https://github.com/AndreaBozzo/Ceres-Claude-Skill)** — Claude skill integration for querying and exploring Ceres indexed datasets.
 
 ## Contributing
 
