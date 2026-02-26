@@ -115,10 +115,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Compute lowercase registry owner
-        id: owner
-        run: echo "value=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -153,6 +149,10 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v6
+
+      - name: Compute lowercase registry owner
+        id: owner
+        run: echo "value=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
