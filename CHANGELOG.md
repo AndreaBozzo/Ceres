@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-26
+
+
+### Added
+
+- **docs**: Add new CKAN portals for Emilia-Romagna, Rome, and Puglia to portals.toml, also added dati.gov.it commented
+- Support custom URL templates for portals with non-standard frontends
+- Abstract PortalClient for multiple portal providers
+- Add new verified portals for Italy, Romania, Chile, and Ukraine
+- Stream harvest pipeline to reduce memory on large portals
+- Add multilingual support for portals, including language preference in harvest jobs and datasets
+- Enhance multilingual support by adding description fallback and new test cases, this fully enables nested multilingual portals like Swiss
+- Add Parquet export functionality
+- **portal**: Add Asia-Pacific portals for Tokyo and Australia to the configuration
+- Add dry run flag to preview harvesting without DB writes and embedding calls
+- **docs**: Enhance README and HARVESTING documentation with architecture and flow diagrams
+- Implement batch upsert functionality for datasets and enhance logging in harvest service
+- **server**: Add Bearer token auth middleware
+- Production config and Docker image (#71, #74)
+
+
+### Changed
+
+- Extract DeltaDetector as explicit service
+- **arch**: Remove sqlx/pgvector from ceres-core
+- Extract duplicated code across CLI, server, client, and core
+
+
+### Documentation
+
+- Add Discord badge to README
+- Update Ceres architecture image
+- Update README with new API endpoints and embedding model details
+- Add Open Data Galaxy visualization to README
+- Update README with new dataset and portal statistics
+- Update gif description
+- Update documentation for dataset listing methods and CORS origins example
+- Revamped readme to make it shorter, references related projects
+- Update dataset statistics and improve visualization description in README
+- Update README with enhanced dataset statistics and improved portal configuration details
+- Update release notes for v0.3.0 and add v0.4.0 features
+- Moved refs
+- Update logo, old one moved to Dbx pipeline folder
+- Update documentation for 0.3.0 and improve workflow for building docker image
+- Update dataset count in README to reflect current total of 350k datasets
+
+
+### Fixed
+
+- Update Discord badge link in README
+- Update Discord link in README badge
+- Cleanup
+- Resolve 5 code quality issues from milestone 0.3.0
+
+
+### Miscellaneous
+
+- Audit and update stale TODOs, fix .env.example and embedding model default
+- Remove duped CHANGELOG.md file, git-cliff needs changelog.md to be present in main folder
+- Add inline TODO comments from monthly tech debt review
+- Added blank issue template
+- Comment out server configuration in compose.yml as its optional
+- Update open_data_galaxy.gif image asset
+- Clarified git description
+- Minor docs update + simplified docker release
+
+
+### Performance
+
+- Batch embedding API calls during harvest
 ## [0.2.2] - 2026-02-06
 
 
