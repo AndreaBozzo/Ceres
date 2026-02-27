@@ -14,15 +14,19 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/withastro/starlight' }],
 			sidebar: [
 				{
-					label: 'Guides',
+					label: 'Documentation',
 					items: [
-						// Each item here is one entry in the navigation menu.
-						{ label: 'Example Guide', slug: 'guides/example' },
+						{ label: 'Harvesting architecture', slug: 'harvesting' },
+						{ label: 'Cost Analysis', slug: 'cost' },
 					],
 				},
 				{
-					label: 'Reference',
-					autogenerate: { directory: 'reference' },
+					label: 'Community',
+					items: [
+						{ label: 'Contributing to Ceres', slug: 'contributing' },
+						{ label: 'Security Policy', slug: 'security' },
+						{ label: 'Code of Conduct', slug: 'code_of_conduct' },
+					],
 				},
 			],
 		}),

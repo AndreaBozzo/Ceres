@@ -9,7 +9,7 @@
         <div class="terminal-dot green"></div>
     </div>
     <div class="terminal-content">
-        <code><span class="prompt">$</span> <span class="cmd">ceres harvest https://dati.comune.milano.it</span>
+        <pre><code><span class="prompt">$</span> <span class="cmd">ceres harvest https://dati.comune.milano.it</span>
 
 <span class="out typing-line">Fetching package list...</span>
 <span class="out typing-line">Found 2575 datasets</span>
@@ -19,7 +19,7 @@
 
 <span class="hl typing-line">78%</span>  <span class="typing-line">TPL - Percorsi linee di superficie</span>
 <span class="hl typing-line">76%</span>  <span class="typing-line">TPL - Fermate linee di superficie</span>  
-<span class="hl typing-line">72%</span>  <span class="typing-line">Mobilità: flussi veicolari</span></code>
+<span class="hl typing-line">72%</span>  <span class="typing-line">Mobilità: flussi veicolari</span></code></pre>
     </div>
 </div>
 <button class="try-demo-btn animate-fade-in-up animate-delay-1" id="replay-demo-btn" aria-label="Replay terminal animation">Run Demo Again</button>
@@ -82,12 +82,24 @@
         margin-top: 32px;
     }
 
+    .terminal pre {
+        background: transparent;
+        border: none;
+        padding: 0;
+        margin: 0;
+        box-shadow: none;
+    }
+
     .terminal code {
         font-family: var(--sl-font-mono) !important;
         font-size: 0.85rem;
-        color: #e5e5e5;
+        color: #e5e5e5 !important;
+        background: transparent !important;
         line-height: 1.8;
         display: block;
+        white-space: pre-wrap;
+        border: none;
+        padding: 0;
     }
 
     .terminal .prompt { color: #888; }
@@ -154,12 +166,13 @@
         function animateTerminal() {
             const lines = document.querySelectorAll('.terminal .typing-line');
             lines.forEach((line) => {
-                // Assert type for TS/Astro
                 const htmlLine = line as HTMLElement; 
                 htmlLine.style.animation = 'none';
-                setTimeout(() => {
-                    htmlLine.style.animation = '';
-                }, 10);
+                
+                // Trigger browser reflow to actually reset the animation
+                void htmlLine.offsetWidth;
+                
+                htmlLine.style.animation = '';
             });
         }
 
