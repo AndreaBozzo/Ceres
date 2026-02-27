@@ -9,11 +9,9 @@ Ceres harvests dataset metadata from open data portals and indexes them with vec
 
 ## Two-Tier Optimization
 
-<div align="center">
-	<img src="../../assets/images/harvesting.png" alt="Harvesting Flow Diagram" width="100%" />
-	<br/>
-	<sub>Incremental sync reduces portal calls, delta detection reduces embedding calls.</sub>
-</div>
+![Harvesting Flow Diagram](../../assets/images/harvesting.png)
+
+*Incremental sync reduces portal calls, delta detection reduces embedding calls.*
 
 ### Streaming Pipeline
 
@@ -92,11 +90,9 @@ Content hashes are stored in the `datasets` table in the `content_hash` column (
 
 The embedding API (Gemini) is protected by a circuit breaker to prevent cascading failures during harvesting:
 
-<div align="center">
-	<img src="../../assets/images/circuitbreaker.png" alt="Circuit Breaker Diagram" width="900" />
-	<br/>
-	<sub>Closed, Open, Half-Open states with adaptive recovery timeout on rate limits.</sub>
-</div>
+![Circuit Breaker Diagram](../../assets/images/circuitbreaker.png)
+
+*Closed, Open, Half-Open states with adaptive recovery timeout on rate limits.*
 
 - **Closed**: requests flow normally
 - **Open**: all embedding requests are rejected immediately, datasets are recorded as `Skipped`
