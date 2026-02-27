@@ -9,17 +9,7 @@
         <div class="terminal-dot green"></div>
     </div>
     <div class="terminal-content">
-        <pre><code><span class="prompt">$</span> <span class="cmd">ceres harvest https://dati.comune.milano.it</span>
-
-<span class="out typing-line">Fetching package list...</span>
-<span class="out typing-line">Found 2575 datasets</span>
-<span class="ok typing-line">✓</span> <span class="out typing-line">Harvesting complete: 2575 indexed</span>
-
-<span class="prompt">$</span> <span class="cmd">ceres search "trasporto pubblico"</span>
-
-<span class="hl typing-line">78%</span>  <span class="typing-line">TPL - Percorsi linee di superficie</span>
-<span class="hl typing-line">76%</span>  <span class="typing-line">TPL - Fermate linee di superficie</span>  
-<span class="hl typing-line">72%</span>  <span class="typing-line">Mobilità: flussi veicolari</span></code></pre>
+        <pre><code id="terminal-code"></code></pre>
     </div>
 </div>
 <button class="try-demo-btn animate-fade-in-up animate-delay-1" id="replay-demo-btn" aria-label="Replay terminal animation">Run Demo Again</button>
@@ -124,13 +114,19 @@
         }
     }
 
-    .terminal .typing-line {
-        opacity: 0;
-        animation: typingFade 0.3s ease forwards;
+    .terminal .cursor {
+        display: inline-block;
+        width: 8px;
+        height: 15px;
+        background-color: #e5e5e5;
+        vertical-align: middle;
+        margin-left: 6px;
+        animation: blink 1s step-end infinite;
     }
 
-    @keyframes typingFade {
-        to { opacity: 1; }
+    @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0; }
     }
 
     /* Button styles */
@@ -160,27 +156,119 @@
 
 <script>
     function initializeTerminalAnimation() {
+        const container = document.getElementById('terminal-code');
         const replayBtn = document.getElementById('replay-demo-btn');
-        if (!replayBtn) return;
+        if (!container || !replayBtn) return;
         
-        function animateTerminal() {
-            const lines = document.querySelectorAll('.terminal .typing-line');
-            lines.forEach((line) => {
-                const htmlLine = line as HTMLElement; 
-                htmlLine.style.animation = 'none';
+        let timeoutIds: number[] = [];
+        let isAnimating = false;
+
+        const sequence = [
+            { type: 'cmd', txt: 'ceres harvest https://dati.comune.milano.it', postDelay: 800 },
+            { type: 'out', txt: 'Fetching package list...', postDelay: 1200 },
+            { type: 'out', txt: 'Found 2575 datasets', postDelay: 400 },
+            { type: 'ok',  txt: '✓ Harvesting complete: 2575 indexed', postDelay: 1000 },
+            { type: 'empty', postDelay: 200 },
+            { type: 'cmd', txt: 'ceres search "trasporto pubblico"', postDelay: 600 },
+            { type: 'empty', postDelay: 100 },
+            { type: 'hl',  txt: '78%  TPL - Percorsi linee di superficie', postDelay: 150 },
+            { type: 'hl',  txt: '76%  TPL - Fermate linee di superficie', postDelay: 150 },
+            { type: 'hl',  txt: '72%  Mobilità: flussi veicolari', postDelay: 500 }
+        ];
+
+        function runAnimation() {
+            if (isAnimating) return;
+            isAnimating = true;
+            
+            // Clear current timeouts
+            timeoutIds.forEach(clearTimeout);
+            timeoutIds = [];
+            
+            container.innerHTML = '';
+            
+            let delayTime = 0;
+            
+            for (let i = 0; i < sequence.length; i++) {
+                const step = sequence[i];
                 
-                // Trigger browser reflow to actually reset the animation
-                void htmlLine.offsetWidth;
+                const currentDelay = delayTime;
                 
-                htmlLine.style.animation = '';
-            });
+                const t1 = window.setTimeout(() => {
+                    if (step.type === 'empty') {
+                        container.innerHTML += '\n';
+                    } else if (step.type === 'cmd') {
+                        const lineId = 'line-' + i;
+                        container.innerHTML += `<span class="prompt">$</span> <span class="cmd" id="${lineId}"></span><span class="cursor" id="cursor-${i}"></span>\n`;
+                        
+                        const lineEl = document.getElementById(lineId);
+                        const cursorEl = document.getElementById(`cursor-${i}`);
+                        
+                        // Typewriter effect for command
+                        let charIdx = 0;
+                        function typeChar() {
+                            if (charIdx < step.txt.length && lineEl) {
+                                lineEl.textContent += step.txt.charAt(charIdx);
+                                charIdx++;
+                                // Variable typing speed between 20ms and 70ms
+                                const typeSpeed = Math.random() * 50 + 20;
+                                const tx = window.setTimeout(typeChar, typeSpeed);
+                                timeoutIds.push(tx);
+                            } else {
+                                // Done typing command, pause and remove cursor
+                                const ty = window.setTimeout(() => {
+                                    if (cursorEl) cursorEl.style.display = 'none';
+                                    if (i === sequence.length - 1) isAnimating = false;
+                                }, 300);
+                                timeoutIds.push(ty);
+                            }
+                        }
+                        
+                        // Initial pause before typing starts
+                        const tz = window.setTimeout(typeChar, 300);
+                        timeoutIds.push(tz);
+                        
+                    } else {
+                        // Instant output rendering
+                        let html = '';
+                        if (step.type === 'hl') {
+                            const hlPart = step.txt.substring(0, 3);
+                            const restPart = step.txt.substring(3);
+                            html = `<span class="hl">${hlPart}</span><span class="out">${restPart}</span>\n`;
+                        } else if (step.type === 'ok') {
+                            const okPart = step.txt.substring(0, 1);
+                            const restPart = step.txt.substring(1);
+                            html = `<span class="ok">${okPart}</span><span class="out">${restPart}</span>\n`;
+                        } else {
+                            html = `<span class="out">${step.txt}</span>\n`;
+                        }
+                        
+                        container.innerHTML += html;
+                        
+                        if (i === sequence.length - 1) isAnimating = false;
+                    }
+                }, currentDelay);
+                
+                timeoutIds.push(t1);
+                
+                // Add delay for next line scheduling
+                if (step.type === 'cmd') {
+                    // estimated typing time (avg 45ms per char) + initial pause + post pause
+                    delayTime += (step.txt.length * 45) + 300 + step.postDelay;
+                } else {
+                    delayTime += step.postDelay;
+                }
+            }
         }
 
-        // Run once on load
-        animateTerminal();
+        runAnimation();
 
-        // Attach event listener
-        replayBtn.addEventListener('click', animateTerminal);
+        replayBtn.addEventListener('click', () => {
+             // force stop any ongoing and rerun
+             timeoutIds.forEach(clearTimeout);
+             timeoutIds = [];
+             isAnimating = false;
+             runAnimation();
+        });
     }
 
     // Initialize animation on normal page load 
