@@ -1,3 +1,8 @@
+---
+title: Harvesting in Ceres
+description: How the data extraction works in Ceres
+---
+
 # Harvesting Architecture
 
 Ceres harvests dataset metadata from open data portals and indexes them with vector embeddings for semantic search. Since portals can host tens of thousands of datasets, and embedding generation requires paid API calls, Ceres implements a **two-tier optimization strategy** to minimize both portal API calls and embedding API costs.
