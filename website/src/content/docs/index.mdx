@@ -1,40 +1,71 @@
 ---
-title: Welcome to Starlight
-description: Get started building your docs site with Starlight.
-template: splash # Remove or comment out this line to display the site sidebar on this page.
+title: Ceres
+description: Semantic search engine for open data portals
+template: splash
 hero:
-  tagline: Congrats on setting up a new Starlight project!
+  tagline: Semantic search engine for open data portals
   image:
-    file: ../../assets/houston.webp
+    file: ../../assets/images/Ceres_architecture.png
   actions:
-    - text: Example Guide
-      link: /guides/example/
+    - text: Get Started
+      link: /harvesting/
       icon: right-arrow
-    - text: Read the Starlight docs
-      link: https://starlight.astro.build
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/AndreaBozzo/Ceres
       icon: external
       variant: minimal
 ---
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-## Next steps
+<Card title="The problem" icon="warning">
+Open data portals are everywhere but finding datasets is painful. Keyword search fails 
+("public transport" won't match "mobility data"), portals are fragmented (Italy has 20+ regional ones),
+and there's no way to query across them.
+
+Ceres creates a unified semantic index. You search once, across all harvested portals, by meaning.
+</Card>
+
+## Stack
 
 <CardGrid stagger>
-	<Card title="Update content" icon="pencil">
-		Edit `src/content/docs/index.mdx` to see this page change.
+	<Card title="Backend" icon="setting">
+		- Rust + Tokio
+		- PostgreSQL 16 + pgvector
+		- CKAN API v3
 	</Card>
-	<Card title="Change page layout" icon="document">
-		Delete `template: splash` in `src/content/docs/index.mdx` to display a
-		sidebar on this page.
-	</Card>
-	<Card title="Add new content" icon="add-document">
-		Add Markdown or MDX files to `src/content/docs` to create new pages.
-	</Card>
-	<Card title="Configure your site" icon="setting">
-		Edit your `sidebar` and other config in `astro.config.mjs`.
-	</Card>
-	<Card title="Read the docs" icon="open-book">
-		Learn more in [the Starlight Docs](https://starlight.astro.build/).
+	<Card title="Embeddings" icon="magnifier">
+		- Google Gemini
+		- text-embedding-004
+		- 768 dimensions
 	</Card>
 </CardGrid>
+
+## Quick start
+
+```bash
+git clone https://github.com/AndreaBozzo/Ceres.git
+cd Ceres
+
+docker-compose up -d
+psql $DATABASE_URL -f migrations/202511290001_init.sql
+
+export GEMINI_API_KEY="your-key"
+cargo build --release
+
+./target/release/ceres harvest https://dati.comune.milano.it
+./target/release/ceres search "ambiente" --limit 5
+```
+
+## Roadmap
+
+<CardGrid>
+	<Card title="Now" icon="rocket">
+		CKAN harvester, Gemini embeddings, CLI, PostgreSQL + pgvector
+	</Card>
+	<Card title="Next" icon="star">
+		REST API, Socrata/DCAT support, incremental harvesting, multilingual search
+	</Card>
+</CardGrid>
+
