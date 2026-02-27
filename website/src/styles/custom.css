@@ -1,0 +1,112 @@
+/* Global Fonts */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  --sl-font-system: 'IBM Plex Sans', system-ui, sans-serif;
+  --sl-font-mono: 'IBM Plex Mono', monospace;
+}
+
+/* Base Styles & Typography adjustments */
+.sl-markdown-content {
+	font-family: var(--sl-font-system);
+}
+
+.sl-markdown-content h1 {
+	font-size: 3rem;
+	font-weight: 700;
+	background: linear-gradient(135deg, #1a1a1a 0%, #4a5568 100%);
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	background-clip: text;
+}
+
+html[data-theme='dark'] .sl-markdown-content h1 {
+	background: linear-gradient(135deg, #ffffff 0%, #a0aec0 100%);
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	background-clip: text;
+}
+
+/* Animations that are global */
+@media (prefers-reduced-motion: no-preference) {
+	.animate-fade-in-up {
+		opacity: 0;
+		transform: translateY(20px);
+		animation: fadeInUp 0.6s ease forwards;
+	}
+
+	.animate-delay-1 { animation-delay: 0.1s; }
+	.animate-delay-2 { animation-delay: 0.2s; }
+	.animate-delay-3 { animation-delay: 0.3s; }
+	.animate-delay-4 { animation-delay: 0.4s; }
+	.animate-delay-5 { animation-delay: 0.5s; }
+
+	@keyframes fadeInUp {
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.animate-fade-in-up {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* Feature Grid Card Enhancements */
+.ceres-card {
+	background: var(--sl-color-bg-nav);
+	padding: 24px;
+	border-radius: 8px;
+	border: 1px solid var(--sl-color-hairline);
+	transition: all 0.3s ease;
+	height: 100%;
+}
+
+.ceres-card:hover {
+	border-color: #3b82f6;
+	box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+	transform: translateY(-2px);
+}
+
+html[data-theme='dark'] .ceres-card:hover {
+	box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+
+.ceres-card h3 {
+	font-size: 1rem !important;
+	font-weight: 600 !important;
+	margin-top: 0 !important;
+	margin-bottom: 12px !important;
+	color: var(--sl-color-text-accent);
+}
+
+.ceres-card p, .ceres-card ul {
+	font-size: 0.9rem !important;
+	color: var(--sl-color-gray-2);
+}
+
+.ceres-card ul {
+	padding-left: 20px;
+	margin-top: 8px !important;
+}
+
+.ceres-card li {
+	margin: 6px 0;
+}
+
+/* Architecture Image Wrapper */
+.arch-img-wrapper img {
+	max-width: 100%;
+	border-radius: 8px;
+	border: 1px solid var(--sl-color-hairline);
+	transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.arch-img-wrapper img:hover {
+	transform: scale(1.02);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+}

@@ -1,0 +1,183 @@
+---
+// src/components/Terminal.astro
+---
+
+<div class="terminal animate-fade-in-up">
+    <div class="terminal-dots">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+    </div>
+    <div class="terminal-content">
+        <code><span class="prompt">$</span> <span class="cmd">ceres harvest https://dati.comune.milano.it</span>
+
+<span class="out typing-line">Fetching package list...</span>
+<span class="out typing-line">Found 2575 datasets</span>
+<span class="ok typing-line">✓</span> <span class="out typing-line">Harvesting complete: 2575 indexed</span>
+
+<span class="prompt">$</span> <span class="cmd">ceres search "trasporto pubblico"</span>
+
+<span class="hl typing-line">78%</span>  <span class="typing-line">TPL - Percorsi linee di superficie</span>
+<span class="hl typing-line">76%</span>  <span class="typing-line">TPL - Fermate linee di superficie</span>  
+<span class="hl typing-line">72%</span>  <span class="typing-line">Mobilità: flussi veicolari</span></code>
+    </div>
+</div>
+<button class="try-demo-btn animate-fade-in-up animate-delay-1" id="replay-demo-btn" aria-label="Replay terminal animation">Run Demo Again</button>
+
+<style>
+    .terminal {
+        background: #1a1a1a;
+        border-radius: 8px;
+        padding: 24px;
+        margin: 24px 0 16px 0;
+        overflow-x: auto;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+        position: relative;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    /* Dark mode enhancements */
+    :global(html[data-theme='dark']) .terminal {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        border: 1px solid var(--sl-color-hairline-shade);
+    }
+
+    .terminal:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 32px rgba(59, 130, 246, 0.15);
+    }
+
+    .terminal::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 32px;
+        background: #2a2a2a;
+        border-radius: 8px 8px 0 0;
+        border-bottom: 1px solid #333;
+    }
+
+    .terminal-dots {
+        position: absolute;
+        top: 12px;
+        left: 16px;
+        display: flex;
+        gap: 8px;
+        z-index: 1;
+    }
+
+    .terminal-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+    }
+
+    .terminal-dot.red { background: #ff5f56; }
+    .terminal-dot.yellow { background: #ffbd2e; }
+    .terminal-dot.green { background: #27c93f; }
+
+    .terminal-content {
+        margin-top: 32px;
+    }
+
+    .terminal code {
+        font-family: var(--sl-font-mono) !important;
+        font-size: 0.85rem;
+        color: #e5e5e5;
+        line-height: 1.8;
+        display: block;
+    }
+
+    .terminal .prompt { color: #888; }
+    .terminal .cmd { color: #fff; }
+    .terminal .out { color: #888; }
+    .terminal .hl { 
+        color: #7dd3fc;
+        font-weight: 500;
+    }
+    .terminal .ok { 
+        color: #86efac;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .terminal .ok {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+    }
+
+    .terminal .typing-line {
+        opacity: 0;
+        animation: typingFade 0.3s ease forwards;
+    }
+
+    @keyframes typingFade {
+        to { opacity: 1; }
+    }
+
+    /* Button styles */
+    .try-demo-btn {
+        display: inline-block;
+        padding: 10px 20px;
+        background: #3b82f6;
+        color: white;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.3s ease;
+    }
+
+    .try-demo-btn:hover {
+        background: #2563eb;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .try-demo-btn:active {
+        transform: translateY(0);
+    }
+</style>
+
+<script>
+    function initializeTerminalAnimation() {
+        const replayBtn = document.getElementById('replay-demo-btn');
+        if (!replayBtn) return;
+        
+        function animateTerminal() {
+            const lines = document.querySelectorAll('.terminal .typing-line');
+            lines.forEach((line) => {
+                // Assert type for TS/Astro
+                const htmlLine = line as HTMLElement; 
+                htmlLine.style.animation = 'none';
+                setTimeout(() => {
+                    htmlLine.style.animation = '';
+                }, 10);
+            });
+        }
+
+        // Run once on load
+        animateTerminal();
+
+        // Attach event listener
+        replayBtn.addEventListener('click', animateTerminal);
+    }
+
+    // Initialize animation on normal page load 
+    // and correctly hook into Astro's View Transitions if enabled later
+    document.addEventListener('astro:page-load', initializeTerminalAnimation);
+    
+    // Fallback for standard load if view transitions aren't processing
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        initializeTerminalAnimation();
+    } else {
+        document.addEventListener('DOMContentLoaded', initializeTerminalAnimation);
+    }
+</script>
