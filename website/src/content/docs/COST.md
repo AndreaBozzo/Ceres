@@ -1,3 +1,8 @@
+---
+title: Costs of using external embedders
+description: Break-down of possible costs while utilizing Ceres with external embedding models (OpenAI, Gemini etc.)
+---
+
 # Cost-Effectiveness
 
 API costs, based on the Gemini embedding model, are almost negligible, making the solution extremely efficient even for personal projects or those with limited budgets.

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/images/logo.png" alt="Ceres Logo" width="800" height='auto'/>
+  <img src="website/src/assets/images/logo.png" alt="Ceres Logo" width="800" height='auto'/>
   <h1>Ceres</h1>
   <p><strong>Semantic search engine for open data portals</strong></p>
   <p>
@@ -25,9 +25,7 @@ Ceres harvests metadata from CKAN open data portals and indexes them with vector
 
 ## Why Ceres?
 
-<div align="center">
-  <img src="docs/assets/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" width="800"/>
-  <br/>
+  <img src="website/public/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" width="800"/>
   <sub>354,000+ datasets (dedup. to 270k) from 22 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar.</sub>
 </div>
 
@@ -268,7 +266,7 @@ RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
 ## Architecture
 
 <div align="center">
-  <img src="docs/assets/images/Ceres_architecture.png" alt="Ceres Architecture Diagram" width="100%" />
+  <img src="website/src/assets/images/Ceres_architecture.png" alt="Ceres Architecture Diagram" width="100%" />
   <br/>
   <sub>High-level architecture of Ceres components and data flow.</sub>
 </div>
@@ -276,13 +274,13 @@ RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
 ### Harvesting Internals
 
 <div align="center">
-  <img src="docs/assets/images/harvesting.png" alt="Harvesting Flow Diagram" width="900" />
+  <img src="website/src/assets/images/harvesting.png" alt="Harvesting Flow Diagram" width="900" />
   <br/>
   <sub>Two-tier optimization flow: incremental sync + delta detection.</sub>
 </div>
 
 <div align="center">
-  <img src="docs/assets/images/circuitbreaker.png" alt="Circuit Breaker Diagram" width="900" />
+  <img src="website/src/assets/images/circuitbreaker.png" alt="Circuit Breaker Diagram" width="900" />
   <br/>
   <sub>Circuit breaker states and recovery behavior for embedding requests.</sub>
 </div>

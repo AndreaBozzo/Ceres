@@ -1,3 +1,8 @@
+---
+title: Security
+description: Security policy and practices for Ceres
+---
+
 # Security Policy
 
 ## Supported Versions

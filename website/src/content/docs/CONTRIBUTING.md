@@ -1,3 +1,8 @@
+---
+title: Contributing
+description: Guidelines for contributing to the Ceres project
+---
+
 # Contributing to Ceres
 
 Thank you for considering contributing to Ceres! This document provides guidelines for contributing to the project.

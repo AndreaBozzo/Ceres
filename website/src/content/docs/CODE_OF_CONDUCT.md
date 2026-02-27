@@ -1,3 +1,8 @@
+---
+title: Code of Conduct
+description: Code of Conduct for Ceres contributors and community
+---
+
 # Code of Conduct
 
 ## Our Pledge

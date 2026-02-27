@@ -1,0 +1,20 @@
+---
+// src/components/FeatureGrid.astro
+---
+
+<div class="cols">
+    <slot />
+</div>
+
+<style>
+    .cols {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        margin: 24px 0;
+    }
+
+    @media (max-width: 600px) {
+        .cols { grid-template-columns: 1fr; }
+    }
+</style>

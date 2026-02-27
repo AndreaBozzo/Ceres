@@ -1,0 +1,103 @@
+---
+title: Ceres
+description: Semantic search engine for open data portals
+template: splash
+hero:
+  tagline: Semantic search engine for open data portals
+  image:
+    file: ../../assets/images/logo.png
+  actions:
+    - text: Get Started
+      link: /harvesting/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/AndreaBozzo/Ceres
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+import Terminal from '../../components/Terminal.astro';
+import FeatureGrid from '../../components/FeatureGrid.astro';
+
+<div class="animate-fade-in-up">
+Ceres harvests metadata from CKAN open data portals and indexes them with vector embeddings, enabling semantic search across fragmented data sources.
+
+> *Named after the Roman goddess of harvest and agriculture.*
+</div>
+
+## The Problem
+
+<div class="animate-fade-in-up animate-delay-1">
+<CardGrid>
+  <Card title="Keyword Match Fails" icon="warning">
+    "Public transport" won't find datasets tagged as "mobility data" or "bus schedules".
+  </Card>
+  <Card title="Fragmented Ecosystems" icon="error">
+    Italy alone has over 20+ regional portals with completely different interfaces.
+  </Card>
+  <Card title="No Cross-Querying" icon="magnifier">
+    You fundamentally cannot run a single query across Milano, Roma, and Napoli datasets at once.
+  </Card>
+</CardGrid>
+
+Ceres solves this by creating a unified semantic index. You search once, across all harvested portals, by **meaning**!
+
+<div align="center" style="margin-top: 2rem;">
+  <img src="/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" />
+  <br/>
+  <sub>354,000+ datasets (dedup. to 270k) from 22 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar.</sub>
+</div>
+</div>
+
+
+## See It in Action
+
+<Terminal />
+
+
+## Features and Scale
+
+<FeatureGrid>
+  <div class="ceres-card animate-fade-in-up animate-delay-2">
+    <h3>Enterprise Harvester</h3>
+    <p>Fetch datasets from any CKAN-compatible portal, including multi-lingual ones. Harvest multiple portals simultaneously via <code>portals.toml</code> configurations. Recoverable, fault-tolerant job queue built-in.</p>
+  </div>
+  <div class="ceres-card animate-fade-in-up animate-delay-3">
+    <h3>Streaming & Delta Detection</h3>
+    <p>A memory-efficient streaming pipeline handles massive portals (100k+ datasets). Built-in Smart Delta Detection skips embedding un-changed entities — yielding 99.8% API cost savings per run.</p>
+  </div>
+  <div class="ceres-card animate-fade-in-up animate-delay-4">
+    <h3>Production-Ready Scale</h3>
+    <p>Currently powers an index of <strong>354,000+ datasets</strong> across 25 pre-verified portals (from Australia to Italy to HDX). All exposed via Axum REST APIs with OpenAPI interfaces and OpenAPI docs.</p>
+  </div>
+  <div class="ceres-card animate-fade-in-up animate-delay-5">
+    <h3>Tech Stack & Extensibility</h3>
+    <ul>
+      <li><strong>Core:</strong> Rust (async with Tokio)</li>
+      <li><strong>Database:</strong> PostgreSQL 16+ with <code>pgvector</code></li>
+      <li><strong>Embeddings:</strong> Pluggable Backend (Google Gemini, OpenAI)</li>
+      <li><strong>Exports:</strong> JSON, CSV, JSON Lines, Parquet Supported!</li>
+    </ul>
+  </div>
+</FeatureGrid>
+
+
+## Architecture
+<div class="arch-img-wrapper animate-fade-in-up animate-delay-5">
+  ![Ceres Architecture Diagram](../../assets/images/Ceres_architecture.png)
+</div>
+
+## Roadmap
+
+<FeatureGrid>
+  <div class="ceres-card animate-fade-in-up">
+    <h3>Now (v0.3.0)</h3>
+    <p>Multi-portal streaming harvests, Gemini / OpenAI embeddings, Advanced CLI, PostgreSQL + pgvector, Axum REST API, CSV/JSON/Parquet export capabilities.</p>
+  </div>
+  <div class="ceres-card animate-fade-in-up">
+    <h3>Next (v0.4.0)</h3>
+    <p>Scale and ecosystem tuning: Production HNSW index tuning, Multi-tenancy support, Local embeddings via Ollama, Schema-level search, Socrata/DCAT-AP expansion.</p>
+  </div>
+</FeatureGrid>
