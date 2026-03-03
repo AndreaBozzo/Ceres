@@ -278,7 +278,7 @@ impl SyncConfig {
     pub fn harvest_config(&self) -> HarvestConfig {
         HarvestConfig {
             concurrency: self.concurrency,
-            upsert_batch_size: 500,
+            upsert_batch_size: self.embedding_batch_size,
             force_full_sync: self.force_full_sync,
             dry_run: self.dry_run,
         }

@@ -147,11 +147,6 @@ where
             "Starting embedding pass"
         );
 
-        let datasets = self
-            .store
-            .list_pending_embeddings(portal_filter, None)
-            .await?;
-
         let mut stats = EmbeddingStats {
             total,
             ..Default::default()
@@ -165,27 +160,46 @@ where
 
         let mut processed = 0usize;
 
-        for batch in datasets.chunks(effective_batch_size) {
+        // Page through pending datasets to avoid loading everything into memory.
+        // Each iteration fetches up to `page_size` rows, processes them, then
+        // fetches the next page. This keeps memory bounded even with 350k+ pending.
+        let page_size = effective_batch_size * 10; // ~10 batches per page
+        loop {
             if cancel_token.is_cancelled() {
                 tracing::info!("Embedding pass cancelled");
                 break;
             }
 
-            self.process_batch(batch, &circuit_breaker, &mut stats)
-                .await;
+            let page = self
+                .store
+                .list_pending_embeddings(portal_filter, Some(page_size))
+                .await?;
 
-            processed += batch.len();
+            if page.is_empty() {
+                break;
+            }
 
-            // Report progress reusing existing HarvestEvent::DatasetProcessed
-            reporter.report(HarvestEvent::DatasetProcessed {
-                current: processed,
-                total,
-                created: 0,
-                updated: stats.embedded,
-                unchanged: 0,
-                failed: stats.failed,
-                skipped: stats.skipped,
-            });
+            for batch in page.chunks(effective_batch_size) {
+                if cancel_token.is_cancelled() {
+                    tracing::info!("Embedding pass cancelled");
+                    break;
+                }
+
+                self.process_batch(batch, &circuit_breaker, &mut stats)
+                    .await;
+
+                processed += batch.len();
+
+                reporter.report(HarvestEvent::DatasetProcessed {
+                    current: processed,
+                    total,
+                    created: 0,
+                    updated: stats.embedded,
+                    unchanged: 0,
+                    failed: stats.failed,
+                    skipped: stats.skipped,
+                });
+            }
         }
 
         tracing::info!(
@@ -207,18 +221,34 @@ where
         circuit_breaker: &CircuitBreaker,
         stats: &mut EmbeddingStats,
     ) {
-        // Compute text to embed for each dataset
-        let texts: Vec<String> = datasets
+        // Compute text to embed for each dataset, filtering out empty text
+        let embeddable: Vec<(&crate::Dataset, String)> = datasets
             .iter()
-            .map(|d| {
-                format!(
+            .filter_map(|d| {
+                let text = format!(
                     "{} {}",
                     d.title,
                     d.description.as_deref().unwrap_or_default()
-                )
+                );
+                if text.trim().is_empty() {
+                    None
+                } else {
+                    Some((d, text))
+                }
             })
             .collect();
 
+        let skipped_empty = datasets.len() - embeddable.len();
+        if skipped_empty > 0 {
+            tracing::debug!(skipped_empty, "Skipped datasets with empty text");
+            stats.failed += skipped_empty;
+        }
+
+        if embeddable.is_empty() {
+            return;
+        }
+
+        let texts: Vec<String> = embeddable.iter().map(|(_, t)| t.clone()).collect();
         let batch_size = texts.len();
 
         match circuit_breaker
@@ -236,33 +266,50 @@ where
                     return;
                 }
 
-                // Build NewDataset items with embeddings for upsert
-                let upsert_datasets: Vec<NewDataset> = datasets
+                // Build NewDataset items with embeddings for upsert.
+                // Use existing content_hash from DB — it's always present for stored datasets.
+                let upsert_datasets: Vec<NewDataset> = embeddable
                     .iter()
                     .zip(embeddings)
-                    .map(|(d, emb)| NewDataset {
-                        original_id: d.original_id.clone(),
-                        source_portal: d.source_portal.clone(),
-                        url: d.url.clone(),
-                        title: d.title.clone(),
-                        description: d.description.clone(),
-                        embedding: Some(emb),
-                        metadata: d.metadata.clone(),
-                        content_hash: d.content_hash.clone().unwrap_or_default(),
+                    .filter_map(|((d, _), emb)| {
+                        let content_hash = match &d.content_hash {
+                            Some(h) => h.clone(),
+                            None => {
+                                tracing::warn!(
+                                    original_id = %d.original_id,
+                                    "Dataset missing content_hash, skipping embedding upsert"
+                                );
+                                return None;
+                            }
+                        };
+                        Some(NewDataset {
+                            original_id: d.original_id.clone(),
+                            source_portal: d.source_portal.clone(),
+                            url: d.url.clone(),
+                            title: d.title.clone(),
+                            description: d.description.clone(),
+                            embedding: Some(emb),
+                            metadata: d.metadata.clone(),
+                            content_hash,
+                        })
                     })
                     .collect();
 
+                let skipped_no_hash = batch_size - upsert_datasets.len();
+                stats.failed += skipped_no_hash;
+                let upsert_count = upsert_datasets.len();
+
                 match self.store.batch_upsert(&upsert_datasets).await {
                     Ok(_) => {
-                        stats.embedded += batch_size;
+                        stats.embedded += upsert_count;
                     }
                     Err(e) => {
                         tracing::warn!(
-                            count = batch_size,
+                            count = upsert_count,
                             error = %e,
                             "Failed to batch upsert datasets with embeddings"
                         );
-                        stats.failed += batch_size;
+                        stats.failed += upsert_count;
                     }
                 }
             }
