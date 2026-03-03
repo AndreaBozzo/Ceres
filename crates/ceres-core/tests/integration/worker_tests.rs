@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use ceres_core::config::PortalType;
 use ceres_core::error::AppError;
-use ceres_core::harvest::HarvestService;
 use ceres_core::job::{JobStatus, WorkerConfig};
+use ceres_core::pipeline::HarvestPipeline;
 use ceres_core::progress::SilentReporter;
 use ceres_core::traits::PortalClientFactory;
 use ceres_core::worker::{SilentWorkerReporter, WorkerService};
@@ -38,8 +38,8 @@ fn make_worker(
     let store = MockDatasetStore::new();
     let embedding = MockEmbeddingProvider::new();
     let factory = MockPortalClientFactory::new(datasets);
-    let harvest = HarvestService::new(store, embedding, factory);
-    WorkerService::new(queue, harvest, test_worker_config())
+    let pipeline = HarvestPipeline::new(store, embedding, factory);
+    WorkerService::new(queue, pipeline, test_worker_config())
 }
 
 /// Failing factory that simulates network errors during harvest.
@@ -66,8 +66,8 @@ fn make_failing_worker(
 {
     let store = MockDatasetStore::new();
     let embedding = MockEmbeddingProvider::new();
-    let harvest = HarvestService::new(store, embedding, FailingPortalClientFactory);
-    WorkerService::new(queue, harvest, test_worker_config())
+    let pipeline = HarvestPipeline::new(store, embedding, FailingPortalClientFactory);
+    WorkerService::new(queue, pipeline, test_worker_config())
 }
 
 /// Wait for a job to reach a terminal state, with timeout.

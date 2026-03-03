@@ -109,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
     let worker_handle = {
         let worker = WorkerService::new(
             app_state.job_repo.clone(),
-            app_state.harvest_service.clone(),
+            app_state.harvest_pipeline.clone(),
             WorkerConfig::default(),
         );
         tokio::spawn(async move {

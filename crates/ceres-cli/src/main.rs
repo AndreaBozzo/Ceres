@@ -11,9 +11,10 @@ use tracing_subscriber::FmtSubscriber;
 use ceres_client::{EmbeddingConfig, EmbeddingProviderEnum, PortalClientFactoryEnum};
 use ceres_core::traits::EmbeddingProvider;
 use ceres_core::{
-    BatchHarvestSummary, DbConfig, ExportFormat as CoreExportFormat, ExportService, HarvestService,
-    ParquetExportConfig, ParquetExportResult, ParquetExportService, PortalEntry, PortalType,
-    SearchService, SyncConfig, SyncStats, TracingReporter, load_portals_config,
+    BatchHarvestSummary, DbConfig, EmbeddingService, EmbeddingStats,
+    ExportFormat as CoreExportFormat, ExportService, HarvestConfig, HarvestPipeline,
+    HarvestService, ParquetExportConfig, ParquetExportResult, ParquetExportService, PortalEntry,
+    PortalType, SearchService, SyncConfig, SyncStats, TracingReporter, load_portals_config,
 };
 use ceres_db::DatasetRepository;
 use ceres_search::{Command, Config, ExportFormat};
@@ -40,28 +41,31 @@ async fn main() -> anyhow::Result<()> {
 
     let repo = DatasetRepository::new(pool);
 
-    // Create embedding provider based on configuration
-    let embedding_client = EmbeddingProviderEnum::from_config(&EmbeddingConfig {
-        provider: config.embedding_provider.clone(),
-        gemini_api_key: config.gemini_api_key.clone(),
-        openai_api_key: config.openai_api_key.clone(),
-        embedding_model: config.embedding_model.clone(),
-    })?;
+    // Helper: create embedding provider lazily (only when needed)
+    let create_embedding = || -> anyhow::Result<EmbeddingProviderEnum> {
+        EmbeddingProviderEnum::from_config(&EmbeddingConfig {
+            provider: config.embedding_provider.clone(),
+            gemini_api_key: config.gemini_api_key.clone(),
+            openai_api_key: config.openai_api_key.clone(),
+            embedding_model: config.embedding_model.clone(),
+        })
+    };
 
-    // Validate embedding dimension matches database configuration
-    repo.validate_embedding_dimension(embedding_client.dimension())
-        .await
-        .context("Embedding provider validation failed")?;
+    // Helper: create + validate embedding provider
+    let create_and_validate_embedding = || async {
+        let client = create_embedding()?;
+        repo.validate_embedding_dimension(client.dimension())
+            .await
+            .context("Embedding provider validation failed")?;
+        info!(
+            "Using {} embedding provider ({} dimensions)",
+            client.name(),
+            client.dimension()
+        );
+        Ok::<_, anyhow::Error>(client)
+    };
 
-    info!(
-        "Using {} embedding provider ({} dimensions)",
-        embedding_client.name(),
-        embedding_client.dimension()
-    );
-
-    // Create services with concrete implementations (dependency injection)
     let portal_factory = PortalClientFactoryEnum::new();
-    let search_service = SearchService::new(repo.clone(), embedding_client.clone());
 
     match config.command {
         Command::Harvest {
@@ -70,24 +74,57 @@ async fn main() -> anyhow::Result<()> {
             config: config_path,
             full_sync,
             dry_run,
+            metadata_only,
         } => {
-            // Create HarvestService with appropriate config
-            let mut sync_config = SyncConfig::default();
+            let mut harvest_config = HarvestConfig::default();
             if full_sync {
-                sync_config = sync_config.with_full_sync();
+                harvest_config.force_full_sync = true;
             }
             if dry_run {
-                sync_config = sync_config.with_dry_run();
+                harvest_config.dry_run = true;
             }
-            let harvest_service = HarvestService::with_config(
-                repo.clone(),
-                embedding_client.clone(),
-                portal_factory,
-                sync_config,
-            );
-            handle_harvest(&harvest_service, portal_url, portal, config_path).await?;
+
+            if metadata_only {
+                // Metadata-only: no embedding provider needed
+                let harvest_service =
+                    HarvestService::with_config(repo.clone(), portal_factory, harvest_config);
+                handle_harvest_metadata_only(&harvest_service, portal_url, portal, config_path)
+                    .await?;
+            } else {
+                // Default: harvest + embed via pipeline
+                let embedding_client = create_and_validate_embedding().await?;
+                let sync_config = {
+                    let mut sc = SyncConfig::default();
+                    if full_sync {
+                        sc = sc.with_full_sync();
+                    }
+                    if dry_run {
+                        sc = sc.with_dry_run();
+                    }
+                    sc
+                };
+                let pipeline = HarvestPipeline::from_sync_config(
+                    repo.clone(),
+                    embedding_client,
+                    portal_factory,
+                    sync_config,
+                );
+                handle_harvest(&pipeline, portal_url, portal, config_path).await?;
+            }
+        }
+        Command::Embed { portal } => {
+            let embedding_client = create_and_validate_embedding().await?;
+            let embedding_service = EmbeddingService::new(repo.clone(), embedding_client);
+            let reporter = TracingReporter;
+            let cancel_token = tokio_util::sync::CancellationToken::new();
+            let stats = embedding_service
+                .embed_pending(portal.as_deref(), &reporter, cancel_token)
+                .await?;
+            print_embedding_summary(&stats);
         }
         Command::Search { query, limit } => {
+            let embedding_client = create_and_validate_embedding().await?;
+            let search_service = SearchService::new(repo.clone(), embedding_client);
             search(&search_service, &query, limit).await?;
         }
         Command::Export {
@@ -131,16 +168,9 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Handle the harvest command with its three modes:
-/// 1. Direct URL (backward compatible)
-/// 2. Named portal from config
-/// 3. Batch mode (all enabled portals)
+/// Handle the harvest command (harvest + embed via pipeline).
 async fn handle_harvest(
-    harvest_service: &HarvestService<
-        DatasetRepository,
-        EmbeddingProviderEnum,
-        PortalClientFactoryEnum,
-    >,
+    pipeline: &HarvestPipeline<DatasetRepository, EmbeddingProviderEnum, PortalClientFactoryEnum>,
     portal_url: Option<String>,
     portal_name: Option<String>,
     config_path: Option<PathBuf>,
@@ -148,16 +178,15 @@ async fn handle_harvest(
     let reporter = TracingReporter;
 
     match (portal_url, portal_name) {
-        // Mode 1: Direct URL (backward compatible, assumes CKAN)
         (Some(url), None) => {
             info!("Syncing portal: {}", url);
-            let stats = harvest_service
+            let (result, embed_stats) = pipeline
                 .sync_portal_with_progress(&url, None, "en", &reporter, PortalType::Ckan)
                 .await?;
-            print_single_portal_summary(&url, &stats);
+            print_single_portal_summary(&url, &result.stats);
+            print_embedding_summary(&embed_stats);
         }
 
-        // Mode 2: Named portal from config
         (None, Some(name)) => {
             let portals_config = load_portals_config(config_path)?
                 .ok_or_else(|| anyhow::anyhow!(
@@ -176,7 +205,7 @@ async fn handle_harvest(
             }
 
             info!("Syncing portal: {}", portal.url);
-            let stats = harvest_service
+            let (result, embed_stats) = pipeline
                 .sync_portal_with_progress(
                     &portal.url,
                     portal.url_template.as_deref(),
@@ -185,10 +214,10 @@ async fn handle_harvest(
                     portal.portal_type,
                 )
                 .await?;
-            print_single_portal_summary(&portal.url, &stats);
+            print_single_portal_summary(&portal.url, &result.stats);
+            print_embedding_summary(&embed_stats);
         }
 
-        // Mode 3: Batch mode (all enabled portals)
         (None, None) => {
             let portals_config = load_portals_config(config_path)?
                 .ok_or_else(|| anyhow::anyhow!(
@@ -207,6 +236,88 @@ async fn handle_harvest(
             info!("Starting batch harvest of {} portals", enabled.len());
             info!("═══════════════════════════════════════════════════════");
 
+            let summary = pipeline
+                .batch_harvest_with_progress(&enabled, &reporter)
+                .await;
+
+            print_batch_summary(&summary);
+        }
+
+        (Some(_), Some(_)) => unreachable!("portal_url and portal are mutually exclusive"),
+    }
+
+    Ok(())
+}
+
+/// Handle the harvest command in metadata-only mode (no embedding).
+async fn handle_harvest_metadata_only(
+    harvest_service: &HarvestService<DatasetRepository, PortalClientFactoryEnum>,
+    portal_url: Option<String>,
+    portal_name: Option<String>,
+    config_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let reporter = TracingReporter;
+
+    match (portal_url, portal_name) {
+        (Some(url), None) => {
+            info!("Syncing portal (metadata only): {}", url);
+            let stats = harvest_service
+                .sync_portal_with_progress(&url, None, "en", &reporter, PortalType::Ckan)
+                .await?;
+            print_single_portal_summary(&url, &stats);
+        }
+
+        (None, Some(name)) => {
+            let portals_config = load_portals_config(config_path)?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "No configuration file found. Create ~/.config/ceres/portals.toml or use --config"
+                ))?;
+
+            let portal = portals_config
+                .find_by_name(&name)
+                .ok_or_else(|| anyhow::anyhow!("Portal '{}' not found in configuration", name))?;
+
+            if !portal.enabled {
+                info!(
+                    "Note: Portal '{}' is marked as disabled in configuration",
+                    name
+                );
+            }
+
+            info!("Syncing portal (metadata only): {}", portal.url);
+            let stats = harvest_service
+                .sync_portal_with_progress(
+                    &portal.url,
+                    portal.url_template.as_deref(),
+                    portal.language(),
+                    &reporter,
+                    portal.portal_type,
+                )
+                .await?;
+            print_single_portal_summary(&portal.url, &stats);
+        }
+
+        (None, None) => {
+            let portals_config = load_portals_config(config_path)?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "No configuration file found. Create ~/.config/ceres/portals.toml or use --config"
+                ))?;
+
+            let enabled: Vec<&PortalEntry> = portals_config.enabled_portals();
+
+            if enabled.is_empty() {
+                info!("No enabled portals found in configuration.");
+                info!("Add portals to ~/.config/ceres/portals.toml or use: ceres harvest <url>");
+                return Ok(());
+            }
+
+            info!("═══════════════════════════════════════════════════════");
+            info!(
+                "Starting batch harvest (metadata only) of {} portals",
+                enabled.len()
+            );
+            info!("═══════════════════════════════════════════════════════");
+
             let summary = harvest_service
                 .batch_harvest_with_progress(&enabled, &reporter)
                 .await;
@@ -214,11 +325,23 @@ async fn handle_harvest(
             print_batch_summary(&summary);
         }
 
-        // This case is prevented by clap's conflicts_with
         (Some(_), Some(_)) => unreachable!("portal_url and portal are mutually exclusive"),
     }
 
     Ok(())
+}
+
+/// Print a summary of embedding results.
+fn print_embedding_summary(stats: &EmbeddingStats) {
+    if stats.total == 0 {
+        return;
+    }
+    info!("───────────────────────────────────────────────────────");
+    info!("Embedding results:");
+    info!("  Embedded:            {}", stats.embedded);
+    info!("  Failed:              {}", stats.failed);
+    info!("  Skipped:             {}", stats.skipped);
+    info!("  Total:               {}", stats.total);
 }
 
 /// Print a summary of batch harvesting results.

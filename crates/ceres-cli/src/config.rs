@@ -93,6 +93,19 @@ pub enum Command {
         /// Preview what would be harvested without writing to DB or calling embedding API
         #[arg(long)]
         dry_run: bool,
+
+        /// Only harvest metadata (no embedding). Does not require an API key.
+        #[arg(long)]
+        metadata_only: bool,
+    },
+    /// Generate embeddings for datasets that don't have them yet
+    #[command(after_help = "Examples:
+  ceres embed                                     # Embed all pending datasets
+  ceres embed --portal https://dati.comune.milano.it  # Embed pending from one portal")]
+    Embed {
+        /// Filter to a specific portal URL
+        #[arg(short, long)]
+        portal: Option<String>,
     },
     /// Search indexed datasets using semantic similarity
     #[command(after_help = "Example: ceres search \"trasporto pubblico\" --limit 10")]

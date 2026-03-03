@@ -478,6 +478,48 @@ impl DatasetStore for MockDatasetStore {
             .collect())
     }
 
+    async fn list_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Dataset>, AppError> {
+        let datasets = self.datasets.lock().unwrap();
+        let results: Vec<Dataset> = datasets
+            .iter()
+            .filter(|((portal, _), stored)| {
+                stored.dataset.embedding.is_none()
+                    && portal_filter.is_none_or(|filter| portal == filter)
+            })
+            .take(limit.unwrap_or(usize::MAX))
+            .map(|((_, _), stored)| Dataset {
+                id: stored.id,
+                original_id: stored.dataset.original_id.clone(),
+                source_portal: stored.dataset.source_portal.clone(),
+                url: stored.dataset.url.clone(),
+                title: stored.dataset.title.clone(),
+                description: stored.dataset.description.clone(),
+                embedding: stored.dataset.embedding.clone(),
+                metadata: stored.dataset.metadata.clone(),
+                first_seen_at: chrono::Utc::now(),
+                last_updated_at: chrono::Utc::now(),
+                content_hash: Some(stored.dataset.content_hash.clone()),
+            })
+            .collect();
+        Ok(results)
+    }
+
+    async fn count_pending_embeddings(&self, portal_filter: Option<&str>) -> Result<i64, AppError> {
+        let datasets = self.datasets.lock().unwrap();
+        let count = datasets
+            .iter()
+            .filter(|((portal, _), stored)| {
+                stored.dataset.embedding.is_none()
+                    && portal_filter.is_none_or(|filter| portal == filter)
+            })
+            .count();
+        Ok(count as i64)
+    }
+
     async fn health_check(&self) -> Result<(), AppError> {
         // Mock is always healthy
         Ok(())

@@ -1,7 +1,7 @@
 use tokio_util::sync::CancellationToken;
 
 use ceres_client::{EmbeddingProviderEnum, PortalClientFactoryEnum};
-use ceres_core::{ExportService, HarvestService, PortalsConfig, SearchService};
+use ceres_core::{ExportService, HarvestPipeline, PortalsConfig, SearchService};
 use ceres_db::{DatasetRepository, JobRepository};
 
 /// Shared application state for all handlers.
@@ -14,9 +14,9 @@ pub struct AppState {
     /// Search service for semantic search operations
     pub search_service: SearchService<DatasetRepository, EmbeddingProviderEnum>,
 
-    /// Harvest service for portal synchronization
-    pub harvest_service:
-        HarvestService<DatasetRepository, EmbeddingProviderEnum, PortalClientFactoryEnum>,
+    /// Combined harvest + embed pipeline for portal synchronization
+    pub harvest_pipeline:
+        HarvestPipeline<DatasetRepository, EmbeddingProviderEnum, PortalClientFactoryEnum>,
 
     /// Export service for streaming data exports
     pub export_service: ExportService<DatasetRepository>,
@@ -52,7 +52,7 @@ impl AppState {
 
         Self {
             search_service: SearchService::new(dataset_repo.clone(), embedding_client.clone()),
-            harvest_service: HarvestService::new(
+            harvest_pipeline: HarvestPipeline::new(
                 dataset_repo.clone(),
                 embedding_client,
                 portal_factory,

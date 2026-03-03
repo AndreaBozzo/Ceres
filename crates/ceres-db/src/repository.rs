@@ -587,6 +587,84 @@ impl DatasetRepository {
         Ok(())
     }
 
+    /// Lists datasets that have no embedding vector (`embedding IS NULL`).
+    ///
+    /// Used by the embedding service to find datasets needing embedding.
+    /// Results are ordered by `last_updated_at DESC` so the most recently
+    /// harvested datasets are embedded first.
+    pub async fn list_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Dataset>, AppError> {
+        let rows = if let Some(portal) = portal_filter {
+            if let Some(lim) = limit {
+                let query = format!(
+                    "SELECT {} FROM datasets WHERE embedding IS NULL AND source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2",
+                    DATASET_COLUMNS
+                );
+                sqlx::query_as::<_, DatasetRow>(&query)
+                    .bind(portal)
+                    .bind(lim as i64)
+                    .fetch_all(&self.pool)
+                    .await
+            } else {
+                let query = format!(
+                    "SELECT {} FROM datasets WHERE embedding IS NULL AND source_portal = $1 ORDER BY last_updated_at DESC",
+                    DATASET_COLUMNS
+                );
+                sqlx::query_as::<_, DatasetRow>(&query)
+                    .bind(portal)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+        } else if let Some(lim) = limit {
+            let query = format!(
+                "SELECT {} FROM datasets WHERE embedding IS NULL ORDER BY last_updated_at DESC LIMIT $1",
+                DATASET_COLUMNS
+            );
+            sqlx::query_as::<_, DatasetRow>(&query)
+                .bind(lim as i64)
+                .fetch_all(&self.pool)
+                .await
+        } else {
+            let query = format!(
+                "SELECT {} FROM datasets WHERE embedding IS NULL ORDER BY last_updated_at DESC",
+                DATASET_COLUMNS
+            );
+            sqlx::query_as::<_, DatasetRow>(&query)
+                .fetch_all(&self.pool)
+                .await
+        }
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(rows.into_iter().map(Dataset::from).collect())
+    }
+
+    /// Counts datasets with `embedding IS NULL`.
+    ///
+    /// Used for progress reporting in the embedding service.
+    pub async fn count_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+    ) -> Result<i64, AppError> {
+        let row: (i64,) = if let Some(portal) = portal_filter {
+            sqlx::query_as(
+                "SELECT COUNT(*) FROM datasets WHERE embedding IS NULL AND source_portal = $1",
+            )
+            .bind(portal)
+            .fetch_one(&self.pool)
+            .await
+        } else {
+            sqlx::query_as("SELECT COUNT(*) FROM datasets WHERE embedding IS NULL")
+                .fetch_one(&self.pool)
+                .await
+        }
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(row.0)
+    }
+
     /// Returns aggregated database statistics.
     pub async fn get_stats(&self) -> Result<DatabaseStats, AppError> {
         let row: StatsRow = sqlx::query_as(
@@ -809,6 +887,18 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
 
     async fn get_duplicate_titles(&self) -> Result<std::collections::HashSet<String>, AppError> {
         DatasetRepository::get_cross_portal_duplicate_titles(self).await
+    }
+
+    async fn list_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Dataset>, AppError> {
+        DatasetRepository::list_pending_embeddings(self, portal_filter, limit).await
+    }
+
+    async fn count_pending_embeddings(&self, portal_filter: Option<&str>) -> Result<i64, AppError> {
+        DatasetRepository::count_pending_embeddings(self, portal_filter).await
     }
 
     async fn health_check(&self) -> Result<(), AppError> {

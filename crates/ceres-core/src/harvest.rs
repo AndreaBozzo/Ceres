@@ -1,19 +1,19 @@
 //! Harvest service for portal synchronization.
 //!
-//! This module provides the core business logic for harvesting datasets from
-//! open data portals, including delta detection, embedding generation, and persistence.
+//! This module provides the core business logic for harvesting dataset metadata
+//! from open data portals. Embedding generation is handled separately by
+//! [`EmbeddingService`](crate::embedding::EmbeddingService).
 //!
 //! # Architecture
 //!
-//! The [`HarvestService`] is generic over three traits:
+//! The [`HarvestService`] is generic over two traits:
 //! - [`DatasetStore`] - for database operations
-//! - [`EmbeddingProvider`] - for generating embeddings
 //! - [`PortalClientFactory`] - for creating portal clients
 //!
 //! This enables:
 //! - **Testing**: Mock implementations for unit tests
-//! - **Flexibility**: Different backends (PostgreSQL, SQLite, different embedding APIs)
-//! - **Decoupling**: Core logic independent of specific implementations
+//! - **Flexibility**: Different backends (PostgreSQL, SQLite, etc.)
+//! - **Decoupling**: Harvesting is independent of embedding
 //!
 //! # Features
 //!
@@ -21,43 +21,19 @@
 //!   filter to fetch only recently modified datasets (implemented in #10).
 //! - **Fallback**: If incremental sync fails, automatically falls back to full sync.
 //! - **Force Full Sync**: Use `--full-sync` flag to bypass incremental harvesting.
+//! - **Metadata-only**: No embedding provider required — datasets are stored with
+//!   `embedding = NULL` and the existing SQL `COALESCE` preserves any prior embeddings.
 //!
-//! # Circuit Breaker
+//! # Pipeline
 //!
-//! The service uses a circuit breaker pattern to protect against cascading failures
-//! when external APIs (Gemini for embeddings) experience issues. The circuit breaker:
-//! - Opens after N consecutive failures (configurable via `CircuitBreakerConfig`)
-//! - Applies exponential backoff on rate limits (HTTP 429)
-//! - Transitions through Closed -> Open -> HalfOpen -> Closed states
-//! - Skips datasets when open (recorded as `SyncOutcome::Skipped`)
+//! The harvest pipeline uses a two-phase architecture:
+//! 1. **Pre-process** (parallel): fetch datasets, hash check, delta detection
+//! 2. **Persist** (sequential batches): batch upsert to database (no embedding)
 //!
-//! # Batch Embedding
-//!
-//! The pipeline uses a two-phase architecture for efficient embedding:
-//! 1. **Pre-process** (parallel): fetch, hash check, text extraction
-//! 2. **Batch embed** (sequential batches): `generate_batch()` via circuit breaker
-//!
-//! Batch size is `min(SyncConfig::embedding_batch_size, provider.max_batch_size())`.
-//!
-//! # Job Queue
-//!
-//! The REST API uses a persistent job queue backed by a `harvest_jobs` table.
-//! On `POST /api/v1/harvest`, a job is created with status='pending' and a 202
-//! is returned. A background `WorkerService` polls for jobs and processes them
-//! using `HarvestService`. See `ceres_core::worker` and `ceres_db::JobRepository`.
-//!
-//! # Cancellation Support
-//!
-//! The `*_cancellable` methods accept a `CancellationToken` for graceful shutdown:
-//! - `sync_portal_cancellable` / `sync_portal_with_progress_cancellable`
-//! - `batch_harvest_cancellable` / `batch_harvest_with_progress_cancellable`
-//!
-//! On cancellation, these methods:
-//! - Stop making new API requests
-//! - Allow in-flight operations to complete
-//! - Save partial statistics to database with "cancelled" status
-//! - Return early with a `SyncResult` indicating cancellation
+//! Embedding is applied separately via [`EmbeddingService`](crate::embedding::EmbeddingService)
+//! or via the combined [`HarvestPipeline`](crate::pipeline::HarvestPipeline).
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -65,25 +41,19 @@ use chrono::Utc;
 use futures::stream::{self, StreamExt};
 use tokio_util::sync::CancellationToken;
 
-use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerError};
-use crate::config::PortalType;
+use crate::config::{HarvestConfig, PortalType};
 use crate::models::NewDataset;
 use crate::progress::{HarvestEvent, ProgressReporter, SilentReporter};
 use crate::sync::{
     AtomicSyncStats, ContentHashDetector, DeltaDetector, SyncOutcome, SyncResult, SyncStatus,
 };
-use crate::traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFactory};
-use crate::{
-    AppError, BatchHarvestSummary, PortalEntry, PortalHarvestResult, SyncConfig, SyncStats,
-};
+use crate::traits::{DatasetStore, PortalClient, PortalClientFactory};
+use crate::{AppError, BatchHarvestSummary, PortalEntry, PortalHarvestResult, SyncStats};
 
-/// A dataset that has been pre-processed (hash check, text extraction)
-/// and is ready for batch embedding.
+/// A dataset that has been pre-processed (hash check) and is ready for persistence.
 struct PreProcessedDataset {
-    /// The dataset with all fields populated except possibly embedding.
+    /// The dataset with all fields populated except embedding (always None).
     dataset: NewDataset,
-    /// The combined text to embed, or None if embedding is not needed.
-    text_to_embed: Option<String>,
     /// The sync outcome (Created or Updated).
     outcome: SyncOutcome,
 }
@@ -110,7 +80,7 @@ impl SyncMode {
 /// Shared state passed to the per-dataset pre-processing step.
 #[derive(Clone)]
 struct PreprocessContext<D: DeltaDetector> {
-    existing_hashes: std::collections::HashMap<String, Option<String>>,
+    existing_hashes: HashMap<String, Option<String>>,
     unchanged_ids: Arc<Mutex<Vec<String>>>,
     stats: Arc<AtomicSyncStats>,
     processed_count: Arc<AtomicUsize>,
@@ -118,7 +88,7 @@ struct PreprocessContext<D: DeltaDetector> {
 }
 
 /// Pre-processes a single portal dataset: converts to `NewDataset`, runs delta detection,
-/// and returns a `PreProcessedDataset` if it needs embedding/persistence, or `None` if unchanged/skipped.
+/// and returns a `PreProcessedDataset` if it needs persistence, or `None` if unchanged/skipped.
 fn preprocess_dataset<C: PortalClient, D: DeltaDetector>(
     portal_data: C::PortalData,
     portal_url: &str,
@@ -141,28 +111,10 @@ fn preprocess_dataset<C: PortalClient, D: DeltaDetector>(
             ctx.processed_count.fetch_add(1, Ordering::Relaxed);
             None
         }
-        SyncOutcome::Updated | SyncOutcome::Created => {
-            let text_to_embed = if decision.needs_embedding {
-                let combined = format!(
-                    "{} {}",
-                    new_dataset.title,
-                    new_dataset.description.as_deref().unwrap_or_default()
-                );
-                if combined.trim().is_empty() {
-                    None
-                } else {
-                    Some(combined)
-                }
-            } else {
-                None
-            };
-
-            Some(PreProcessedDataset {
-                dataset: new_dataset,
-                text_to_embed,
-                outcome: decision.outcome,
-            })
-        }
+        SyncOutcome::Updated | SyncOutcome::Created => Some(PreProcessedDataset {
+            dataset: new_dataset,
+            outcome: decision.outcome,
+        }),
         SyncOutcome::Failed | SyncOutcome::Skipped => {
             ctx.stats.record(decision.outcome);
             ctx.processed_count.fetch_add(1, Ordering::Relaxed);
@@ -208,15 +160,14 @@ impl<PD: Send> SyncPlan<PD> {
     }
 }
 
-/// Service for harvesting datasets from open data portals.
+/// Service for harvesting dataset metadata from open data portals.
 ///
-/// This service encapsulates the core harvesting business logic,
-/// decoupled from CLI or server concerns.
+/// This service handles metadata fetching, delta detection, and persistence.
+/// Embedding generation is handled separately by [`EmbeddingService`](crate::embedding::EmbeddingService).
 ///
 /// # Type Parameters
 ///
 /// * `S` - Dataset store implementation (e.g., `DatasetRepository`)
-/// * `E` - Embedding provider implementation (e.g., `GeminiClient`)
 /// * `F` - Portal client factory implementation
 /// * `D` - Delta detector strategy (defaults to [`ContentHashDetector`])
 ///
@@ -225,38 +176,34 @@ impl<PD: Send> SyncPlan<PD> {
 /// ```ignore
 /// use ceres_core::harvest::HarvestService;
 ///
-/// // Create service with concrete implementations
-/// let harvest_service = HarvestService::new(repo, gemini, ckan_factory);
+/// // Create service — no embedding provider needed
+/// let harvest_service = HarvestService::new(repo, ckan_factory);
 ///
-/// // Sync a portal
+/// // Sync a portal (metadata only, embedding = NULL)
 /// let stats = harvest_service.sync_portal("https://data.gov/api/3").await?;
 /// println!("Synced {} datasets ({} created)", stats.total(), stats.created);
 /// ```
-pub struct HarvestService<S, E, F, D = ContentHashDetector>
+pub struct HarvestService<S, F, D = ContentHashDetector>
 where
     S: DatasetStore,
-    E: EmbeddingProvider,
     F: PortalClientFactory,
     D: DeltaDetector,
 {
     store: S,
-    embedding: E,
     portal_factory: F,
     delta_detector: D,
-    config: SyncConfig,
+    config: HarvestConfig,
 }
 
-impl<S, E, F, D> Clone for HarvestService<S, E, F, D>
+impl<S, F, D> Clone for HarvestService<S, F, D>
 where
     S: DatasetStore + Clone,
-    E: EmbeddingProvider + Clone,
     F: PortalClientFactory + Clone,
     D: DeltaDetector + Clone,
 {
     fn clone(&self) -> Self {
         Self {
             store: self.store.clone(),
-            embedding: self.embedding.clone(),
             portal_factory: self.portal_factory.clone(),
             delta_detector: self.delta_detector.clone(),
             config: self.config.clone(),
@@ -264,10 +211,9 @@ where
     }
 }
 
-impl<S, E, F> HarvestService<S, E, F, ContentHashDetector>
+impl<S, F> HarvestService<S, F, ContentHashDetector>
 where
     S: DatasetStore,
-    E: EmbeddingProvider,
     F: PortalClientFactory,
 {
     /// Creates a new harvest service with default configuration.
@@ -277,15 +223,13 @@ where
     /// # Arguments
     ///
     /// * `store` - Dataset store for persistence
-    /// * `embedding` - Embedding provider for vector generation
     /// * `portal_factory` - Factory for creating portal clients
-    pub fn new(store: S, embedding: E, portal_factory: F) -> Self {
+    pub fn new(store: S, portal_factory: F) -> Self {
         Self {
             store,
-            embedding,
             portal_factory,
             delta_detector: ContentHashDetector,
-            config: SyncConfig::default(),
+            config: HarvestConfig::default(),
         }
     }
 
@@ -296,13 +240,11 @@ where
     /// # Arguments
     ///
     /// * `store` - Dataset store for persistence
-    /// * `embedding` - Embedding provider for vector generation
     /// * `portal_factory` - Factory for creating portal clients
-    /// * `config` - Sync configuration (concurrency, etc.)
-    pub fn with_config(store: S, embedding: E, portal_factory: F, config: SyncConfig) -> Self {
+    /// * `config` - Harvest configuration (concurrency, etc.)
+    pub fn with_config(store: S, portal_factory: F, config: HarvestConfig) -> Self {
         Self {
             store,
-            embedding,
             portal_factory,
             delta_detector: ContentHashDetector,
             config,
@@ -310,10 +252,9 @@ where
     }
 }
 
-impl<S, E, F, D> HarvestService<S, E, F, D>
+impl<S, F, D> HarvestService<S, F, D>
 where
     S: DatasetStore,
-    E: EmbeddingProvider,
     F: PortalClientFactory,
     D: DeltaDetector,
 {
@@ -322,20 +263,17 @@ where
     /// # Arguments
     ///
     /// * `store` - Dataset store for persistence
-    /// * `embedding` - Embedding provider for vector generation
     /// * `portal_factory` - Factory for creating portal clients
     /// * `delta_detector` - Delta detection strategy
-    /// * `config` - Sync configuration (concurrency, etc.)
+    /// * `config` - Harvest configuration (concurrency, etc.)
     pub fn with_delta_detector(
         store: S,
-        embedding: E,
         portal_factory: F,
         delta_detector: D,
-        config: SyncConfig,
+        config: HarvestConfig,
     ) -> Self {
         Self {
             store,
-            embedding,
             portal_factory,
             delta_detector,
             config,
@@ -347,8 +285,7 @@ where
     /// This is the core harvesting function. It:
     /// 1. Fetches all dataset IDs from the portal
     /// 2. Compares content hashes with existing data
-    /// 3. Generates embeddings for new/updated datasets
-    /// 4. Persists changes to the database
+    /// 3. Persists new/updated datasets to the database (with `embedding = NULL`)
     ///
     /// # Arguments
     ///
@@ -357,13 +294,6 @@ where
     /// # Returns
     ///
     /// Statistics about the sync operation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The portal URL is invalid
-    /// - The portal API is unreachable
-    /// - Database operations fail
     pub async fn sync_portal(&self, portal_url: &str) -> Result<SyncStats, AppError> {
         self.sync_portal_with_progress(
             portal_url,
@@ -514,23 +444,12 @@ where
     /// Harvests multiple portals sequentially with error isolation.
     ///
     /// Failure in one portal does not stop processing of others.
-    ///
-    /// # Arguments
-    ///
-    /// * `portals` - Slice of portal entries to harvest
-    ///
-    /// # Returns
-    ///
-    /// A summary of all portal harvest results.
     pub async fn batch_harvest(&self, portals: &[&PortalEntry]) -> BatchHarvestSummary {
         self.batch_harvest_with_progress(portals, &SilentReporter)
             .await
     }
 
     /// Harvests multiple portals with progress reporting.
-    ///
-    /// Same as [`batch_harvest`](Self::batch_harvest), but emits progress events
-    /// through the provided reporter.
     pub async fn batch_harvest_with_progress<R: ProgressReporter>(
         &self,
         portals: &[&PortalEntry],
@@ -549,17 +468,6 @@ where
     // =========================================================================
 
     /// Synchronizes a single portal with cancellation support.
-    ///
-    /// Same as [`sync_portal`](Self::sync_portal), but accepts a `CancellationToken`
-    /// for graceful shutdown.
-    ///
-    /// # Cancellation Behavior
-    ///
-    /// When cancelled:
-    /// - Stops making new API requests
-    /// - Allows currently processing items to complete
-    /// - Saves partial statistics to database with "cancelled" status
-    /// - Returns `SyncResult` with `SyncStatus::Cancelled`
     pub async fn sync_portal_cancellable(
         &self,
         portal_url: &str,
@@ -578,9 +486,6 @@ where
     }
 
     /// Synchronizes a single portal with progress reporting and cancellation support.
-    ///
-    /// Same as [`sync_portal_with_progress`](Self::sync_portal_with_progress), but
-    /// accepts a `CancellationToken` for graceful shutdown.
     pub async fn sync_portal_with_progress_cancellable<R: ProgressReporter>(
         &self,
         portal_url: &str,
@@ -717,38 +622,30 @@ where
         let last_reported = Arc::new(AtomicUsize::new(0));
         let was_cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-        // Create circuit breaker for embedding API resilience
-        let circuit_breaker = CircuitBreaker::new("gemini", self.config.circuit_breaker.clone());
-
         let report_interval = std::cmp::max(total / 20, 50);
         let url_template_arc: Option<Arc<str>> = url_template.map(Arc::from);
         let language_arc: Arc<str> = Arc::from(language);
 
-        // Effective batch size respects both config and provider limits
-        let effective_batch_size = std::cmp::min(
-            self.config.embedding_batch_size,
-            self.embedding.max_batch_size(),
-        )
-        .max(1);
+        let upsert_batch_size = self.config.upsert_batch_size.max(1);
 
         // =====================================================================
         // Two-phase pipeline
         //
-        // Phase 1: Pre-process datasets in parallel (fetch if needed, hash check,
-        //          extract text). Unchanged datasets are handled inline and
-        //          filtered out. Produces a stream of PreProcessedDataset items.
+        // Phase 1: Pre-process datasets in parallel (fetch if needed, hash check).
+        //          Unchanged datasets are handled inline and filtered out.
+        //          Produces a stream of PreProcessedDataset items.
         //
-        // Phase 2: Collect items into batches, call generate_batch() once per
-        //          batch through the circuit breaker, then upsert all datasets.
+        // Phase 2: Collect items into batches and upsert to database.
+        //          Datasets are stored with embedding = NULL; the SQL COALESCE
+        //          preserves any existing embeddings.
         // =====================================================================
 
         // Phase 2 macro: consume a chunked stream of PreProcessedDatasets,
-        // batch-embed and upsert, with progress reporting and cancellation.
-        macro_rules! run_batch_phase {
+        // batch upsert with progress reporting and cancellation.
+        macro_rules! run_upsert_phase {
             ($pre_processed_stream:expr) => {{
                 use futures::stream::StreamExt as _;
-                let mut chunked =
-                    std::pin::pin!($pre_processed_stream.chunks(effective_batch_size));
+                let mut chunked = std::pin::pin!($pre_processed_stream.chunks(upsert_batch_size));
 
                 while let Some(batch) = chunked.next().await {
                     if cancel_token.is_cancelled() {
@@ -758,14 +655,7 @@ where
 
                     let batch_len = batch.len();
 
-                    Self::process_embedding_batch(
-                        batch,
-                        &self.embedding,
-                        &self.store,
-                        &circuit_breaker,
-                        &stats,
-                    )
-                    .await;
+                    Self::process_upsert_batch(batch, &self.store, &stats).await;
 
                     // Report progress for the batch
                     let current =
@@ -856,7 +746,7 @@ where
                     .filter_map(|opt| async { opt });
 
                 if self.config.dry_run {
-                    // Consume stream to collect stats without embedding or persisting
+                    // Consume stream to collect stats without persisting
                     use futures::stream::StreamExt as _;
                     let mut stream = std::pin::pin!(pre_processed);
                     while let Some(item) = stream.next().await {
@@ -867,7 +757,7 @@ where
                         was_cancelled.store(true, Ordering::SeqCst);
                     }
                 } else {
-                    run_batch_phase!(pre_processed);
+                    run_upsert_phase!(pre_processed);
                 }
             }
             SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
@@ -921,7 +811,7 @@ where
                         was_cancelled.store(true, Ordering::SeqCst);
                     }
                 } else {
-                    run_batch_phase!(pre_processed);
+                    run_upsert_phase!(pre_processed);
                 }
             }
         }
@@ -1021,113 +911,31 @@ where
         }
     }
 
-    /// Processes a batch of pre-processed datasets: generates embeddings in a
-    /// single API call through the circuit breaker, then batch-upserts all datasets.
-    async fn process_embedding_batch(
+    /// Batch upserts pre-processed datasets to the database.
+    ///
+    /// Datasets are stored with `embedding = None`. The SQL COALESCE ensures
+    /// existing embeddings are preserved on update.
+    async fn process_upsert_batch(
         batch: Vec<PreProcessedDataset>,
-        embedding: &E,
         store: &S,
-        circuit_breaker: &CircuitBreaker,
         stats: &Arc<AtomicSyncStats>,
     ) {
-        // Partition: items needing embedding vs those that don't
-        let (needs_embed, no_embed): (Vec<_>, Vec<_>) =
-            batch.into_iter().partition(|p| p.text_to_embed.is_some());
+        let outcomes: Vec<SyncOutcome> = batch.iter().map(|i| i.outcome).collect();
+        let datasets: Vec<NewDataset> = batch.into_iter().map(|i| i.dataset).collect();
 
-        // Batch upsert items that don't need embedding
-        if !no_embed.is_empty() {
-            let outcomes: Vec<SyncOutcome> = no_embed.iter().map(|i| i.outcome).collect();
-            let datasets: Vec<NewDataset> = no_embed.into_iter().map(|i| i.dataset).collect();
-            match store.batch_upsert(&datasets).await {
-                Ok(_) => {
-                    for outcome in outcomes {
-                        stats.record(outcome);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        count = datasets.len(),
-                        error = %e,
-                        "Failed to batch upsert datasets (no embedding)"
-                    );
-                    for _ in 0..datasets.len() {
-                        stats.record(SyncOutcome::Failed);
-                    }
+        match store.batch_upsert(&datasets).await {
+            Ok(_) => {
+                for outcome in outcomes {
+                    stats.record(outcome);
                 }
             }
-        }
-
-        if needs_embed.is_empty() {
-            return;
-        }
-
-        // Collect texts for batch API call
-        let texts: Vec<String> = needs_embed
-            .iter()
-            .filter_map(|p| p.text_to_embed.clone())
-            .collect();
-
-        let batch_size = texts.len();
-
-        match circuit_breaker
-            .call(|| embedding.generate_batch(&texts))
-            .await
-        {
-            Ok(embeddings) => {
-                if embeddings.len() != batch_size {
-                    tracing::warn!(
-                        expected = batch_size,
-                        got = embeddings.len(),
-                        "Batch embedding count mismatch, failing batch"
-                    );
-                    for _ in 0..batch_size {
-                        stats.record(SyncOutcome::Failed);
-                    }
-                    return;
-                }
-                // Assign embeddings and batch upsert all datasets at once
-                let mut outcomes = Vec::with_capacity(batch_size);
-                let mut datasets = Vec::with_capacity(batch_size);
-                for (mut item, emb) in needs_embed.into_iter().zip(embeddings) {
-                    item.dataset.embedding = Some(emb);
-                    outcomes.push(item.outcome);
-                    datasets.push(item.dataset);
-                }
-                match store.batch_upsert(&datasets).await {
-                    Ok(_) => {
-                        for outcome in outcomes {
-                            stats.record(outcome);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            count = datasets.len(),
-                            error = %e,
-                            "Failed to batch upsert datasets with embeddings"
-                        );
-                        for _ in 0..datasets.len() {
-                            stats.record(SyncOutcome::Failed);
-                        }
-                    }
-                }
-            }
-            Err(CircuitBreakerError::Open { retry_after, .. }) => {
-                tracing::debug!(
-                    batch_size,
-                    retry_after_secs = retry_after.as_secs(),
-                    "Skipping batch - circuit breaker open"
-                );
-                for _ in 0..batch_size {
-                    stats.record(SyncOutcome::Skipped);
-                }
-            }
-            Err(CircuitBreakerError::Inner(e)) => {
+            Err(e) => {
                 tracing::warn!(
-                    batch_size,
+                    count = datasets.len(),
                     error = %e,
-                    "Batch embedding generation failed"
+                    "Failed to batch upsert datasets"
                 );
-                for _ in 0..batch_size {
+                for _ in 0..datasets.len() {
                     stats.record(SyncOutcome::Failed);
                 }
             }
@@ -1135,9 +943,6 @@ where
     }
 
     /// Harvests multiple portals with cancellation support.
-    ///
-    /// Same as [`batch_harvest`](Self::batch_harvest), but accepts a
-    /// `CancellationToken` for graceful shutdown.
     pub async fn batch_harvest_cancellable(
         &self,
         portals: &[&PortalEntry],
@@ -1148,9 +953,6 @@ where
     }
 
     /// Harvests multiple portals with progress reporting and cancellation support.
-    ///
-    /// Same as [`batch_harvest_with_progress`](Self::batch_harvest_with_progress),
-    /// but accepts a `CancellationToken` for graceful shutdown.
     pub async fn batch_harvest_with_progress_cancellable<R: ProgressReporter>(
         &self,
         portals: &[&PortalEntry],
@@ -1253,11 +1055,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::config::HarvestConfig;
 
     #[test]
-    fn test_sync_config_default() {
-        let config = SyncConfig::default();
+    fn test_harvest_config_default() {
+        let config = HarvestConfig::default();
         assert!(config.concurrency > 0, "concurrency should be positive");
     }
 }

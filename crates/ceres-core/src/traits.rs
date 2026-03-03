@@ -377,6 +377,32 @@ pub trait DatasetStore: Send + Sync + Clone {
         &self,
     ) -> impl Future<Output = Result<std::collections::HashSet<String>, AppError>> + Send;
 
+    /// Lists datasets that have no embedding vector (`embedding IS NULL`).
+    ///
+    /// Used by [`EmbeddingService`] to find datasets needing embedding generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_filter` - Optional portal URL to scope the query
+    /// * `limit` - Maximum number of datasets to return
+    fn list_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+        limit: Option<usize>,
+    ) -> impl Future<Output = Result<Vec<Dataset>, AppError>> + Send;
+
+    /// Counts datasets with `embedding IS NULL`.
+    ///
+    /// Used for progress reporting in the embedding service.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_filter` - Optional portal URL to scope the count
+    fn count_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+    ) -> impl Future<Output = Result<i64, AppError>> + Send;
+
     /// Checks database connectivity.
     ///
     /// Performs a simple query to verify the database is reachable and responsive.

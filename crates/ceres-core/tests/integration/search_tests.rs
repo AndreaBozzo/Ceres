@@ -105,6 +105,19 @@ impl DatasetStore for FailingDatasetStore {
     async fn get_duplicate_titles(&self) -> Result<HashSet<String>, AppError> {
         unimplemented!()
     }
+    async fn list_pending_embeddings(
+        &self,
+        _portal_filter: Option<&str>,
+        _limit: Option<usize>,
+    ) -> Result<Vec<Dataset>, AppError> {
+        unimplemented!()
+    }
+    async fn count_pending_embeddings(
+        &self,
+        _portal_filter: Option<&str>,
+    ) -> Result<i64, AppError> {
+        unimplemented!()
+    }
     async fn health_check(&self) -> Result<(), AppError> {
         unimplemented!()
     }
