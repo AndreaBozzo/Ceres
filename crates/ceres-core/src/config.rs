@@ -151,7 +151,7 @@ impl Default for HttpConfig {
 
 /// Harvest-only configuration (metadata fetching + delta detection).
 ///
-/// Used by [`HarvestService`] when running without an embedding provider.
+/// Used by [`crate::HarvestService`] when running without an embedding provider.
 /// Contains only the settings relevant to portal fetching and persistence.
 #[derive(Clone)]
 pub struct HarvestConfig {
@@ -192,7 +192,7 @@ impl HarvestConfig {
 
 /// Embedding service configuration.
 ///
-/// Used by [`EmbeddingService`] for standalone embedding passes.
+/// Used by [`crate::EmbeddingService`] for standalone embedding passes.
 /// Contains only the settings relevant to embedding API calls.
 #[derive(Clone)]
 pub struct EmbeddingServiceConfig {
@@ -216,7 +216,7 @@ impl Default for EmbeddingServiceConfig {
 ///
 /// This is a convenience type that composes [`HarvestConfig`] and
 /// [`EmbeddingServiceConfig`] for the common harvest-then-embed workflow.
-/// Used by [`HarvestPipeline`] and kept for backward compatibility.
+/// Used by [`crate::HarvestPipeline`] and kept for backward compatibility.
 ///
 /// TODO(config): Support CLI arg `--concurrency` and env var `SYNC_CONCURRENCY`
 /// Optimal value depends on portal rate limits and system resources.

@@ -1,7 +1,7 @@
 //! Worker service for processing harvest jobs from the queue.
 //!
 //! This module provides the [`WorkerService`] that polls for pending jobs
-//! and processes them using the [`HarvestService`].
+//! and processes them using the [`crate::HarvestService`].
 //!
 //! # Architecture
 //!

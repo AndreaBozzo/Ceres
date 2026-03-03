@@ -379,7 +379,7 @@ pub trait DatasetStore: Send + Sync + Clone {
 
     /// Lists datasets that have no embedding vector (`embedding IS NULL`).
     ///
-    /// Used by [`EmbeddingService`] to find datasets needing embedding generation.
+    /// Used by [`crate::EmbeddingService`] to find datasets needing embedding generation.
     ///
     /// # Arguments
     ///

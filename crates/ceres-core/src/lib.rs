@@ -2,7 +2,7 @@
 //!
 //! This crate provides the core functionality for Ceres, including:
 //!
-//! - **Domain models**: [`Dataset`], [`SearchResult`], [`Portal`], etc.
+//! - **Domain models**: [`Dataset`], [`SearchResult`], etc.
 //! - **Business logic**: Delta detection, statistics tracking
 //! - **Services**: [`HarvestService`] for metadata harvesting, [`EmbeddingService`] for
 //!   standalone embedding, [`HarvestPipeline`] for combined harvest+embed, [`SearchService`]
