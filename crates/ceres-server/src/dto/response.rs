@@ -43,6 +43,8 @@ pub struct StatsResponse {
     pub total_portals: i64,
     /// Timestamp of the last update
     pub last_update: Option<DateTime<Utc>>,
+    /// Number of datasets marked as stale (removed from source portal)
+    pub stale_datasets: i64,
 }
 
 impl From<DatabaseStats> for StatsResponse {
@@ -52,6 +54,7 @@ impl From<DatabaseStats> for StatsResponse {
             datasets_with_embeddings: s.datasets_with_embeddings,
             total_portals: s.total_portals,
             last_update: s.last_update,
+            stale_datasets: s.stale_datasets,
         }
     }
 }

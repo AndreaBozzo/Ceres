@@ -301,6 +301,7 @@ impl DatasetStore for MockDatasetStore {
                     first_seen_at: chrono::Utc::now(),
                     last_updated_at: chrono::Utc::now(),
                     content_hash: Some(stored.dataset.content_hash.clone()),
+                    is_stale: false,
                 }));
             }
         }
@@ -341,6 +342,14 @@ impl DatasetStore for MockDatasetStore {
     ) -> Result<u64, AppError> {
         // Return count as if all were updated
         Ok(original_ids.len() as u64)
+    }
+
+    async fn mark_stale_datasets(
+        &self,
+        _portal_url: &str,
+        _sync_start: DateTime<Utc>,
+    ) -> Result<u64, AppError> {
+        Ok(0)
     }
 
     async fn upsert(&self, dataset: &NewDataset) -> Result<Uuid, AppError> {
@@ -398,6 +407,7 @@ impl DatasetStore for MockDatasetStore {
                         first_seen_at: chrono::Utc::now(),
                         last_updated_at: chrono::Utc::now(),
                         content_hash: Some(stored.dataset.content_hash.clone()),
+                        is_stale: false,
                     },
                     similarity_score: 1.0 - (i as f32 * 0.1),
                 }
@@ -430,6 +440,7 @@ impl DatasetStore for MockDatasetStore {
                     first_seen_at: chrono::Utc::now(),
                     last_updated_at: chrono::Utc::now(),
                     content_hash: Some(stored.dataset.content_hash.clone()),
+                    is_stale: false,
                 })
             })
             .collect();
@@ -503,6 +514,7 @@ impl DatasetStore for MockDatasetStore {
                 first_seen_at: chrono::Utc::now(),
                 last_updated_at: chrono::Utc::now(),
                 content_hash: Some(stored.dataset.content_hash.clone()),
+                is_stale: false,
             })
             .collect();
         Ok(results)

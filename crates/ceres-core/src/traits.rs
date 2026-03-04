@@ -270,6 +270,25 @@ pub trait DatasetStore: Send + Sync + Clone {
         original_ids: &[String],
     ) -> impl Future<Output = Result<u64, AppError>> + Send;
 
+    /// Marks datasets as stale if they were not seen during the latest full sync.
+    ///
+    /// After a successful full sync, any dataset whose `last_updated_at` is older
+    /// than `sync_start` was not present in the portal's response.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_url` - The source portal URL
+    /// * `sync_start` - Timestamp recorded at the start of the sync
+    ///
+    /// # Returns
+    ///
+    /// The number of datasets newly marked as stale.
+    fn mark_stale_datasets(
+        &self,
+        portal_url: &str,
+        sync_start: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, AppError>> + Send;
+
     /// Inserts or updates a dataset.
     ///
     /// # Arguments

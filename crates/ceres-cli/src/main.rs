@@ -465,6 +465,9 @@ async fn show_stats(repo: &DatasetRepository) -> anyhow::Result<()> {
         stats.datasets_with_embeddings
     );
     println!("  Unique portals:        {}", stats.total_portals);
+    if stats.stale_datasets > 0 {
+        println!("  Stale datasets:        {}", stats.stale_datasets);
+    }
     if let Some(last_update) = stats.last_update {
         println!("  Last update:           {}", last_update);
     }

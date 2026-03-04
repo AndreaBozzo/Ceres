@@ -26,10 +26,12 @@ const MIGRATIONS: &[&str] = &[
         first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         last_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         content_hash VARCHAR(64),
+        is_stale BOOLEAN NOT NULL DEFAULT FALSE,
         CONSTRAINT uk_portal_original_id UNIQUE (source_portal, original_id)
     )"#,
     "CREATE INDEX IF NOT EXISTS idx_datasets_embedding ON datasets USING hnsw (embedding vector_cosine_ops)",
     "CREATE INDEX IF NOT EXISTS idx_datasets_portal_hash ON datasets(source_portal) INCLUDE (original_id, content_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_datasets_not_stale ON datasets (is_stale) WHERE is_stale = FALSE",
 ];
 
 /// Sets up a PostgreSQL container with pgvector and returns a connection pool.

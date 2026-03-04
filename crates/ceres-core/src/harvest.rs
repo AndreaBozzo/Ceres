@@ -847,12 +847,6 @@ where
             }
         }
 
-        // TODO(perf): This collects all unchanged dataset IDs in memory then
-        // issues chunked UPDATE queries (500 IDs per query). For large portals
-        // (e.g. data.gov.au with 109k datasets), this means ~218 sequential
-        // UPDATE queries. When implementing stale detection & soft deletion,
-        // replace this with a single `UPDATE ... WHERE source_portal = $1`
-        // or a dedicated `last_seen_at` column + one bulk touch query.
         // Batch update timestamps for unchanged datasets
         let unchanged_list = unchanged_ids
             .lock()
@@ -887,6 +881,33 @@ where
         } else {
             SyncStatus::Completed
         };
+
+        // Mark stale datasets after a successful full sync.
+        // Only full syncs can definitively say "this dataset is gone" because
+        // incremental syncs only fetch changed datasets.
+        if sync_mode == SyncMode::Full && !is_cancelled {
+            match self.store.mark_stale_datasets(portal_url, sync_start).await {
+                Ok(stale_count) if stale_count > 0 => {
+                    tracing::warn!(
+                        portal = portal_url,
+                        stale_count,
+                        "Marked {} dataset(s) as stale (not found on portal)",
+                        stale_count
+                    );
+                    reporter.report(HarvestEvent::StaleDetected {
+                        count: stale_count as usize,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        portal = portal_url,
+                        error = %e,
+                        "Failed to mark stale datasets (non-fatal)"
+                    );
+                }
+                _ => {}
+            }
+        }
 
         // Record sync status
         tracing::info!(

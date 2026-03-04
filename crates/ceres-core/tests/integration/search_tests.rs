@@ -73,6 +73,13 @@ impl DatasetStore for FailingDatasetStore {
     ) -> Result<u64, AppError> {
         unimplemented!()
     }
+    async fn mark_stale_datasets(
+        &self,
+        _portal_url: &str,
+        _sync_start: DateTime<Utc>,
+    ) -> Result<u64, AppError> {
+        unimplemented!()
+    }
     async fn upsert(&self, _dataset: &NewDataset) -> Result<Uuid, AppError> {
         unimplemented!()
     }

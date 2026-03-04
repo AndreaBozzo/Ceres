@@ -111,6 +111,12 @@ pub enum HarvestEvent<'a> {
         total_portals: usize,
     },
 
+    /// Datasets marked as stale after a successful full sync.
+    StaleDetected {
+        /// Number of datasets newly marked as stale.
+        count: usize,
+    },
+
     /// Circuit breaker is open, harvest pausing/failing.
     CircuitBreakerOpen {
         /// Service name.
@@ -286,6 +292,13 @@ impl ProgressReporter for TracingReporter {
                     completed_portals, total_portals
                 );
             }
+            HarvestEvent::StaleDetected { count } => {
+                use tracing::warn;
+                warn!(
+                    "{} dataset(s) marked as stale (no longer found on portal)",
+                    count
+                );
+            }
             HarvestEvent::CircuitBreakerOpen {
                 service,
                 retry_after,
@@ -370,6 +383,9 @@ mod tests {
             completed_portals: 1,
             total_portals: 3,
         });
+
+        // Test stale detection events
+        reporter.report(HarvestEvent::StaleDetected { count: 5 });
 
         // Test circuit breaker events
         reporter.report(HarvestEvent::CircuitBreakerOpen {
