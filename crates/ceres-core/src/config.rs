@@ -228,6 +228,8 @@ pub struct SyncConfig {
     /// Maximum number of texts per embedding API batch call.
     /// The actual batch size is `min(this, provider.max_batch_size())`.
     pub embedding_batch_size: usize,
+    /// Maximum number of datasets per DB upsert batch.
+    pub upsert_batch_size: usize,
     /// Force full sync even if incremental sync is available.
     pub force_full_sync: bool,
     /// Preview mode: fetch and compare datasets without writing to DB or calling embedding API.
@@ -242,6 +244,7 @@ impl Default for SyncConfig {
         Self {
             concurrency: 10,
             embedding_batch_size: 64,
+            upsert_batch_size: 500,
             force_full_sync: false,
             dry_run: false,
             circuit_breaker: CircuitBreakerConfig::default(),
@@ -278,7 +281,7 @@ impl SyncConfig {
     pub fn harvest_config(&self) -> HarvestConfig {
         HarvestConfig {
             concurrency: self.concurrency,
-            upsert_batch_size: self.embedding_batch_size,
+            upsert_batch_size: self.upsert_batch_size,
             force_full_sync: self.force_full_sync,
             dry_run: self.dry_run,
         }
@@ -603,6 +606,15 @@ mod tests {
     fn test_sync_config_defaults() {
         let config = SyncConfig::default();
         assert_eq!(config.concurrency, 10);
+        assert_eq!(config.upsert_batch_size, 500);
+    }
+
+    #[test]
+    fn test_sync_config_harvest_config_upsert_batch_size() {
+        let config = SyncConfig::default();
+        let harvest = config.harvest_config();
+        assert_eq!(harvest.upsert_batch_size, 500);
+        assert_ne!(harvest.upsert_batch_size, config.embedding_batch_size);
     }
 
     // =========================================================================

@@ -27,8 +27,10 @@
 //! # Pipeline
 //!
 //! The harvest pipeline uses a two-phase architecture:
-//! 1. **Pre-process** (parallel): fetch datasets, hash check, delta detection
-//! 2. **Persist** (sequential batches): batch upsert to database (no embedding)
+//! 1. **Pre-process**: delta detection via content hash comparison.
+//!    - Full (ID-by-ID): concurrent HTTP fetches via `buffer_unordered`
+//!    - FullBulk/Incremental: synchronous loop (no async overhead)
+//! 2. **Persist**: batch upsert to database (batches of 500, no embedding)
 //!
 //! Embedding is applied separately via [`EmbeddingService`](crate::embedding::EmbeddingService)
 //! or via the combined [`HarvestPipeline`](crate::pipeline::HarvestPipeline).
@@ -636,56 +638,19 @@ where
         // =====================================================================
         // Two-phase pipeline
         //
-        // Phase 1: Pre-process datasets in parallel (fetch if needed, hash check).
-        //          Unchanged datasets are handled inline and filtered out.
-        //          Produces a stream of PreProcessedDataset items.
+        // Phase 1: Pre-process datasets (fetch if needed, hash check, delta detection).
+        //          Unchanged datasets are recorded and filtered out.
         //
-        // Phase 2: Collect items into batches and upsert to database.
+        // Phase 2: Batch upsert changed datasets to database.
         //          Datasets are stored with embedding = NULL; the SQL COALESCE
         //          preserves any existing embeddings.
+        //
+        // For Full (ID-by-ID) sync: Phase 1 uses buffer_unordered for concurrent
+        // HTTP fetches. Phase 2 accumulates items into full batches before upserting.
+        //
+        // For FullBulk/Incremental: datasets are already in memory, so both phases
+        // run synchronously — no async overhead for what is just hash comparison.
         // =====================================================================
-
-        // Phase 2 macro: consume a chunked stream of PreProcessedDatasets,
-        // batch upsert with progress reporting and cancellation.
-        macro_rules! run_upsert_phase {
-            ($pre_processed_stream:expr) => {{
-                use futures::stream::StreamExt as _;
-                let mut chunked = std::pin::pin!($pre_processed_stream.chunks(upsert_batch_size));
-
-                while let Some(batch) = chunked.next().await {
-                    if cancel_token.is_cancelled() {
-                        was_cancelled.store(true, Ordering::SeqCst);
-                        break;
-                    }
-
-                    let batch_len = batch.len();
-
-                    Self::process_upsert_batch(batch, &self.store, &stats).await;
-
-                    // Report progress for the batch
-                    let current =
-                        processed_count.fetch_add(batch_len, Ordering::Relaxed) + batch_len;
-                    let last = last_reported.load(Ordering::Relaxed);
-                    let should_report = current >= last + report_interval || current >= total;
-                    if should_report
-                        && last_reported
-                            .compare_exchange(last, current, Ordering::SeqCst, Ordering::Relaxed)
-                            .is_ok()
-                    {
-                        let current_stats = stats.to_stats();
-                        reporter.report(HarvestEvent::DatasetProcessed {
-                            current,
-                            total,
-                            created: current_stats.created,
-                            updated: current_stats.updated,
-                            unchanged: current_stats.unchanged,
-                            failed: current_stats.failed,
-                            skipped: current_stats.skipped,
-                        });
-                    }
-                }
-            }};
-        }
 
         match plan {
             SyncPlan::Full { ids } => {
@@ -696,11 +661,11 @@ where
                     processed_count: Arc::clone(&processed_count),
                     delta_detector: self.delta_detector.clone(),
                 };
-                // TODO(perf): portal_url.to_string() allocates per-dataset — use Arc<str> like url_template_arc
+                let portal_url_arc: Arc<str> = Arc::from(portal_url);
                 let pre_processed = stream::iter(ids)
                     .map(|id| {
                         let portal_client = portal_client.clone();
-                        let portal_url_owned = portal_url.to_string();
+                        let portal_url_owned = Arc::clone(&portal_url_arc);
                         let cancel_token = cancel_token.clone();
                         let was_cancelled = Arc::clone(&was_cancelled);
                         let url_template = url_template_arc.clone();
@@ -718,7 +683,7 @@ where
                                 Ok(data) => data,
                                 Err(e) => {
                                     tracing::warn!(
-                                        portal = portal_url_owned.as_str(),
+                                        portal = portal_url_owned.as_ref(),
                                         dataset_id = id,
                                         error = %e,
                                         "Failed to fetch dataset, skipping"
@@ -751,7 +716,6 @@ where
                     .filter_map(|opt| async { opt });
 
                 if self.config.dry_run {
-                    // Consume stream to collect stats without persisting
                     use futures::stream::StreamExt as _;
                     let mut stream = std::pin::pin!(pre_processed);
                     while let Some(item) = stream.next().await {
@@ -762,10 +726,56 @@ where
                         was_cancelled.store(true, Ordering::SeqCst);
                     }
                 } else {
-                    run_upsert_phase!(pre_processed);
+                    // Consume the async stream, accumulating full batches before upserting
+                    let mut batch = Vec::with_capacity(upsert_batch_size);
+                    let mut stream = std::pin::pin!(pre_processed);
+
+                    while let Some(item) = stream.next().await {
+                        if cancel_token.is_cancelled() {
+                            was_cancelled.store(true, Ordering::SeqCst);
+                            break;
+                        }
+
+                        batch.push(item);
+                        if batch.len() >= upsert_batch_size {
+                            let full_batch = std::mem::replace(
+                                &mut batch,
+                                Vec::with_capacity(upsert_batch_size),
+                            );
+                            let batch_len = full_batch.len();
+                            Self::process_upsert_batch(full_batch, &self.store, &stats).await;
+                            Self::report_progress(
+                                &processed_count,
+                                batch_len,
+                                total,
+                                report_interval,
+                                &last_reported,
+                                &stats,
+                                reporter,
+                            );
+                        }
+                    }
+
+                    // Flush remaining items
+                    if !batch.is_empty() {
+                        let batch_len = batch.len();
+                        Self::process_upsert_batch(batch, &self.store, &stats).await;
+                        Self::report_progress(
+                            &processed_count,
+                            batch_len,
+                            total,
+                            report_interval,
+                            &last_reported,
+                            &stats,
+                            reporter,
+                        );
+                    }
                 }
             }
             SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
+                // Datasets are already in memory — preprocessing is synchronous
+                // (hash comparison only, no HTTP). A simple loop avoids the overhead
+                // of async task spawning, Arc cloning, and stream buffering.
                 let ctx = PreprocessContext {
                     existing_hashes,
                     unchanged_ids: Arc::clone(&unchanged_ids),
@@ -773,50 +783,100 @@ where
                     processed_count: Arc::clone(&processed_count),
                     delta_detector: self.delta_detector.clone(),
                 };
-                // TODO(perf): portal_url.to_string() allocates per-dataset — use Arc<str> like url_template_arc
-                let pre_processed = stream::iter(datasets)
-                    .map(|portal_data| {
-                        let portal_url_owned = portal_url.to_string();
-                        let url_template = url_template_arc.clone();
-                        let language = Arc::clone(&language_arc);
-                        let cancel_token = cancel_token.clone();
-                        let was_cancelled = Arc::clone(&was_cancelled);
-                        let ctx = ctx.clone();
 
-                        async move {
-                            if cancel_token.is_cancelled() {
-                                was_cancelled.store(true, Ordering::SeqCst);
-                                return None;
-                            }
-
-                            preprocess_dataset::<F::Client, D>(
-                                portal_data,
-                                &portal_url_owned,
-                                url_template.as_deref(),
-                                &language,
-                                &ctx,
-                            )
-                        }
-                    })
-                    .buffer_unordered(self.config.concurrency)
-                    .take_while(|_| {
-                        let is_cancelled = cancel_token.is_cancelled();
-                        async move { !is_cancelled }
-                    })
-                    .filter_map(|opt| async { opt });
+                let url_template_ref = url_template_arc.as_deref();
 
                 if self.config.dry_run {
-                    use futures::stream::StreamExt as _;
-                    let mut stream = std::pin::pin!(pre_processed);
-                    while let Some(item) = stream.next().await {
-                        stats.record(item.outcome);
-                        processed_count.fetch_add(1, Ordering::Relaxed);
-                    }
-                    if cancel_token.is_cancelled() {
-                        was_cancelled.store(true, Ordering::SeqCst);
+                    for portal_data in datasets {
+                        if cancel_token.is_cancelled() {
+                            was_cancelled.store(true, Ordering::SeqCst);
+                            break;
+                        }
+                        if let Some(item) = preprocess_dataset::<F::Client, D>(
+                            portal_data,
+                            portal_url,
+                            url_template_ref,
+                            language,
+                            &ctx,
+                        ) {
+                            stats.record(item.outcome);
+                            let current = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                            let last = last_reported.load(Ordering::Relaxed);
+                            if current >= last + report_interval || current >= total {
+                                if last_reported
+                                    .compare_exchange(
+                                        last,
+                                        current,
+                                        Ordering::SeqCst,
+                                        Ordering::Relaxed,
+                                    )
+                                    .is_ok()
+                                {
+                                    let current_stats = stats.to_stats();
+                                    reporter.report(HarvestEvent::DatasetProcessed {
+                                        current,
+                                        total,
+                                        created: current_stats.created,
+                                        updated: current_stats.updated,
+                                        unchanged: current_stats.unchanged,
+                                        failed: current_stats.failed,
+                                        skipped: current_stats.skipped,
+                                    });
+                                }
+                            }
+                        }
                     }
                 } else {
-                    run_upsert_phase!(pre_processed);
+                    let mut batch = Vec::with_capacity(upsert_batch_size);
+
+                    for portal_data in datasets {
+                        if cancel_token.is_cancelled() {
+                            was_cancelled.store(true, Ordering::SeqCst);
+                            break;
+                        }
+
+                        if let Some(item) = preprocess_dataset::<F::Client, D>(
+                            portal_data,
+                            portal_url,
+                            url_template_ref,
+                            language,
+                            &ctx,
+                        ) {
+                            batch.push(item);
+                            if batch.len() >= upsert_batch_size {
+                                let full_batch = std::mem::replace(
+                                    &mut batch,
+                                    Vec::with_capacity(upsert_batch_size),
+                                );
+                                let batch_len = full_batch.len();
+                                Self::process_upsert_batch(full_batch, &self.store, &stats).await;
+                                Self::report_progress(
+                                    &processed_count,
+                                    batch_len,
+                                    total,
+                                    report_interval,
+                                    &last_reported,
+                                    &stats,
+                                    reporter,
+                                );
+                            }
+                        }
+                    }
+
+                    // Flush remaining items
+                    if !batch.is_empty() {
+                        let batch_len = batch.len();
+                        Self::process_upsert_batch(batch, &self.store, &stats).await;
+                        Self::report_progress(
+                            &processed_count,
+                            batch_len,
+                            total,
+                            report_interval,
+                            &last_reported,
+                            &stats,
+                            reporter,
+                        );
+                    }
                 }
             }
         }
@@ -970,6 +1030,37 @@ where
     ///
     /// Datasets are stored with `embedding = None`. The SQL COALESCE ensures
     /// existing embeddings are preserved on update.
+    /// Reports progress after a batch has been processed.
+    fn report_progress(
+        processed_count: &Arc<AtomicUsize>,
+        batch_len: usize,
+        total: usize,
+        report_interval: usize,
+        last_reported: &Arc<AtomicUsize>,
+        stats: &Arc<AtomicSyncStats>,
+        reporter: &impl ProgressReporter,
+    ) {
+        let current = processed_count.fetch_add(batch_len, Ordering::Relaxed) + batch_len;
+        let last = last_reported.load(Ordering::Relaxed);
+        let should_report = current >= last + report_interval || current >= total;
+        if should_report
+            && last_reported
+                .compare_exchange(last, current, Ordering::SeqCst, Ordering::Relaxed)
+                .is_ok()
+        {
+            let current_stats = stats.to_stats();
+            reporter.report(HarvestEvent::DatasetProcessed {
+                current,
+                total,
+                created: current_stats.created,
+                updated: current_stats.updated,
+                unchanged: current_stats.unchanged,
+                failed: current_stats.failed,
+                skipped: current_stats.skipped,
+            });
+        }
+    }
+
     async fn process_upsert_batch(
         batch: Vec<PreProcessedDataset>,
         store: &S,

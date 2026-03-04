@@ -301,67 +301,15 @@ impl CkanClient {
         let mut page_delay = Self::PAGE_DELAY;
 
         loop {
-            let mut url = self
-                .base_url
-                .join("api/3/action/package_search")
-                .map_err(|e| AppError::Generic(e.to_string()))?;
+            let (datasets, total_count) = self
+                .fetch_search_page(fq, start, PAGE_SIZE, &mut page_delay)
+                .await?;
 
-            {
-                let mut pairs = url.query_pairs_mut();
-                if let Some(filter) = fq {
-                    pairs.append_pair("fq", filter);
-                }
-                pairs
-                    .append_pair("rows", &PAGE_SIZE.to_string())
-                    .append_pair("start", &start.to_string())
-                    .append_pair("sort", "metadata_modified asc");
-            }
-
-            // Page-level retry: if the request is rate-limited after exhausting
-            // low-level retries, wait a longer cooldown and try the page again.
-            let mut page_result = None;
-            for page_attempt in 0..=Self::PAGE_RATE_LIMIT_RETRIES {
-                match self.request_with_retry(&url).await {
-                    Ok(resp) => {
-                        page_result = Some(Ok(resp));
-                        break;
-                    }
-                    Err(AppError::RateLimitExceeded)
-                        if page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
-                    {
-                        let cooldown = Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
-                        sleep(cooldown).await;
-                        page_delay = (page_delay * 2).min(Duration::from_secs(5));
-                    }
-                    Err(e) => {
-                        page_result = Some(Err(e));
-                        break;
-                    }
-                }
-            }
-
-            let resp = match page_result {
-                Some(Ok(resp)) => resp,
-                Some(Err(e)) => return Err(e),
-                None => return Err(AppError::RateLimitExceeded),
-            };
-
-            let ckan_resp: CkanResponse<PackageSearchResult> = resp
-                .json()
-                .await
-                .map_err(|e| AppError::ClientError(e.to_string()))?;
-
-            if !ckan_resp.success {
-                return Err(AppError::Generic(
-                    "CKAN package_search returned success: false".to_string(),
-                ));
-            }
-
-            let page_count = ckan_resp.result.results.len();
-            all_datasets.extend(ckan_resp.result.results);
+            let page_count = datasets.len();
+            all_datasets.extend(datasets);
 
             // Check if we've fetched all results
-            if start + page_count >= ckan_resp.result.count || page_count < PAGE_SIZE {
+            if start + page_count >= total_count || page_count < PAGE_SIZE {
                 break;
             }
 
@@ -372,6 +320,76 @@ impl CkanClient {
         }
 
         Ok(all_datasets)
+    }
+
+    /// Fetches a single page of search results with rate-limit resilience.
+    ///
+    /// Returns `(datasets, total_count)` where `total_count` is the total number
+    /// of matching datasets reported by CKAN (for pagination control).
+    async fn fetch_search_page(
+        &self,
+        fq: Option<&str>,
+        start: usize,
+        page_size: usize,
+        page_delay: &mut Duration,
+    ) -> Result<(Vec<CkanDataset>, usize), AppError> {
+        let mut url = self
+            .base_url
+            .join("api/3/action/package_search")
+            .map_err(|e| AppError::Generic(e.to_string()))?;
+
+        {
+            let mut pairs = url.query_pairs_mut();
+            if let Some(filter) = fq {
+                pairs.append_pair("fq", filter);
+            }
+            pairs
+                .append_pair("rows", &page_size.to_string())
+                .append_pair("start", &start.to_string())
+                .append_pair("sort", "metadata_modified asc");
+        }
+
+        // Page-level retry: if the request is rate-limited after exhausting
+        // low-level retries, wait a longer cooldown and try the page again.
+        let mut page_result = None;
+        for page_attempt in 0..=Self::PAGE_RATE_LIMIT_RETRIES {
+            match self.request_with_retry(&url).await {
+                Ok(resp) => {
+                    page_result = Some(Ok(resp));
+                    break;
+                }
+                Err(AppError::RateLimitExceeded)
+                    if page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
+                {
+                    let cooldown = Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
+                    sleep(cooldown).await;
+                    *page_delay = (*page_delay * 2).min(Duration::from_secs(5));
+                }
+                Err(e) => {
+                    page_result = Some(Err(e));
+                    break;
+                }
+            }
+        }
+
+        let resp = match page_result {
+            Some(Ok(resp)) => resp,
+            Some(Err(e)) => return Err(e),
+            None => return Err(AppError::RateLimitExceeded),
+        };
+
+        let ckan_resp: CkanResponse<PackageSearchResult> = resp
+            .json()
+            .await
+            .map_err(|e| AppError::ClientError(e.to_string()))?;
+
+        if !ckan_resp.success {
+            return Err(AppError::Generic(
+                "CKAN package_search returned success: false".to_string(),
+            ));
+        }
+
+        Ok((ckan_resp.result.results, ckan_resp.result.count))
     }
 
     /// Maximum retries for rate-limited (429) responses.
