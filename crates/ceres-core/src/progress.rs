@@ -124,6 +124,38 @@ pub enum HarvestEvent<'a> {
         /// Time until recovery attempt.
         retry_after: Duration,
     },
+
+    /// Pre-processing phase (delta detection / hash check) starting.
+    PreprocessingStarted {
+        /// Total number of datasets to pre-process.
+        total: usize,
+    },
+
+    /// Pre-processing phase completed — summary before finalization steps
+    /// (timestamp updates, stale detection).
+    ///
+    /// Note: in the streaming pipeline, preprocessing and persistence are
+    /// interleaved, so this fires after both have completed.
+    PreprocessingCompleted {
+        /// Number of datasets that need persistence (created + updated).
+        changed: usize,
+        /// Number of datasets with identical content hash.
+        unchanged: usize,
+        /// Number of datasets that failed pre-processing.
+        failed: usize,
+    },
+
+    /// Starting batch timestamp update for unchanged datasets.
+    TimestampUpdateStarted {
+        /// Number of unchanged datasets whose timestamps will be refreshed.
+        count: usize,
+    },
+
+    /// Batch timestamp update completed.
+    TimestampUpdateCompleted {
+        /// Number of datasets whose timestamps were refreshed.
+        count: usize,
+    },
 }
 
 /// Trait for reporting harvest progress.
@@ -310,6 +342,25 @@ impl ProgressReporter for TracingReporter {
                     retry_after.as_secs()
                 );
             }
+            HarvestEvent::PreprocessingStarted { total } => {
+                info!("Pre-processing {} dataset(s) (delta detection)...", total);
+            }
+            HarvestEvent::PreprocessingCompleted {
+                changed,
+                unchanged,
+                failed,
+            } => {
+                info!(
+                    "Pre-processing complete: {} changed, {} unchanged, {} failed",
+                    changed, unchanged, failed
+                );
+            }
+            HarvestEvent::TimestampUpdateStarted { count } => {
+                info!("Updating timestamps for {} unchanged dataset(s)...", count);
+            }
+            HarvestEvent::TimestampUpdateCompleted { count } => {
+                info!("Timestamp update complete for {} dataset(s)", count);
+            }
         }
     }
 }
@@ -392,6 +443,18 @@ mod tests {
             service: "gemini",
             retry_after: Duration::from_secs(30),
         });
+
+        // Test preprocessing events
+        reporter.report(HarvestEvent::PreprocessingStarted { total: 100 });
+        reporter.report(HarvestEvent::PreprocessingCompleted {
+            changed: 10,
+            unchanged: 85,
+            failed: 5,
+        });
+
+        // Test timestamp update events
+        reporter.report(HarvestEvent::TimestampUpdateStarted { count: 85 });
+        reporter.report(HarvestEvent::TimestampUpdateCompleted { count: 85 });
     }
 
     #[test]

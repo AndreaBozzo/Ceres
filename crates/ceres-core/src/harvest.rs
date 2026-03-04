@@ -625,6 +625,8 @@ where
         let last_reported = Arc::new(AtomicUsize::new(0));
         let was_cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+        reporter.report(HarvestEvent::PreprocessingStarted { total });
+
         let report_interval = std::cmp::max(total / 20, 50);
         let url_template_arc: Option<Arc<str>> = url_template.map(Arc::from);
         let language_arc: Arc<str> = Arc::from(language);
@@ -819,6 +821,19 @@ where
             }
         }
 
+        // Report processing summary before finalization steps
+        // (timestamp updates, stale detection, sync status recording).
+        // Note: in the streaming pipeline, preprocessing and persistence
+        // are interleaved, so stats here reflect both phases.
+        {
+            let preprocess_stats = stats.to_stats();
+            reporter.report(HarvestEvent::PreprocessingCompleted {
+                changed: preprocess_stats.created + preprocess_stats.updated,
+                unchanged: preprocess_stats.unchanged,
+                failed: preprocess_stats.failed,
+            });
+        }
+
         // In dry-run mode, skip all DB writes and return stats early
         if self.config.dry_run {
             let final_stats = stats.to_stats();
@@ -854,21 +869,24 @@ where
             .map(|g| g.to_vec())
             .unwrap_or_default();
         if !unchanged_list.is_empty() {
-            tracing::info!(
-                portal = portal_url,
-                count = unchanged_list.len(),
-                "Finalizing: updating timestamps for unchanged datasets..."
-            );
+            let unchanged_count = unchanged_list.len();
+            reporter.report(HarvestEvent::TimestampUpdateStarted {
+                count: unchanged_count,
+            });
             if let Err(e) = self
                 .store
                 .batch_update_timestamps(portal_url, &unchanged_list)
                 .await
             {
                 tracing::warn!(
-                    count = unchanged_list.len(),
+                    count = unchanged_count,
                     error = %e,
                     "Failed to batch update timestamps for unchanged datasets"
                 );
+            } else {
+                reporter.report(HarvestEvent::TimestampUpdateCompleted {
+                    count: unchanged_count,
+                });
             }
         }
 
