@@ -5,6 +5,7 @@ pgdata/
 .git/
 .github/
 docs/
+website/
 *.md
 .vscode/
 .idea/
