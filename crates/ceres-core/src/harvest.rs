@@ -882,10 +882,17 @@ where
             SyncStatus::Completed
         };
 
-        // Mark stale datasets after a successful full sync.
+        // Mark stale datasets after a clean full sync.
         // Only full syncs can definitively say "this dataset is gone" because
         // incremental syncs only fetch changed datasets.
-        if sync_mode == SyncMode::Full && !is_cancelled {
+        // We also skip stale detection when there were failures or skipped datasets,
+        // because those datasets keep their old last_updated_at and would be
+        // falsely marked as stale.
+        if sync_mode == SyncMode::Full
+            && !is_cancelled
+            && final_stats.failed == 0
+            && final_stats.skipped == 0
+        {
             match self.store.mark_stale_datasets(portal_url, sync_start).await {
                 Ok(stale_count) if stale_count > 0 => {
                     tracing::warn!(

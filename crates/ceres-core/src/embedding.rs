@@ -179,6 +179,8 @@ where
                 break;
             }
 
+            let embedded_before = stats.embedded;
+
             for batch in page.chunks(effective_batch_size) {
                 if cancel_token.is_cancelled() {
                     tracing::info!("Embedding pass cancelled");
@@ -199,6 +201,18 @@ where
                     failed: stats.failed,
                     skipped: stats.skipped,
                 });
+            }
+
+            // If no datasets were successfully embedded this page, stop to avoid
+            // an infinite loop re-fetching the same failing datasets.
+            if stats.embedded == embedded_before {
+                tracing::warn!(
+                    "No progress this page — stopping to avoid infinite loop \
+                     ({} failed, {} skipped)",
+                    stats.failed,
+                    stats.skipped
+                );
+                break;
             }
         }
 
