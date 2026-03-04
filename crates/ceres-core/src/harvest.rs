@@ -419,16 +419,19 @@ where
                 reporter.report(HarvestEvent::PortalDatasetsFound { count });
                 Ok((SyncMode::Full, SyncPlan::FullBulk { datasets }))
             }
-            Err(AppError::RateLimitExceeded) => {
-                // If bulk fetch was rate-limited, ID-by-ID would be even worse.
-                // Propagate the error instead of falling back.
+            Err(e) if e.is_retryable() => {
+                // Transient errors (rate limits, timeouts, network issues):
+                // ID-by-ID would be even worse, so propagate the error.
                 tracing::warn!(
                     portal = portal_url,
-                    "Bulk fetch rate-limited, not falling back to ID-by-ID (would be worse)"
+                    error = %e,
+                    "Bulk fetch failed with transient error, not falling back to ID-by-ID (would be worse)"
                 );
-                Err(AppError::RateLimitExceeded)
+                Err(e)
             }
             Err(e) => {
+                // Non-transient errors (e.g. endpoint not found, invalid response):
+                // the portal likely doesn't support package_search, fall back to ID-by-ID.
                 tracing::info!(
                     portal = portal_url,
                     error = %e,
@@ -844,6 +847,12 @@ where
             }
         }
 
+        // TODO(perf): This collects all unchanged dataset IDs in memory then
+        // issues chunked UPDATE queries (500 IDs per query). For large portals
+        // (e.g. data.gov.au with 109k datasets), this means ~218 sequential
+        // UPDATE queries. When implementing stale detection & soft deletion,
+        // replace this with a single `UPDATE ... WHERE source_portal = $1`
+        // or a dedicated `last_seen_at` column + one bulk touch query.
         // Batch update timestamps for unchanged datasets
         let unchanged_list = unchanged_ids
             .lock()
