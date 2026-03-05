@@ -83,7 +83,7 @@ impl SyncMode {
 #[derive(Clone)]
 struct PreprocessContext<D: DeltaDetector> {
     existing_hashes: HashMap<String, Option<String>>,
-    unchanged_ids: Arc<Mutex<Vec<String>>>,
+    all_seen_ids: Arc<Mutex<Vec<String>>>,
     stats: Arc<AtomicSyncStats>,
     processed_count: Arc<AtomicUsize>,
     delta_detector: D,
@@ -107,16 +107,21 @@ fn preprocess_dataset<C: PortalClient, D: DeltaDetector>(
     match decision.outcome {
         SyncOutcome::Unchanged => {
             ctx.stats.record(SyncOutcome::Unchanged);
-            if let Ok(mut ids) = ctx.unchanged_ids.lock() {
+            if let Ok(mut ids) = ctx.all_seen_ids.lock() {
                 ids.push(new_dataset.original_id);
             }
             ctx.processed_count.fetch_add(1, Ordering::Relaxed);
             None
         }
-        SyncOutcome::Updated | SyncOutcome::Created => Some(PreProcessedDataset {
-            dataset: new_dataset,
-            outcome: decision.outcome,
-        }),
+        SyncOutcome::Updated | SyncOutcome::Created => {
+            if let Ok(mut ids) = ctx.all_seen_ids.lock() {
+                ids.push(new_dataset.original_id.clone());
+            }
+            Some(PreProcessedDataset {
+                dataset: new_dataset,
+                outcome: decision.outcome,
+            })
+        }
         SyncOutcome::Failed | SyncOutcome::Skipped => {
             ctx.stats.record(decision.outcome);
             ctx.processed_count.fetch_add(1, Ordering::Relaxed);
@@ -617,7 +622,7 @@ where
         }
 
         let stats = Arc::new(AtomicSyncStats::new());
-        let unchanged_ids: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let all_seen_ids: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let processed_count = Arc::new(AtomicUsize::new(0));
         let last_reported = Arc::new(AtomicUsize::new(0));
         let was_cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -651,7 +656,7 @@ where
             SyncPlan::Full { ids } => {
                 let ctx = PreprocessContext {
                     existing_hashes,
-                    unchanged_ids: Arc::clone(&unchanged_ids),
+                    all_seen_ids: Arc::clone(&all_seen_ids),
                     stats: Arc::clone(&stats),
                     processed_count: Arc::clone(&processed_count),
                     delta_detector: self.delta_detector.clone(),
@@ -773,7 +778,7 @@ where
                 // of async task spawning, Arc cloning, and stream buffering.
                 let ctx = PreprocessContext {
                     existing_hashes,
-                    unchanged_ids: Arc::clone(&unchanged_ids),
+                    all_seen_ids: Arc::clone(&all_seen_ids),
                     stats: Arc::clone(&stats),
                     processed_count: Arc::clone(&processed_count),
                     delta_detector: self.delta_detector.clone(),
@@ -876,7 +881,7 @@ where
         }
 
         // Report processing summary before finalization steps
-        // (timestamp updates, stale detection, sync status recording).
+        // (stale detection, sync status recording).
         // Note: in the streaming pipeline, preprocessing and persistence
         // are interleaved, so stats here reflect both phases.
         {
@@ -916,44 +921,6 @@ where
             }
         }
 
-        // Batch update timestamps for unchanged datasets.
-        // We track success because stale detection relies on all unchanged datasets
-        // having their `last_updated_at` refreshed past `sync_start`. If this fails,
-        // those datasets would be falsely marked as stale.
-        let unchanged_list = unchanged_ids
-            .lock()
-            .ok()
-            .map(|g| g.to_vec())
-            .unwrap_or_default();
-        let timestamps_updated = if !unchanged_list.is_empty() {
-            let unchanged_count = unchanged_list.len();
-            reporter.report(HarvestEvent::TimestampUpdateStarted {
-                count: unchanged_count,
-            });
-            match self
-                .store
-                .batch_update_timestamps(portal_url, &unchanged_list)
-                .await
-            {
-                Ok(_) => {
-                    reporter.report(HarvestEvent::TimestampUpdateCompleted {
-                        count: unchanged_count,
-                    });
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        count = unchanged_count,
-                        error = %e,
-                        "Failed to batch update timestamps for unchanged datasets"
-                    );
-                    false
-                }
-            }
-        } else {
-            true
-        };
-
         let final_stats = stats.to_stats();
         let is_cancelled = was_cancelled.load(Ordering::SeqCst) || cancel_token.is_cancelled();
 
@@ -967,16 +934,24 @@ where
         // Mark stale datasets after a clean full sync.
         // Only full syncs can definitively say "this dataset is gone" because
         // incremental syncs only fetch changed datasets.
-        // We also skip stale detection when there were failures, skipped datasets,
-        // or timestamp updates failed — because those datasets keep their old
-        // last_updated_at and would be falsely marked as stale.
+        // Uses ID-based exclusion: any dataset on this portal whose original_id
+        // is NOT in the set of all seen IDs is marked as stale. This avoids
+        // the expensive per-row timestamp update that the old approach required.
         if sync_mode == SyncMode::Full
             && !is_cancelled
             && final_stats.failed == 0
             && final_stats.skipped == 0
-            && timestamps_updated
         {
-            match self.store.mark_stale_datasets(portal_url, sync_start).await {
+            let seen_list = all_seen_ids
+                .lock()
+                .ok()
+                .map(|g| g.to_vec())
+                .unwrap_or_default();
+            match self
+                .store
+                .mark_stale_by_exclusion(portal_url, &seen_list)
+                .await
+            {
                 Ok(stale_count) if stale_count > 0 => {
                     tracing::warn!(
                         portal = portal_url,

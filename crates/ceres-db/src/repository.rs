@@ -300,6 +300,43 @@ impl DatasetRepository {
         Ok(result.rows_affected())
     }
 
+    /// Marks datasets as stale if their original_id is NOT in the given set.
+    ///
+    /// This is much faster than the timestamp-based approach because it avoids
+    /// updating every unchanged row. Uses a CTE with UNNEST for efficient
+    /// hash-based exclusion in PostgreSQL.
+    pub async fn mark_stale_by_exclusion(
+        &self,
+        portal_url: &str,
+        seen_ids: &[String],
+    ) -> Result<u64, AppError> {
+        if seen_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let result = sqlx::query(
+            r#"
+            WITH seen AS (
+                SELECT UNNEST($2::text[]) AS original_id
+            )
+            UPDATE datasets d
+            SET is_stale = TRUE
+            WHERE d.source_portal = $1
+              AND d.is_stale = FALSE
+              AND NOT EXISTS (
+                  SELECT 1 FROM seen s WHERE s.original_id = d.original_id
+              )
+            "#,
+        )
+        .bind(portal_url)
+        .bind(seen_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Retrieves a dataset by UUID.
     pub async fn get(&self, id: Uuid) -> Result<Option<Dataset>, AppError> {
         let query = format!("SELECT {} FROM datasets WHERE id = $1", DATASET_COLUMNS);
@@ -869,6 +906,14 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
         sync_start: DateTime<Utc>,
     ) -> Result<u64, AppError> {
         DatasetRepository::mark_stale_datasets(self, portal_url, sync_start).await
+    }
+
+    async fn mark_stale_by_exclusion(
+        &self,
+        portal_url: &str,
+        seen_ids: &[String],
+    ) -> Result<u64, AppError> {
+        DatasetRepository::mark_stale_by_exclusion(self, portal_url, seen_ids).await
     }
 
     async fn upsert(&self, dataset: &NewDataset) -> Result<Uuid, AppError> {

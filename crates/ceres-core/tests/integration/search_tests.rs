@@ -80,6 +80,13 @@ impl DatasetStore for FailingDatasetStore {
     ) -> Result<u64, AppError> {
         unimplemented!()
     }
+    async fn mark_stale_by_exclusion(
+        &self,
+        _portal_url: &str,
+        _seen_ids: &[String],
+    ) -> Result<u64, AppError> {
+        unimplemented!()
+    }
     async fn upsert(&self, _dataset: &NewDataset) -> Result<Uuid, AppError> {
         unimplemented!()
     }

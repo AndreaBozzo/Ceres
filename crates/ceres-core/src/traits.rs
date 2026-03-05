@@ -289,6 +289,26 @@ pub trait DatasetStore: Send + Sync + Clone {
         sync_start: DateTime<Utc>,
     ) -> impl Future<Output = Result<u64, AppError>> + Send;
 
+    /// Marks datasets as stale if their original_id is NOT in the given set.
+    ///
+    /// This is more efficient than the timestamp-based approach because it
+    /// avoids updating every unchanged row just to compare timestamps later.
+    /// Instead, we directly identify stale datasets by exclusion.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_url` - The source portal URL
+    /// * `seen_ids` - All original_ids seen during the current full sync
+    ///
+    /// # Returns
+    ///
+    /// The number of datasets newly marked as stale.
+    fn mark_stale_by_exclusion(
+        &self,
+        portal_url: &str,
+        seen_ids: &[String],
+    ) -> impl Future<Output = Result<u64, AppError>> + Send;
+
     /// Inserts or updates a dataset.
     ///
     /// # Arguments

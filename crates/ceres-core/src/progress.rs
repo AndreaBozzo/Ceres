@@ -132,7 +132,7 @@ pub enum HarvestEvent<'a> {
     },
 
     /// Pre-processing phase completed — summary before finalization steps
-    /// (timestamp updates, stale detection).
+    /// (stale detection).
     ///
     /// Note: in the streaming pipeline, preprocessing and persistence are
     /// interleaved, so this fires after both have completed.
@@ -143,18 +143,6 @@ pub enum HarvestEvent<'a> {
         unchanged: usize,
         /// Number of datasets that failed pre-processing.
         failed: usize,
-    },
-
-    /// Starting batch timestamp update for unchanged datasets.
-    TimestampUpdateStarted {
-        /// Number of unchanged datasets whose timestamps will be refreshed.
-        count: usize,
-    },
-
-    /// Batch timestamp update completed.
-    TimestampUpdateCompleted {
-        /// Number of datasets whose timestamps were refreshed.
-        count: usize,
     },
 }
 
@@ -355,12 +343,6 @@ impl ProgressReporter for TracingReporter {
                     changed, unchanged, failed
                 );
             }
-            HarvestEvent::TimestampUpdateStarted { count } => {
-                info!("Updating timestamps for {} unchanged dataset(s)...", count);
-            }
-            HarvestEvent::TimestampUpdateCompleted { count } => {
-                info!("Timestamp update complete for {} dataset(s)", count);
-            }
         }
     }
 }
@@ -451,10 +433,6 @@ mod tests {
             unchanged: 85,
             failed: 5,
         });
-
-        // Test timestamp update events
-        reporter.report(HarvestEvent::TimestampUpdateStarted { count: 85 });
-        reporter.report(HarvestEvent::TimestampUpdateCompleted { count: 85 });
     }
 
     #[test]

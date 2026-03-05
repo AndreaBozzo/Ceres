@@ -352,6 +352,14 @@ impl DatasetStore for MockDatasetStore {
         Ok(0)
     }
 
+    async fn mark_stale_by_exclusion(
+        &self,
+        _portal_url: &str,
+        _seen_ids: &[String],
+    ) -> Result<u64, AppError> {
+        Ok(0)
+    }
+
     async fn upsert(&self, dataset: &NewDataset) -> Result<Uuid, AppError> {
         let mut datasets = self.datasets.lock().unwrap();
         let key = (dataset.source_portal.clone(), dataset.original_id.clone());
