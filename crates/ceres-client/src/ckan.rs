@@ -433,6 +433,8 @@ impl CkanClient {
                             sleep(delay).await;
                             continue;
                         }
+
+                        return Err(AppError::RateLimitExceeded);
                     }
 
                     if status.is_server_error() {
