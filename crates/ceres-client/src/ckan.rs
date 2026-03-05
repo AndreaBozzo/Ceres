@@ -134,6 +134,10 @@ impl CkanClient {
     /// Maximum number of page-level retries when a page is rate-limited.
     const PAGE_RATE_LIMIT_RETRIES: u32 = 3;
 
+    /// Minimum page size for adaptive reduction on timeout.
+    /// Below this threshold we give up rather than making very small requests.
+    const MIN_PAGE_SIZE: usize = 100;
+
     /// Creates a new CKAN client for the specified portal.
     ///
     /// # Arguments
@@ -295,25 +299,40 @@ impl CkanClient {
     ///
     /// * `fq` - Optional Solr filter query (e.g., `metadata_modified:[... TO *]`)
     async fn paginated_search(&self, fq: Option<&str>) -> Result<Vec<CkanDataset>, AppError> {
-        const PAGE_SIZE: usize = 1000;
+        let mut page_size: usize = 1000;
         let mut all_datasets = Vec::new();
         let mut start: usize = 0;
         let mut page_delay = Self::PAGE_DELAY;
 
         loop {
-            let (datasets, total_count) = self
-                .fetch_search_page(fq, start, PAGE_SIZE, &mut page_delay)
-                .await?;
+            match self
+                .fetch_search_page(fq, start, page_size, &mut page_delay)
+                .await
+            {
+                Ok((datasets, total_count)) => {
+                    let page_count = datasets.len();
+                    all_datasets.extend(datasets);
 
-            let page_count = datasets.len();
-            all_datasets.extend(datasets);
+                    // Check if we've fetched all results
+                    if start + page_count >= total_count || page_count < page_size {
+                        break;
+                    }
 
-            // Check if we've fetched all results
-            if start + page_count >= total_count || page_count < PAGE_SIZE {
-                break;
+                    start += page_size;
+                }
+                Err(AppError::Timeout(_)) if page_size > Self::MIN_PAGE_SIZE => {
+                    // Portal is too slow for this page size — halve it and retry
+                    // the same offset rather than aborting the entire harvest.
+                    page_size = (page_size / 2).max(Self::MIN_PAGE_SIZE);
+                    tracing::warn!(
+                        new_page_size = page_size,
+                        offset = start,
+                        "Page timed out, reducing page size and retrying"
+                    );
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
-
-            start += PAGE_SIZE;
 
             // Polite delay between pages to avoid triggering rate limits
             sleep(page_delay).await;
