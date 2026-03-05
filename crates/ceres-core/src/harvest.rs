@@ -802,8 +802,8 @@ where
                             stats.record(item.outcome);
                             let current = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
                             let last = last_reported.load(Ordering::Relaxed);
-                            if current >= last + report_interval || current >= total {
-                                if last_reported
+                            if (current >= last + report_interval || current >= total)
+                                && last_reported
                                     .compare_exchange(
                                         last,
                                         current,
@@ -811,18 +811,17 @@ where
                                         Ordering::Relaxed,
                                     )
                                     .is_ok()
-                                {
-                                    let current_stats = stats.to_stats();
-                                    reporter.report(HarvestEvent::DatasetProcessed {
-                                        current,
-                                        total,
-                                        created: current_stats.created,
-                                        updated: current_stats.updated,
-                                        unchanged: current_stats.unchanged,
-                                        failed: current_stats.failed,
-                                        skipped: current_stats.skipped,
-                                    });
-                                }
+                            {
+                                let current_stats = stats.to_stats();
+                                reporter.report(HarvestEvent::DatasetProcessed {
+                                    current,
+                                    total,
+                                    created: current_stats.created,
+                                    updated: current_stats.updated,
+                                    unchanged: current_stats.unchanged,
+                                    failed: current_stats.failed,
+                                    skipped: current_stats.skipped,
+                                });
                             }
                         }
                     }
