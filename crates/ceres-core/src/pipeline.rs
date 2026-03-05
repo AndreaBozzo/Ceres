@@ -13,10 +13,7 @@ use crate::config::SyncConfig;
 use crate::embedding::{EmbeddingService, EmbeddingStats};
 use crate::harvest::HarvestService;
 use crate::progress::{ProgressReporter, SilentReporter};
-use crate::sync::{
-    BatchHarvestSummary, ContentHashDetector, DeltaDetector, PortalHarvestResult, SyncResult,
-    SyncStats,
-};
+use crate::sync::{BatchHarvestSummary, ContentHashDetector, DeltaDetector, SyncResult, SyncStats};
 use crate::traits::{DatasetStore, EmbeddingProvider, PortalClientFactory};
 use crate::{AppError, PortalEntry, PortalType};
 
@@ -172,7 +169,7 @@ where
         Ok((sync_result, embed_stats))
     }
 
-    /// Harvests multiple portals: harvest metadata then embed pending datasets for each.
+    /// Harvests multiple portals: harvest metadata then embed all pending datasets.
     pub async fn batch_harvest(&self, portals: &[&PortalEntry]) -> BatchHarvestSummary {
         self.batch_harvest_with_progress(portals, &SilentReporter)
             .await
@@ -189,100 +186,33 @@ where
     }
 
     /// Harvests multiple portals with progress and cancellation.
+    ///
+    /// Delegates metadata harvesting to [`HarvestService`], then runs a single
+    /// embedding pass for all pending datasets across all portals.
     pub async fn batch_harvest_with_progress_cancellable<R: ProgressReporter>(
         &self,
         portals: &[&PortalEntry],
         reporter: &R,
         cancel_token: CancellationToken,
     ) -> BatchHarvestSummary {
-        use crate::progress::HarvestEvent;
+        // Step 1: Harvest all portals (metadata only)
+        let summary = self
+            .harvest
+            .batch_harvest_with_progress_cancellable(portals, reporter, cancel_token.clone())
+            .await;
 
-        let mut summary = BatchHarvestSummary::new();
-        let total = portals.len();
-
-        reporter.report(HarvestEvent::BatchStarted {
-            total_portals: total,
-        });
-
-        for (i, portal) in portals.iter().enumerate() {
-            if cancel_token.is_cancelled() {
-                reporter.report(HarvestEvent::BatchCancelled {
-                    completed_portals: i,
-                    total_portals: total,
-                });
-                break;
-            }
-
-            reporter.report(HarvestEvent::PortalStarted {
-                portal_index: i,
-                total_portals: total,
-                portal_name: &portal.name,
-                portal_url: &portal.url,
-            });
-
+        // Step 2: Single embedding pass for all pending datasets
+        if !cancel_token.is_cancelled() {
             match self
-                .sync_portal_with_progress_cancellable_with_options(
-                    &portal.url,
-                    portal.url_template.as_deref(),
-                    portal.language(),
-                    reporter,
-                    cancel_token.clone(),
-                    false,
-                    portal.portal_type,
-                )
+                .embedding
+                .embed_pending(None, reporter, cancel_token)
                 .await
             {
-                Ok((result, _embed_stats)) => {
-                    if result.is_cancelled() {
-                        reporter.report(HarvestEvent::PortalCancelled {
-                            portal_index: i,
-                            total_portals: total,
-                            portal_name: &portal.name,
-                            stats: &result.stats,
-                        });
-                        summary.add(PortalHarvestResult::success(
-                            portal.name.clone(),
-                            portal.url.clone(),
-                            result.stats,
-                        ));
-                        reporter.report(HarvestEvent::BatchCancelled {
-                            completed_portals: i + 1,
-                            total_portals: total,
-                        });
-                        break;
-                    } else {
-                        reporter.report(HarvestEvent::PortalCompleted {
-                            portal_index: i,
-                            total_portals: total,
-                            portal_name: &portal.name,
-                            stats: &result.stats,
-                        });
-                        summary.add(PortalHarvestResult::success(
-                            portal.name.clone(),
-                            portal.url.clone(),
-                            result.stats,
-                        ));
-                    }
-                }
+                Ok(_) => {}
                 Err(e) => {
-                    let error_str = e.to_string();
-                    reporter.report(HarvestEvent::PortalFailed {
-                        portal_index: i,
-                        total_portals: total,
-                        portal_name: &portal.name,
-                        error: &error_str,
-                    });
-                    summary.add(PortalHarvestResult::failure(
-                        portal.name.clone(),
-                        portal.url.clone(),
-                        error_str,
-                    ));
+                    tracing::warn!(error = %e, "Post-batch embedding pass failed");
                 }
             }
-        }
-
-        if !cancel_token.is_cancelled() {
-            reporter.report(HarvestEvent::BatchCompleted { summary: &summary });
         }
 
         summary

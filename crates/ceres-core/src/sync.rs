@@ -206,8 +206,6 @@ impl Default for AtomicSyncStats {
 /// Result of delta detection for a dataset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReprocessingDecision {
-    /// Whether embedding needs to be regenerated
-    pub needs_embedding: bool,
     /// The outcome classification for this dataset
     pub outcome: SyncOutcome,
     /// Human-readable reason for the decision
@@ -262,7 +260,6 @@ impl DeltaDetector for ContentHashDetector {
             Some(Some(hash)) if hash == new_hash => {
                 // Hash matches - content unchanged
                 ReprocessingDecision {
-                    needs_embedding: false,
                     outcome: SyncOutcome::Unchanged,
                     reason: "content hash matches",
                 }
@@ -270,7 +267,6 @@ impl DeltaDetector for ContentHashDetector {
             Some(Some(_)) => {
                 // Hash exists but differs - content updated
                 ReprocessingDecision {
-                    needs_embedding: true,
                     outcome: SyncOutcome::Updated,
                     reason: "content hash changed",
                 }
@@ -278,7 +274,6 @@ impl DeltaDetector for ContentHashDetector {
             Some(None) => {
                 // Exists but no hash (legacy data) - treat as update
                 ReprocessingDecision {
-                    needs_embedding: true,
                     outcome: SyncOutcome::Updated,
                     reason: "legacy record without hash",
                 }
@@ -286,7 +281,6 @@ impl DeltaDetector for ContentHashDetector {
             None => {
                 // Not in existing data - new dataset
                 ReprocessingDecision {
-                    needs_embedding: true,
                     outcome: SyncOutcome::Created,
                     reason: "new dataset",
                 }
@@ -310,12 +304,10 @@ impl DeltaDetector for AlwaysReprocessDetector {
     ) -> ReprocessingDecision {
         match existing_hash {
             Some(_) => ReprocessingDecision {
-                needs_embedding: true,
                 outcome: SyncOutcome::Updated,
                 reason: "always reprocess strategy",
             },
             None => ReprocessingDecision {
-                needs_embedding: true,
                 outcome: SyncOutcome::Created,
                 reason: "new dataset",
             },
@@ -485,7 +477,6 @@ mod tests {
         let existing = Some(Some(hash.clone()));
         let decision = needs_reprocessing(existing.as_ref(), &hash);
 
-        assert!(!decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Unchanged);
         assert_eq!(decision.reason, "content hash matches");
     }
@@ -497,7 +488,6 @@ mod tests {
         let existing = Some(Some(old_hash));
         let decision = needs_reprocessing(existing.as_ref(), new_hash);
 
-        assert!(decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Updated);
         assert_eq!(decision.reason, "content hash changed");
     }
@@ -507,7 +497,6 @@ mod tests {
         let existing: Option<Option<String>> = Some(None);
         let decision = needs_reprocessing(existing.as_ref(), "new_hash");
 
-        assert!(decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Updated);
         assert_eq!(decision.reason, "legacy record without hash");
     }
@@ -516,7 +505,6 @@ mod tests {
     fn test_needs_reprocessing_new() {
         let decision = needs_reprocessing(None, "new_hash");
 
-        assert!(decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Created);
         assert_eq!(decision.reason, "new dataset");
     }
@@ -799,7 +787,6 @@ mod tests {
         let existing = Some(Some(hash.clone()));
         let decision = detector.needs_reprocessing(existing.as_ref(), &hash);
 
-        assert!(!decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Unchanged);
     }
 
@@ -809,7 +796,6 @@ mod tests {
         let existing = Some(Some("old_hash".to_string()));
         let decision = detector.needs_reprocessing(existing.as_ref(), "new_hash");
 
-        assert!(decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Updated);
     }
 
@@ -818,7 +804,6 @@ mod tests {
         let detector = ContentHashDetector;
         let decision = detector.needs_reprocessing(None, "new_hash");
 
-        assert!(decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Created);
     }
 
@@ -829,7 +814,6 @@ mod tests {
         let existing = Some(Some(hash.clone()));
         let decision = detector.needs_reprocessing(existing.as_ref(), &hash);
 
-        assert!(decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Updated);
         assert_eq!(decision.reason, "always reprocess strategy");
     }
@@ -839,7 +823,6 @@ mod tests {
         let detector = AlwaysReprocessDetector;
         let decision = detector.needs_reprocessing(None, "new_hash");
 
-        assert!(decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Created);
         assert_eq!(decision.reason, "new dataset");
     }
@@ -850,7 +833,6 @@ mod tests {
         let existing: Option<Option<String>> = Some(None);
         let decision = detector.needs_reprocessing(existing.as_ref(), "new_hash");
 
-        assert!(decision.needs_embedding);
         assert_eq!(decision.outcome, SyncOutcome::Updated);
         assert_eq!(decision.reason, "always reprocess strategy");
     }

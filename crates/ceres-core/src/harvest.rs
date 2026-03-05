@@ -921,33 +921,43 @@ where
             }
         }
 
-        // Batch update timestamps for unchanged datasets
+        // Batch update timestamps for unchanged datasets.
+        // We track success because stale detection relies on all unchanged datasets
+        // having their `last_updated_at` refreshed past `sync_start`. If this fails,
+        // those datasets would be falsely marked as stale.
         let unchanged_list = unchanged_ids
             .lock()
             .ok()
             .map(|g| g.to_vec())
             .unwrap_or_default();
-        if !unchanged_list.is_empty() {
+        let timestamps_updated = if !unchanged_list.is_empty() {
             let unchanged_count = unchanged_list.len();
             reporter.report(HarvestEvent::TimestampUpdateStarted {
                 count: unchanged_count,
             });
-            if let Err(e) = self
+            match self
                 .store
                 .batch_update_timestamps(portal_url, &unchanged_list)
                 .await
             {
-                tracing::warn!(
-                    count = unchanged_count,
-                    error = %e,
-                    "Failed to batch update timestamps for unchanged datasets"
-                );
-            } else {
-                reporter.report(HarvestEvent::TimestampUpdateCompleted {
-                    count: unchanged_count,
-                });
+                Ok(_) => {
+                    reporter.report(HarvestEvent::TimestampUpdateCompleted {
+                        count: unchanged_count,
+                    });
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        count = unchanged_count,
+                        error = %e,
+                        "Failed to batch update timestamps for unchanged datasets"
+                    );
+                    false
+                }
             }
-        }
+        } else {
+            true
+        };
 
         let final_stats = stats.to_stats();
         let is_cancelled = was_cancelled.load(Ordering::SeqCst) || cancel_token.is_cancelled();
@@ -962,13 +972,14 @@ where
         // Mark stale datasets after a clean full sync.
         // Only full syncs can definitively say "this dataset is gone" because
         // incremental syncs only fetch changed datasets.
-        // We also skip stale detection when there were failures or skipped datasets,
-        // because those datasets keep their old last_updated_at and would be
-        // falsely marked as stale.
+        // We also skip stale detection when there were failures, skipped datasets,
+        // or timestamp updates failed — because those datasets keep their old
+        // last_updated_at and would be falsely marked as stale.
         if sync_mode == SyncMode::Full
             && !is_cancelled
             && final_stats.failed == 0
             && final_stats.skipped == 0
+            && timestamps_updated
         {
             match self.store.mark_stale_datasets(portal_url, sync_start).await {
                 Ok(stale_count) if stale_count > 0 => {
