@@ -400,16 +400,22 @@ where
 
     /// Determines the best full sync plan for a portal.
     ///
-    /// Prefers bulk fetch via `search_all_datasets` (paginated `package_search`)
-    /// which uses ~N/1000 API calls instead of N individual calls. Falls back to
-    /// ID-by-ID fetching if the portal doesn't support bulk search.
+    /// Fetches dataset IDs first (cheap `package_list` call), then attempts
+    /// bulk fetch via `search_all_datasets` (paginated `package_search`).
+    /// If bulk fails, the pre-fetched IDs are used for ID-by-ID fetching
+    /// without making additional requests to an already-stressed portal.
     async fn full_sync_plan<R: ProgressReporter>(
         &self,
         portal_url: &str,
         portal_client: &F::Client,
         reporter: &R,
     ) -> Result<(SyncMode, SyncPlan<<F::Client as PortalClient>::PortalData>), AppError> {
-        // Try bulk fetch first (much faster for large portals)
+        // Fetch IDs first — lightweight call that serves as both a
+        // connectivity probe and a ready fallback if bulk fetch fails.
+        let ids = portal_client.list_dataset_ids().await?;
+        let id_count = ids.len();
+
+        // Try bulk fetch (much faster for large portals)
         match portal_client.search_all_datasets().await {
             Ok(datasets) => {
                 let count = datasets.len();
@@ -421,26 +427,15 @@ where
                 reporter.report(HarvestEvent::PortalDatasetsFound { count });
                 Ok((SyncMode::Full, SyncPlan::FullBulk { datasets }))
             }
-            Err(e) if e.is_retryable() => {
-                // Transient errors (rate limits, timeouts, network issues):
-                // ID-by-ID would be even worse, so propagate the error.
-                tracing::warn!(
-                    portal = portal_url,
-                    error = %e,
-                    "Bulk fetch failed with transient error, not falling back to ID-by-ID (would be worse)"
-                );
-                Err(e)
-            }
             Err(e) => {
-                // Non-transient errors (e.g. endpoint not found, invalid response):
-                // the portal likely doesn't support package_search, fall back to ID-by-ID.
+                // Bulk fetch failed — use the pre-fetched IDs for ID-by-ID sync.
                 tracing::info!(
                     portal = portal_url,
                     error = %e,
-                    "Bulk fetch not available, falling back to ID-by-ID sync"
+                    id_count,
+                    "Bulk fetch failed, falling back to ID-by-ID sync"
                 );
-                let ids = portal_client.list_dataset_ids().await?;
-                reporter.report(HarvestEvent::PortalDatasetsFound { count: ids.len() });
+                reporter.report(HarvestEvent::PortalDatasetsFound { count: id_count });
                 Ok((SyncMode::Full, SyncPlan::Full { ids }))
             }
         }

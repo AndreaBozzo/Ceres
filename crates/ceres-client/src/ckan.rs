@@ -134,9 +134,23 @@ impl CkanClient {
     /// Maximum number of page-level retries when a page is rate-limited.
     const PAGE_RATE_LIMIT_RETRIES: u32 = 3;
 
-    /// Minimum page size for adaptive reduction on timeout.
-    /// Below this threshold we give up rather than making very small requests.
-    const MIN_PAGE_SIZE: usize = 100;
+    /// Minimum page size for adaptive reduction.
+    /// Some portals truncate responses above ~1.5MB, so even 50 rows can fail
+    /// if datasets at that offset are resource-heavy. 10 is low enough to
+    /// handle any realistic dataset size while still making progress.
+    const MIN_PAGE_SIZE: usize = 10;
+
+    /// Errors worth retrying with a smaller page size.
+    ///
+    /// Timeouts and body-related errors suggest the response is too large for
+    /// the portal to serve reliably. Network errors during body streaming also
+    /// qualify since a smaller page means less data to transfer.
+    fn is_page_size_reducible(err: &AppError) -> bool {
+        matches!(
+            err,
+            AppError::Timeout(_) | AppError::ClientError(_) | AppError::NetworkError(_)
+        )
+    }
 
     /// Creates a new CKAN client for the specified portal.
     ///
@@ -320,16 +334,27 @@ impl CkanClient {
 
                     start += page_size;
                 }
-                Err(AppError::Timeout(_)) if page_size > Self::MIN_PAGE_SIZE => {
-                    // Portal is too slow for this page size — halve it and retry
-                    // the same offset rather than aborting the entire harvest.
-                    page_size = (page_size / 2).max(Self::MIN_PAGE_SIZE);
+                Err(e) if page_size > Self::MIN_PAGE_SIZE && Self::is_page_size_reducible(&e) => {
+                    // Timeout or truncated response — quarter the page size and
+                    // retry the same offset. Quartering converges faster than
+                    // halving (1000→250→62→15→10 vs 1000→500→250→125→62→31→15→10).
+                    page_size = (page_size / 4).max(Self::MIN_PAGE_SIZE);
                     tracing::warn!(
                         new_page_size = page_size,
                         offset = start,
-                        "Page timed out, reducing page size and retrying"
+                        error = %e,
+                        "Page failed, reducing page size and retrying"
                     );
                     continue;
+                }
+                Err(e) if Self::is_page_size_reducible(&e) => {
+                    // Already at MIN_PAGE_SIZE and still failing — this portal
+                    // can't reliably serve package_search (e.g. response size cap).
+                    // Return a non-retryable error so the caller falls back to
+                    // ID-by-ID fetching.
+                    return Err(AppError::Generic(format!(
+                        "package_search unreliable even at page_size={page_size}: {e}"
+                    )));
                 }
                 Err(e) => return Err(e),
             }
@@ -803,6 +828,33 @@ mod tests {
         let dataset: CkanDataset = serde_json::from_str(json).unwrap();
         let new_ds = CkanClient::into_new_dataset(dataset, "https://example.com", None, "en");
         assert_eq!(new_ds.description, Some("Notes description".to_string()));
+    }
+
+    #[test]
+    fn test_is_page_size_reducible_timeout() {
+        assert!(CkanClient::is_page_size_reducible(&AppError::Timeout(30)));
+    }
+
+    #[test]
+    fn test_is_page_size_reducible_client_error() {
+        let err = AppError::ClientError("error decoding response body".to_string());
+        assert!(CkanClient::is_page_size_reducible(&err));
+    }
+
+    #[test]
+    fn test_is_page_size_reducible_network_error() {
+        let err = AppError::NetworkError("connection reset".to_string());
+        assert!(CkanClient::is_page_size_reducible(&err));
+    }
+
+    #[test]
+    fn test_is_page_size_reducible_non_reducible() {
+        assert!(!CkanClient::is_page_size_reducible(
+            &AppError::RateLimitExceeded
+        ));
+        assert!(!CkanClient::is_page_size_reducible(&AppError::Generic(
+            "something".to_string()
+        )));
     }
 }
 
