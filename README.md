@@ -60,7 +60,8 @@ Found 3 matching datasets:
 - **CKAN Harvester** — Fetch datasets from any CKAN-compatible portal, including multilingual portals
 - **Multi-portal Batch Harvest** — Configure multiple portals in `portals.toml` and harvest them all at once
 - **Streaming Harvest** — Memory-efficient streaming pipeline for large portals (100k+ datasets)
-- **Delta Detection** — Only regenerate embeddings for changed datasets (99.8% API cost savings). See [Harvesting Architecture](docs/HARVESTING.md)
+- **Delta Detection** — Only regenerate embeddings for changed datasets (99.8% API cost savings). See [Harvesting Architecture](website/src/content/docs/HARVESTING.md)
+- **Stale Detection** — Automatically marks datasets removed from portals without deleting local data
 - **Batch Embeddings** — Batched embedding API calls for higher throughput during harvest
 - **Persistent Jobs** — Recoverable database-backed job queue with automatic retries and exponential backoff
 - **Graceful Shutdown** — Safely interrupt harvesting to ensure data consistency and release in-progress jobs back to the queue
@@ -123,7 +124,7 @@ See [`examples/portals.toml`](examples/portals.toml) for the full configuration.
 
 - Rust 1.87+
 - Docker & Docker Compose
-- Google Gemini API key ([get one free](https://aistudio.google.com/apikey)) or OpenAI API key
+- Google Gemini API key ([get one free](https://aistudio.google.com/apikey)) or OpenAI API key *(only needed for embedding — harvest with `--metadata-only` works without any API key)*
 
 ### Docker (recommended)
 
@@ -132,7 +133,7 @@ See [`examples/portals.toml`](examples/portals.toml) for the full configuration.
 git clone https://github.com/AndreaBozzo/Ceres.git
 cd Ceres
 cp .env.example .env
-# Edit .env with your API key and settings
+# Edit .env with your settings (API key optional — only needed for embedding)
 
 # Start everything (DB + server)
 docker compose up -d
@@ -158,7 +159,7 @@ docker compose up db -d
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your API key
+# Edit .env with your settings (API key optional — only needed for embedding)
 
 # Run database migrations
 make migrate
@@ -211,16 +212,21 @@ ceres <COMMAND>
 
 Commands:
   harvest  Harvest datasets from a CKAN portal or batch harvest from portals.toml
+  embed    Generate embeddings for datasets that don't have them yet
   search   Search indexed datasets using semantic similarity
   export   Export indexed datasets to various formats
   stats    Show database statistics
   help     Print help information
 
 Harvest Flags:
-  --full-sync       Force full sync even if incremental is available
-  --dry-run         Preview what would be harvested without writing to DB
-  --portal <NAME>   Harvest a specific portal by name from config
-  --config <PATH>   Use custom portals.toml location
+  --full-sync          Force full sync even if incremental is available
+  --dry-run            Preview what would be harvested without writing to DB
+  --metadata-only      Harvest metadata without generating embeddings (no API key needed)
+  --portal <NAME>      Harvest a specific portal by name from config
+  --config <PATH>      Use custom portals.toml location
+
+Embed Flags:
+  --portal <URL>       Only embed pending datasets from this portal
 
 Environment Variables:
   DATABASE_URL          PostgreSQL connection string
@@ -308,7 +314,7 @@ For past releases, see the [CHANGELOG](CHANGELOG.md).
 
 ## Contributing
 
-Contributions are welcome! See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for setup instructions and guidelines.
+Contributions are welcome! See [CONTRIBUTING.md](website/src/content/docs/CONTRIBUTING.md) for setup instructions and guidelines.
 
 ## License
 

@@ -66,6 +66,7 @@ These are tracked via `SyncStats` and reported at the end of each sync operation
 | *(none)* | Incremental if previous sync exists | Always active | Normal operation |
 | `--full-sync` | Full sync forced | Still active | Re-scan portal after known issues |
 | `--dry-run` | Dry run (no writes) | Still active | Preview what would happen |
+| `--metadata-only` | Same as default | Skipped (no embedding) | Harvest without API key |
 
 Delta detection is always active regardless of flags. There is no flag to bypass it — if you need to force full re-embedding, delete the stored content hashes from the database.
 
@@ -100,11 +101,46 @@ The embedding API (Gemini) is protected by a circuit breaker to prevent cascadin
 
 On HTTP 429 (rate limit), the recovery timeout is multiplied by a backoff factor (default 2x), up to a maximum of 5 minutes. Configuration is via environment variables: `CB_FAILURE_THRESHOLD`, `CB_RECOVERY_TIMEOUT_SECS`, `CB_SUCCESS_THRESHOLD`, `CB_RATE_LIMIT_BACKOFF_MULTIPLIER`, `CB_MAX_RECOVERY_TIMEOUT_SECS`.
 
+## Metadata-Only Mode
+
+With `--metadata-only`, harvesting fetches and stores dataset metadata without generating embeddings. No embedding API key is needed. Datasets are stored with `embedding = NULL`; any existing embeddings are preserved via SQL `COALESCE`.
+
+Use the standalone `ceres embed` command afterwards to generate embeddings for pending datasets. This enables:
+
+- Harvesting without an API key
+- Switching embedding providers without re-harvesting
+- Backfilling embeddings after outages
+- Independent scaling of harvest and embedding workloads
+
+## Stale Dataset Detection
+
+After a successful full sync with zero failures and zero skipped datasets, Ceres marks datasets that no longer exist on the portal as **stale**. This uses an efficient exclusion-based approach: all datasets whose `original_id` is NOT in the set of IDs seen during the sync are marked `is_stale = TRUE`.
+
+Stale datasets are:
+- **Excluded from semantic search** (`WHERE NOT is_stale`)
+- **Excluded from pending embeddings** (via partial index)
+- **Not deleted** — soft-marked so they can be recovered if the portal re-publishes them
+
+Stale detection only runs on full syncs because incremental syncs fetch only modified datasets and cannot definitively determine which datasets have been removed.
+
+## Adaptive Page Size
+
+The CKAN client uses adaptive page size reduction to handle portals that truncate or timeout on large responses:
+
+- **Initial page size**: 1000 rows
+- **On Timeout or NetworkError**: quarters the page size (1000 → 250 → 62 → 15 → 10)
+- **Minimum page size**: 10 rows
+- **On other errors** (rate limits, client errors): no reduction, error propagated normally
+
+This converges faster than halving and handles portals with resource-heavy datasets at specific offsets.
+
 ## Related Source Files
 
 - Harvesting service: [`crates/ceres-core/src/harvest.rs`](../crates/ceres-core/src/harvest.rs)
+- Embedding service: [`crates/ceres-core/src/embedding.rs`](../crates/ceres-core/src/embedding.rs)
+- Harvest pipeline: [`crates/ceres-core/src/pipeline.rs`](../crates/ceres-core/src/pipeline.rs)
 - Delta detection logic: [`crates/ceres-core/src/sync.rs`](../crates/ceres-core/src/sync.rs) (`needs_reprocessing` function)
 - Content hash computation: [`crates/ceres-core/src/models.rs`](../crates/ceres-core/src/models.rs) (`NewDataset::compute_content_hash`)
 - Circuit breaker: [`crates/ceres-core/src/circuit_breaker.rs`](../crates/ceres-core/src/circuit_breaker.rs)
-- CKAN client: [`crates/ceres-client/src/ckan.rs`](../crates/ceres-client/src/ckan.rs) (`search_modified_since`)
+- CKAN client: [`crates/ceres-client/src/ckan.rs`](../crates/ceres-client/src/ckan.rs) (`search_modified_since`, adaptive page size)
 - DB schema: [`migrations/`](../migrations/)
