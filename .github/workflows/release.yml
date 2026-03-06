@@ -101,7 +101,7 @@ jobs:
           fi
 
           # Prepend logo to release body
-          LOGO_URL="https://raw.githubusercontent.com/${{ github.repository }}/master/docs/assets/images/logo.png"
+          LOGO_URL="https://raw.githubusercontent.com/${{ github.repository }}/master/website/src/assets/images/logo.png"
 
           # Use a unique delimiter to avoid collisions with content
           DELIMITER="CHANGELOG_$(date +%s)"
