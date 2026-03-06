@@ -122,7 +122,7 @@ See [`examples/portals.toml`](examples/portals.toml) for the full configuration.
 
 ### Prerequisites
 
-- Rust 1.87+
+- Rust 1.88+
 - Docker & Docker Compose
 - Google Gemini API key ([get one free](https://aistudio.google.com/apikey)) or OpenAI API key *(only needed for embedding — harvest with `--metadata-only` works without any API key)*
 
