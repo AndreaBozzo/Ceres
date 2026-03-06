@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-03-06
+
+
+### Added
+
+- Add Ceres-Claude-Skill project link to related projects section
+- Ceres Landing Page Overhaul with Astro
+- Decouple metadata harvesting from embedding + stale dataset detection
+
+
+### Documentation
+
+- Enhance documentation for metadata-only harvesting and stale dataset detection, API keys are completely optional
+
+
+### Fixed
+
+- **CI**: Added a fallback to changelog generation
+
+
+### Miscellaneous
+
+- **CI**: Added logo path to release workflow, for next release
+- Update version numbers to 0.3.1 and adjust Rust version to 1.88 in configuration files
 ## [0.3.0] - 2026-02-26
 
 
