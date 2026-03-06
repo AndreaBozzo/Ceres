@@ -13,13 +13,13 @@ use uuid::Uuid;
 
 /// Column list for SELECT queries. Must remain a const literal to ensure SQL safety
 /// since format!() bypasses sqlx compile-time validation.
-const DATASET_COLUMNS: &str = "id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash";
+const DATASET_COLUMNS: &str = "id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale";
 
 // Static queries for list_all_stream to avoid lifetime issues with BoxStream
-const LIST_ALL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash FROM datasets ORDER BY last_updated_at DESC";
-const LIST_ALL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash FROM datasets ORDER BY last_updated_at DESC LIMIT $1";
-const LIST_ALL_PORTAL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC";
-const LIST_ALL_PORTAL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2";
+const LIST_ALL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets ORDER BY last_updated_at DESC";
+const LIST_ALL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets ORDER BY last_updated_at DESC LIMIT $1";
+const LIST_ALL_PORTAL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC";
+const LIST_ALL_PORTAL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2";
 
 /// Repository for dataset persistence in PostgreSQL with pgvector.
 ///
@@ -80,7 +80,8 @@ impl DatasetRepository {
                 embedding = COALESCE(EXCLUDED.embedding, datasets.embedding),
                 metadata = EXCLUDED.metadata,
                 content_hash = EXCLUDED.content_hash,
-                last_updated_at = NOW()
+                last_updated_at = NOW(),
+                is_stale = FALSE
             RETURNING id
             "#,
         )
@@ -169,7 +170,8 @@ impl DatasetRepository {
                 embedding = COALESCE(EXCLUDED.embedding, datasets.embedding),
                 metadata = EXCLUDED.metadata,
                 content_hash = EXCLUDED.content_hash,
-                last_updated_at = NOW()
+                last_updated_at = NOW(),
+                is_stale = FALSE
             RETURNING id
             "#,
         )
@@ -244,8 +246,8 @@ impl DatasetRepository {
 
     /// Batch updates timestamps for multiple unchanged datasets.
     ///
-    /// Chunks the IDs into groups of 500 to avoid oversized queries and long locks.
-    /// Returns the total number of rows actually updated.
+    /// Uses a single query — PostgreSQL handles `ANY($2::text[])` efficiently
+    /// even for 100k+ element arrays via the unique index on `(source_portal, original_id)`.
     pub async fn batch_update_timestamps(
         &self,
         portal_url: &str,
@@ -255,27 +257,98 @@ impl DatasetRepository {
             return Ok(0);
         }
 
-        const CHUNK_SIZE: usize = 500;
-        let mut total_affected = 0u64;
+        let result = sqlx::query(
+            r#"
+            UPDATE datasets
+            SET last_updated_at = NOW(),
+                is_stale = FALSE
+            WHERE source_portal = $1 AND original_id = ANY($2)
+            "#,
+        )
+        .bind(portal_url)
+        .bind(original_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        for chunk in original_ids.chunks(CHUNK_SIZE) {
+        Ok(result.rows_affected())
+    }
+
+    /// Marks datasets as stale if they were not seen during the latest full sync.
+    ///
+    /// Any dataset whose `last_updated_at` is older than `sync_start` was not present
+    /// in the portal's response, indicating it has been removed or renamed.
+    pub async fn mark_stale_datasets(
+        &self,
+        portal_url: &str,
+        sync_start: DateTime<Utc>,
+    ) -> Result<u64, AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE datasets
+            SET is_stale = TRUE
+            WHERE source_portal = $1
+              AND last_updated_at < $2
+              AND is_stale = FALSE
+            "#,
+        )
+        .bind(portal_url)
+        .bind(sync_start)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Marks datasets as stale if their original_id is NOT in the given set.
+    ///
+    /// This is much faster than the timestamp-based approach because it avoids
+    /// updating every unchanged row. Uses a CTE with UNNEST for efficient
+    /// hash-based exclusion in PostgreSQL.
+    pub async fn mark_stale_by_exclusion(
+        &self,
+        portal_url: &str,
+        seen_ids: &[String],
+    ) -> Result<u64, AppError> {
+        if seen_ids.is_empty() {
             let result = sqlx::query(
                 r#"
                 UPDATE datasets
-                SET last_updated_at = NOW()
-                WHERE source_portal = $1 AND original_id = ANY($2)
+                SET is_stale = TRUE
+                WHERE source_portal = $1
+                  AND is_stale = FALSE
                 "#,
             )
             .bind(portal_url)
-            .bind(chunk)
             .execute(&self.pool)
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-            total_affected += result.rows_affected();
+            return Ok(result.rows_affected());
         }
 
-        Ok(total_affected)
+        let result = sqlx::query(
+            r#"
+            WITH seen AS (
+                SELECT UNNEST($2::text[]) AS original_id
+            )
+            UPDATE datasets d
+            SET is_stale = TRUE
+            WHERE d.source_portal = $1
+              AND d.is_stale = FALSE
+              AND NOT EXISTS (
+                  SELECT 1 FROM seen s WHERE s.original_id = d.original_id
+              )
+            "#,
+        )
+        .bind(portal_url)
+        .bind(seen_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(result.rows_affected())
     }
 
     /// Retrieves a dataset by UUID.
@@ -298,7 +371,7 @@ impl DatasetRepository {
     ) -> Result<Vec<SearchResult>, AppError> {
         let pg_vector = Vector::from(query_vector);
         let query = format!(
-            "SELECT {}, 1 - (embedding <=> $1) as similarity_score FROM datasets WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2",
+            "SELECT {}, 1 - (embedding <=> $1) as similarity_score FROM datasets WHERE embedding IS NOT NULL AND NOT is_stale ORDER BY embedding <=> $1 LIMIT $2",
             DATASET_COLUMNS
         );
         let results = sqlx::query_as::<_, SearchResultRow>(&query)
@@ -323,6 +396,7 @@ impl DatasetRepository {
                     first_seen_at: row.first_seen_at,
                     last_updated_at: row.last_updated_at,
                     content_hash: row.content_hash,
+                    is_stale: row.is_stale,
                 },
                 similarity_score: row.similarity_score as f32,
             })
@@ -587,6 +661,84 @@ impl DatasetRepository {
         Ok(())
     }
 
+    /// Lists datasets that have no embedding vector (`embedding IS NULL`).
+    ///
+    /// Used by the embedding service to find datasets needing embedding.
+    /// Results are ordered by `last_updated_at DESC` so the most recently
+    /// harvested datasets are embedded first.
+    pub async fn list_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Dataset>, AppError> {
+        let rows = if let Some(portal) = portal_filter {
+            if let Some(lim) = limit {
+                let query = format!(
+                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2",
+                    DATASET_COLUMNS
+                );
+                sqlx::query_as::<_, DatasetRow>(&query)
+                    .bind(portal)
+                    .bind(lim as i64)
+                    .fetch_all(&self.pool)
+                    .await
+            } else {
+                let query = format!(
+                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1 ORDER BY last_updated_at DESC",
+                    DATASET_COLUMNS
+                );
+                sqlx::query_as::<_, DatasetRow>(&query)
+                    .bind(portal)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+        } else if let Some(lim) = limit {
+            let query = format!(
+                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' ORDER BY last_updated_at DESC LIMIT $1",
+                DATASET_COLUMNS
+            );
+            sqlx::query_as::<_, DatasetRow>(&query)
+                .bind(lim as i64)
+                .fetch_all(&self.pool)
+                .await
+        } else {
+            let query = format!(
+                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' ORDER BY last_updated_at DESC",
+                DATASET_COLUMNS
+            );
+            sqlx::query_as::<_, DatasetRow>(&query)
+                .fetch_all(&self.pool)
+                .await
+        }
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(rows.into_iter().map(Dataset::from).collect())
+    }
+
+    /// Counts datasets with `embedding IS NULL`.
+    ///
+    /// Used for progress reporting in the embedding service.
+    pub async fn count_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+    ) -> Result<i64, AppError> {
+        let row: (i64,) = if let Some(portal) = portal_filter {
+            sqlx::query_as(
+                "SELECT COUNT(*) FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1",
+            )
+            .bind(portal)
+            .fetch_one(&self.pool)
+            .await
+        } else {
+            sqlx::query_as("SELECT COUNT(*) FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != ''")
+                .fetch_one(&self.pool)
+                .await
+        }
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(row.0)
+    }
+
     /// Returns aggregated database statistics.
     pub async fn get_stats(&self) -> Result<DatabaseStats, AppError> {
         let row: StatsRow = sqlx::query_as(
@@ -595,7 +747,8 @@ impl DatasetRepository {
                 COUNT(*) as total,
                 COUNT(embedding) as with_embeddings,
                 COUNT(DISTINCT source_portal) as portals,
-                MAX(last_updated_at) as last_update
+                MAX(last_updated_at) as last_update,
+                COUNT(*) FILTER (WHERE is_stale) as stale
             FROM datasets
             "#,
         )
@@ -608,6 +761,7 @@ impl DatasetRepository {
             datasets_with_embeddings: row.with_embeddings.unwrap_or(0),
             total_portals: row.portals.unwrap_or(0),
             last_update: row.last_update,
+            stale_datasets: row.stale.unwrap_or(0),
         })
     }
 
@@ -644,6 +798,7 @@ struct DatasetRow {
     first_seen_at: DateTime<Utc>,
     last_updated_at: DateTime<Utc>,
     content_hash: Option<String>,
+    is_stale: bool,
 }
 
 impl From<DatasetRow> for Dataset {
@@ -660,6 +815,7 @@ impl From<DatasetRow> for Dataset {
             first_seen_at: row.first_seen_at,
             last_updated_at: row.last_updated_at,
             content_hash: row.content_hash,
+            is_stale: row.is_stale,
         }
     }
 }
@@ -677,6 +833,7 @@ struct StatsRow {
     with_embeddings: Option<i64>,
     portals: Option<i64>,
     last_update: Option<DateTime<Utc>>,
+    stale: Option<i64>,
 }
 
 /// Helper struct for deserializing search query results
@@ -693,6 +850,7 @@ struct SearchResultRow {
     first_seen_at: DateTime<Utc>,
     last_updated_at: DateTime<Utc>,
     content_hash: Option<String>,
+    is_stale: bool,
     similarity_score: f64,
 }
 
@@ -756,6 +914,22 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
         DatasetRepository::batch_update_timestamps(self, portal_url, original_ids).await
     }
 
+    async fn mark_stale_datasets(
+        &self,
+        portal_url: &str,
+        sync_start: DateTime<Utc>,
+    ) -> Result<u64, AppError> {
+        DatasetRepository::mark_stale_datasets(self, portal_url, sync_start).await
+    }
+
+    async fn mark_stale_by_exclusion(
+        &self,
+        portal_url: &str,
+        seen_ids: &[String],
+    ) -> Result<u64, AppError> {
+        DatasetRepository::mark_stale_by_exclusion(self, portal_url, seen_ids).await
+    }
+
     async fn upsert(&self, dataset: &NewDataset) -> Result<Uuid, AppError> {
         DatasetRepository::upsert(self, dataset).await
     }
@@ -809,6 +983,18 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
 
     async fn get_duplicate_titles(&self) -> Result<std::collections::HashSet<String>, AppError> {
         DatasetRepository::get_cross_portal_duplicate_titles(self).await
+    }
+
+    async fn list_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Dataset>, AppError> {
+        DatasetRepository::list_pending_embeddings(self, portal_filter, limit).await
+    }
+
+    async fn count_pending_embeddings(&self, portal_filter: Option<&str>) -> Result<i64, AppError> {
+        DatasetRepository::count_pending_embeddings(self, portal_filter).await
     }
 
     async fn health_check(&self) -> Result<(), AppError> {

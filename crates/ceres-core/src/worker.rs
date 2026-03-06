@@ -1,7 +1,7 @@
 //! Worker service for processing harvest jobs from the queue.
 //!
 //! This module provides the [`WorkerService`] that polls for pending jobs
-//! and processes them using the [`HarvestService`].
+//! and processes them using the [`crate::HarvestPipeline`].
 //!
 //! # Architecture
 //!
@@ -10,7 +10,7 @@
 //! loop {
 //!     1. Check for cancellation
 //!     2. Claim next available job (SELECT FOR UPDATE SKIP LOCKED)
-//!     3. Process job using HarvestService
+//!     3. Process job using HarvestPipeline
 //!     4. Update job status (completed/failed/cancelled)
 //!     5. If no jobs available, sleep for poll_interval
 //! }
@@ -43,9 +43,9 @@ use uuid::Uuid;
 use crate::SyncStats;
 use crate::config::PortalType;
 use crate::error::AppError;
-use crate::harvest::HarvestService;
 use crate::job::{HarvestJob, WorkerConfig};
 use crate::job_queue::JobQueue;
+use crate::pipeline::HarvestPipeline;
 use crate::progress::ProgressReporter;
 use crate::traits::{DatasetStore, EmbeddingProvider, PortalClientFactory};
 
@@ -169,7 +169,8 @@ impl WorkerReporter for TracingWorkerReporter {
 /// Worker service that processes jobs from the queue.
 ///
 /// This service polls for pending jobs and processes them using the
-/// [`HarvestService`]. It supports graceful shutdown via cancellation tokens.
+/// [`HarvestPipeline`]. It supports both full harvest+embed and metadata-only
+/// modes, and graceful shutdown via cancellation tokens.
 pub struct WorkerService<Q, S, E, F>
 where
     Q: JobQueue,
@@ -178,22 +179,22 @@ where
     F: PortalClientFactory,
 {
     queue: Q,
-    harvest_service: HarvestService<S, E, F>,
+    pipeline: HarvestPipeline<S, E, F>,
     config: WorkerConfig,
 }
 
 impl<Q, S, E, F> WorkerService<Q, S, E, F>
 where
     Q: JobQueue,
-    S: DatasetStore,
+    S: DatasetStore + Clone,
     E: EmbeddingProvider,
     F: PortalClientFactory,
 {
     /// Create a new worker service.
-    pub fn new(queue: Q, harvest_service: HarvestService<S, E, F>, config: WorkerConfig) -> Self {
+    pub fn new(queue: Q, pipeline: HarvestPipeline<S, E, F>, config: WorkerConfig) -> Self {
         Self {
             queue,
-            harvest_service,
+            pipeline,
             config,
         }
     }
@@ -292,11 +293,12 @@ where
         // Create job-specific cancellation token
         let job_cancel = cancel_token.child_token();
 
-        // Execute the harvest with cancellation support
+        // Execute the harvest + embed pipeline with cancellation support.
+        // The pipeline first harvests metadata, then embeds pending datasets.
         // TODO: Add portal_type to HarvestJob when Socrata/DCAT support is added
         let language = job.language.as_deref().unwrap_or("en");
         let result = self
-            .harvest_service
+            .pipeline
             .sync_portal_with_progress_cancellable_with_options(
                 &job.portal_url,
                 job.url_template.as_deref(),
@@ -309,7 +311,7 @@ where
             .await;
 
         match result {
-            Ok(sync_result) => {
+            Ok((sync_result, _embed_stats)) => {
                 if sync_result.is_cancelled() {
                     // Job was cancelled
                     worker_reporter.report(WorkerEvent::JobCancelled {

@@ -149,7 +149,74 @@ impl Default for HttpConfig {
     }
 }
 
-/// Portal synchronization configuration.
+/// Harvest-only configuration (metadata fetching + delta detection).
+///
+/// Used by [`crate::HarvestService`] when running without an embedding provider.
+/// Contains only the settings relevant to portal fetching and persistence.
+#[derive(Clone)]
+pub struct HarvestConfig {
+    /// Number of concurrent dataset processing tasks.
+    pub concurrency: usize,
+    /// Maximum number of datasets per DB upsert batch.
+    pub upsert_batch_size: usize,
+    /// Force full sync even if incremental sync is available.
+    pub force_full_sync: bool,
+    /// Preview mode: fetch and compare datasets without writing to DB.
+    pub dry_run: bool,
+}
+
+impl Default for HarvestConfig {
+    fn default() -> Self {
+        Self {
+            concurrency: 10,
+            upsert_batch_size: 500,
+            force_full_sync: false,
+            dry_run: false,
+        }
+    }
+}
+
+impl HarvestConfig {
+    /// Creates a new HarvestConfig with force_full_sync enabled.
+    pub fn with_full_sync(mut self) -> Self {
+        self.force_full_sync = true;
+        self
+    }
+
+    /// Creates a new HarvestConfig with dry_run enabled.
+    pub fn with_dry_run(mut self) -> Self {
+        self.dry_run = true;
+        self
+    }
+}
+
+/// Embedding service configuration.
+///
+/// Used by [`crate::EmbeddingService`] for standalone embedding passes.
+/// Contains only the settings relevant to embedding API calls.
+#[derive(Clone)]
+pub struct EmbeddingServiceConfig {
+    /// Maximum number of texts per embedding API batch call.
+    /// The actual batch size is `min(this, provider.max_batch_size())`.
+    pub batch_size: usize,
+    /// Circuit breaker configuration for embedding API resilience.
+    pub circuit_breaker: CircuitBreakerConfig,
+}
+
+impl Default for EmbeddingServiceConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 64,
+            circuit_breaker: CircuitBreakerConfig::default(),
+        }
+    }
+}
+
+/// Portal synchronization configuration (combined harvest + embed).
+///
+/// This is a convenience type that composes [`HarvestConfig`] and
+/// [`EmbeddingServiceConfig`] for the common harvest-then-embed workflow.
+/// Used by [`crate::HarvestPipeline`] and kept for backward compatibility.
 ///
 /// TODO(config): Support CLI arg `--concurrency` and env var `SYNC_CONCURRENCY`
 /// Optimal value depends on portal rate limits and system resources.
@@ -161,6 +228,8 @@ pub struct SyncConfig {
     /// Maximum number of texts per embedding API batch call.
     /// The actual batch size is `min(this, provider.max_batch_size())`.
     pub embedding_batch_size: usize,
+    /// Maximum number of datasets per DB upsert batch.
+    pub upsert_batch_size: usize,
     /// Force full sync even if incremental sync is available.
     pub force_full_sync: bool,
     /// Preview mode: fetch and compare datasets without writing to DB or calling embedding API.
@@ -175,6 +244,7 @@ impl Default for SyncConfig {
         Self {
             concurrency: 10,
             embedding_batch_size: 64,
+            upsert_batch_size: 500,
             force_full_sync: false,
             dry_run: false,
             circuit_breaker: CircuitBreakerConfig::default(),
@@ -205,6 +275,24 @@ impl SyncConfig {
     pub fn with_circuit_breaker(mut self, config: CircuitBreakerConfig) -> Self {
         self.circuit_breaker = config;
         self
+    }
+
+    /// Extracts the harvest-only configuration.
+    pub fn harvest_config(&self) -> HarvestConfig {
+        HarvestConfig {
+            concurrency: self.concurrency,
+            upsert_batch_size: self.upsert_batch_size,
+            force_full_sync: self.force_full_sync,
+            dry_run: self.dry_run,
+        }
+    }
+
+    /// Extracts the embedding service configuration.
+    pub fn embedding_service_config(&self) -> EmbeddingServiceConfig {
+        EmbeddingServiceConfig {
+            batch_size: self.embedding_batch_size,
+            circuit_breaker: self.circuit_breaker.clone(),
+        }
     }
 }
 
@@ -518,6 +606,15 @@ mod tests {
     fn test_sync_config_defaults() {
         let config = SyncConfig::default();
         assert_eq!(config.concurrency, 10);
+        assert_eq!(config.upsert_batch_size, 500);
+    }
+
+    #[test]
+    fn test_sync_config_harvest_config_upsert_batch_size() {
+        let config = SyncConfig::default();
+        let harvest = config.harvest_config();
+        assert_eq!(harvest.upsert_batch_size, 500);
+        assert_ne!(harvest.upsert_batch_size, config.embedding_batch_size);
     }
 
     // =========================================================================

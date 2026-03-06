@@ -35,3 +35,6 @@ tokio.workspace = true
 
 # Date/time
 chrono.workspace = true
+
+# Logging
+tracing.workspace = true

@@ -48,6 +48,8 @@ pub struct Dataset {
     pub last_updated_at: DateTime<Utc>,
     /// SHA-256 hash of title + description for delta detection
     pub content_hash: Option<String>,
+    /// Whether this dataset has been removed from its source portal
+    pub is_stale: bool,
 }
 
 /// Data Transfer Object for inserting or updating datasets.
@@ -192,6 +194,8 @@ pub struct DatabaseStats {
     pub total_portals: i64,
     /// Timestamp of the last update
     pub last_update: Option<DateTime<Utc>>,
+    /// Number of datasets marked as stale (removed from source portal)
+    pub stale_datasets: i64,
 }
 
 #[cfg(test)]

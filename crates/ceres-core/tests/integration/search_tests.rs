@@ -73,6 +73,20 @@ impl DatasetStore for FailingDatasetStore {
     ) -> Result<u64, AppError> {
         unimplemented!()
     }
+    async fn mark_stale_datasets(
+        &self,
+        _portal_url: &str,
+        _sync_start: DateTime<Utc>,
+    ) -> Result<u64, AppError> {
+        unimplemented!()
+    }
+    async fn mark_stale_by_exclusion(
+        &self,
+        _portal_url: &str,
+        _seen_ids: &[String],
+    ) -> Result<u64, AppError> {
+        unimplemented!()
+    }
     async fn upsert(&self, _dataset: &NewDataset) -> Result<Uuid, AppError> {
         unimplemented!()
     }
@@ -103,6 +117,19 @@ impl DatasetStore for FailingDatasetStore {
         unimplemented!()
     }
     async fn get_duplicate_titles(&self) -> Result<HashSet<String>, AppError> {
+        unimplemented!()
+    }
+    async fn list_pending_embeddings(
+        &self,
+        _portal_filter: Option<&str>,
+        _limit: Option<usize>,
+    ) -> Result<Vec<Dataset>, AppError> {
+        unimplemented!()
+    }
+    async fn count_pending_embeddings(
+        &self,
+        _portal_filter: Option<&str>,
+    ) -> Result<i64, AppError> {
         unimplemented!()
     }
     async fn health_check(&self) -> Result<(), AppError> {

@@ -134,6 +134,21 @@ impl CkanClient {
     /// Maximum number of page-level retries when a page is rate-limited.
     const PAGE_RATE_LIMIT_RETRIES: u32 = 3;
 
+    /// Minimum page size for adaptive reduction.
+    /// Some portals truncate responses above ~1.5MB, so even 50 rows can fail
+    /// if datasets at that offset are resource-heavy. 10 is low enough to
+    /// handle any realistic dataset size while still making progress.
+    const MIN_PAGE_SIZE: usize = 10;
+
+    /// Errors worth retrying with a smaller page size.
+    ///
+    /// Timeouts and body-related errors suggest the response is too large for
+    /// the portal to serve reliably. Network errors during body streaming also
+    /// qualify since a smaller page means less data to transfer.
+    fn is_page_size_reducible(err: &AppError) -> bool {
+        matches!(err, AppError::Timeout(_) | AppError::NetworkError(_))
+    }
+
     /// Creates a new CKAN client for the specified portal.
     ///
     /// # Arguments
@@ -295,83 +310,127 @@ impl CkanClient {
     ///
     /// * `fq` - Optional Solr filter query (e.g., `metadata_modified:[... TO *]`)
     async fn paginated_search(&self, fq: Option<&str>) -> Result<Vec<CkanDataset>, AppError> {
-        const PAGE_SIZE: usize = 1000;
+        let mut page_size: usize = 1000;
         let mut all_datasets = Vec::new();
         let mut start: usize = 0;
         let mut page_delay = Self::PAGE_DELAY;
 
         loop {
-            let mut url = self
-                .base_url
-                .join("api/3/action/package_search")
-                .map_err(|e| AppError::Generic(e.to_string()))?;
-
-            {
-                let mut pairs = url.query_pairs_mut();
-                if let Some(filter) = fq {
-                    pairs.append_pair("fq", filter);
-                }
-                pairs
-                    .append_pair("rows", &PAGE_SIZE.to_string())
-                    .append_pair("start", &start.to_string())
-                    .append_pair("sort", "metadata_modified asc");
-            }
-
-            // Page-level retry: if the request is rate-limited after exhausting
-            // low-level retries, wait a longer cooldown and try the page again.
-            let mut page_result = None;
-            for page_attempt in 0..=Self::PAGE_RATE_LIMIT_RETRIES {
-                match self.request_with_retry(&url).await {
-                    Ok(resp) => {
-                        page_result = Some(Ok(resp));
-                        break;
-                    }
-                    Err(AppError::RateLimitExceeded)
-                        if page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
-                    {
-                        let cooldown = Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
-                        sleep(cooldown).await;
-                        page_delay = (page_delay * 2).min(Duration::from_secs(5));
-                    }
-                    Err(e) => {
-                        page_result = Some(Err(e));
-                        break;
-                    }
-                }
-            }
-
-            let resp = match page_result {
-                Some(Ok(resp)) => resp,
-                Some(Err(e)) => return Err(e),
-                None => return Err(AppError::RateLimitExceeded),
-            };
-
-            let ckan_resp: CkanResponse<PackageSearchResult> = resp
-                .json()
+            match self
+                .fetch_search_page(fq, start, page_size, &mut page_delay)
                 .await
-                .map_err(|e| AppError::ClientError(e.to_string()))?;
+            {
+                Ok((datasets, total_count)) => {
+                    let page_count = datasets.len();
+                    all_datasets.extend(datasets);
 
-            if !ckan_resp.success {
-                return Err(AppError::Generic(
-                    "CKAN package_search returned success: false".to_string(),
-                ));
+                    // Check if we've fetched all results
+                    if start + page_count >= total_count || page_count < page_size {
+                        break;
+                    }
+
+                    start += page_size;
+                }
+                Err(e) if page_size > Self::MIN_PAGE_SIZE && Self::is_page_size_reducible(&e) => {
+                    // Timeout or truncated response — quarter the page size and
+                    // retry the same offset. Quartering converges faster than
+                    // halving (1000→250→62→15→10 vs 1000→500→250→125→62→31→15→10).
+                    page_size = (page_size / 4).max(Self::MIN_PAGE_SIZE);
+                    tracing::warn!(
+                        new_page_size = page_size,
+                        offset = start,
+                        error = %e,
+                        "Page failed, reducing page size and retrying"
+                    );
+                    continue;
+                }
+                Err(e) if Self::is_page_size_reducible(&e) => {
+                    // Already at MIN_PAGE_SIZE and still failing — this portal
+                    // can't reliably serve package_search (e.g. response size cap).
+                    // Return a non-retryable error so the caller falls back to
+                    // ID-by-ID fetching.
+                    return Err(AppError::Generic(format!(
+                        "package_search unreliable even at page_size={page_size}: {e}"
+                    )));
+                }
+                Err(e) => return Err(e),
             }
-
-            let page_count = ckan_resp.result.results.len();
-            all_datasets.extend(ckan_resp.result.results);
-
-            // Check if we've fetched all results
-            if start + page_count >= ckan_resp.result.count || page_count < PAGE_SIZE {
-                break;
-            }
-
-            start += PAGE_SIZE;
 
             // Polite delay between pages to avoid triggering rate limits
             sleep(page_delay).await;
         }
 
         Ok(all_datasets)
+    }
+
+    /// Fetches a single page of search results with rate-limit resilience.
+    ///
+    /// Returns `(datasets, total_count)` where `total_count` is the total number
+    /// of matching datasets reported by CKAN (for pagination control).
+    async fn fetch_search_page(
+        &self,
+        fq: Option<&str>,
+        start: usize,
+        page_size: usize,
+        page_delay: &mut Duration,
+    ) -> Result<(Vec<CkanDataset>, usize), AppError> {
+        let mut url = self
+            .base_url
+            .join("api/3/action/package_search")
+            .map_err(|e| AppError::Generic(e.to_string()))?;
+
+        {
+            let mut pairs = url.query_pairs_mut();
+            if let Some(filter) = fq {
+                pairs.append_pair("fq", filter);
+            }
+            pairs
+                .append_pair("rows", &page_size.to_string())
+                .append_pair("start", &start.to_string())
+                .append_pair("sort", "metadata_modified asc");
+        }
+
+        // Page-level retry: if the request is rate-limited after exhausting
+        // low-level retries, wait a longer cooldown and try the page again.
+        let mut page_result = None;
+        for page_attempt in 0..=Self::PAGE_RATE_LIMIT_RETRIES {
+            match self.request_with_retry(&url).await {
+                Ok(resp) => {
+                    page_result = Some(Ok(resp));
+                    break;
+                }
+                Err(AppError::RateLimitExceeded)
+                    if page_attempt < Self::PAGE_RATE_LIMIT_RETRIES =>
+                {
+                    let cooldown = Self::PAGE_RATE_LIMIT_COOLDOWN * (page_attempt + 1);
+                    sleep(cooldown).await;
+                    *page_delay = (*page_delay * 2).min(Duration::from_secs(5));
+                }
+                Err(e) => {
+                    page_result = Some(Err(e));
+                    break;
+                }
+            }
+        }
+
+        let resp = match page_result {
+            Some(Ok(resp)) => resp,
+            Some(Err(e)) => return Err(e),
+            None => return Err(AppError::RateLimitExceeded),
+        };
+
+        let ckan_resp: CkanResponse<PackageSearchResult> = resp
+            .json()
+            .await
+            .map_err(|e| AppError::ClientError(e.to_string()))?;
+
+        if !ckan_resp.success {
+            return Err(AppError::Generic(
+                "CKAN package_search returned success: false".to_string(),
+            ));
+        }
+
+        Ok((ckan_resp.result.results, ckan_resp.result.count))
     }
 
     /// Maximum retries for rate-limited (429) responses.
@@ -415,6 +474,8 @@ impl CkanClient {
                             sleep(delay).await;
                             continue;
                         }
+
+                        return Err(AppError::RateLimitExceeded);
                     }
 
                     if status.is_server_error() {
@@ -764,6 +825,33 @@ mod tests {
         let dataset: CkanDataset = serde_json::from_str(json).unwrap();
         let new_ds = CkanClient::into_new_dataset(dataset, "https://example.com", None, "en");
         assert_eq!(new_ds.description, Some("Notes description".to_string()));
+    }
+
+    #[test]
+    fn test_is_page_size_reducible_timeout() {
+        assert!(CkanClient::is_page_size_reducible(&AppError::Timeout(30)));
+    }
+
+    #[test]
+    fn test_is_page_size_reducible_client_error() {
+        let err = AppError::ClientError("error decoding response body".to_string());
+        assert!(!CkanClient::is_page_size_reducible(&err));
+    }
+
+    #[test]
+    fn test_is_page_size_reducible_network_error() {
+        let err = AppError::NetworkError("connection reset".to_string());
+        assert!(CkanClient::is_page_size_reducible(&err));
+    }
+
+    #[test]
+    fn test_is_page_size_reducible_non_reducible() {
+        assert!(!CkanClient::is_page_size_reducible(
+            &AppError::RateLimitExceeded
+        ));
+        assert!(!CkanClient::is_page_size_reducible(&AppError::Generic(
+            "something".to_string()
+        )));
     }
 }
 

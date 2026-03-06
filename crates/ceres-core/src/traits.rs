@@ -270,6 +270,45 @@ pub trait DatasetStore: Send + Sync + Clone {
         original_ids: &[String],
     ) -> impl Future<Output = Result<u64, AppError>> + Send;
 
+    /// Marks datasets as stale if they were not seen during the latest full sync.
+    ///
+    /// After a successful full sync, any dataset whose `last_updated_at` is older
+    /// than `sync_start` was not present in the portal's response.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_url` - The source portal URL
+    /// * `sync_start` - Timestamp recorded at the start of the sync
+    ///
+    /// # Returns
+    ///
+    /// The number of datasets newly marked as stale.
+    fn mark_stale_datasets(
+        &self,
+        portal_url: &str,
+        sync_start: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, AppError>> + Send;
+
+    /// Marks datasets as stale if their original_id is NOT in the given set.
+    ///
+    /// This is more efficient than the timestamp-based approach because it
+    /// avoids updating every unchanged row just to compare timestamps later.
+    /// Instead, we directly identify stale datasets by exclusion.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_url` - The source portal URL
+    /// * `seen_ids` - All original_ids seen during the current full sync
+    ///
+    /// # Returns
+    ///
+    /// The number of datasets newly marked as stale.
+    fn mark_stale_by_exclusion(
+        &self,
+        portal_url: &str,
+        seen_ids: &[String],
+    ) -> impl Future<Output = Result<u64, AppError>> + Send;
+
     /// Inserts or updates a dataset.
     ///
     /// # Arguments
@@ -376,6 +415,32 @@ pub trait DatasetStore: Send + Sync + Clone {
     fn get_duplicate_titles(
         &self,
     ) -> impl Future<Output = Result<std::collections::HashSet<String>, AppError>> + Send;
+
+    /// Lists datasets that have no embedding vector (`embedding IS NULL`).
+    ///
+    /// Used by [`crate::EmbeddingService`] to find datasets needing embedding generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_filter` - Optional portal URL to scope the query
+    /// * `limit` - Maximum number of datasets to return
+    fn list_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+        limit: Option<usize>,
+    ) -> impl Future<Output = Result<Vec<Dataset>, AppError>> + Send;
+
+    /// Counts datasets with `embedding IS NULL`.
+    ///
+    /// Used for progress reporting in the embedding service.
+    ///
+    /// # Arguments
+    ///
+    /// * `portal_filter` - Optional portal URL to scope the count
+    fn count_pending_embeddings(
+        &self,
+        portal_filter: Option<&str>,
+    ) -> impl Future<Output = Result<i64, AppError>> + Send;
 
     /// Checks database connectivity.
     ///

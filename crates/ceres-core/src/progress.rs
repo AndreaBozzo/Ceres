@@ -111,12 +111,38 @@ pub enum HarvestEvent<'a> {
         total_portals: usize,
     },
 
+    /// Datasets marked as stale after a successful full sync.
+    StaleDetected {
+        /// Number of datasets newly marked as stale.
+        count: usize,
+    },
+
     /// Circuit breaker is open, harvest pausing/failing.
     CircuitBreakerOpen {
         /// Service name.
         service: &'a str,
         /// Time until recovery attempt.
         retry_after: Duration,
+    },
+
+    /// Pre-processing phase (delta detection / hash check) starting.
+    PreprocessingStarted {
+        /// Total number of datasets to pre-process.
+        total: usize,
+    },
+
+    /// Pre-processing phase completed — summary before finalization steps
+    /// (stale detection).
+    ///
+    /// Note: in the streaming pipeline, preprocessing and persistence are
+    /// interleaved, so this fires after both have completed.
+    PreprocessingCompleted {
+        /// Number of datasets that need persistence (created + updated).
+        changed: usize,
+        /// Number of datasets with identical content hash.
+        unchanged: usize,
+        /// Number of datasets that failed pre-processing.
+        failed: usize,
     },
 }
 
@@ -286,6 +312,13 @@ impl ProgressReporter for TracingReporter {
                     completed_portals, total_portals
                 );
             }
+            HarvestEvent::StaleDetected { count } => {
+                use tracing::warn;
+                warn!(
+                    "{} dataset(s) marked as stale (no longer found on portal)",
+                    count
+                );
+            }
             HarvestEvent::CircuitBreakerOpen {
                 service,
                 retry_after,
@@ -295,6 +328,19 @@ impl ProgressReporter for TracingReporter {
                     "Circuit breaker '{}' is open. Retry after {} seconds.",
                     service,
                     retry_after.as_secs()
+                );
+            }
+            HarvestEvent::PreprocessingStarted { total } => {
+                info!("Pre-processing {} dataset(s) (delta detection)...", total);
+            }
+            HarvestEvent::PreprocessingCompleted {
+                changed,
+                unchanged,
+                failed,
+            } => {
+                info!(
+                    "Pre-processing complete: {} changed, {} unchanged, {} failed",
+                    changed, unchanged, failed
                 );
             }
         }
@@ -371,10 +417,21 @@ mod tests {
             total_portals: 3,
         });
 
+        // Test stale detection events
+        reporter.report(HarvestEvent::StaleDetected { count: 5 });
+
         // Test circuit breaker events
         reporter.report(HarvestEvent::CircuitBreakerOpen {
             service: "gemini",
             retry_after: Duration::from_secs(30),
+        });
+
+        // Test preprocessing events
+        reporter.report(HarvestEvent::PreprocessingStarted { total: 100 });
+        reporter.report(HarvestEvent::PreprocessingCompleted {
+            changed: 10,
+            unchanged: 85,
+            failed: 5,
         });
     }
 
