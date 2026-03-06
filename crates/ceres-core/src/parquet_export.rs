@@ -273,25 +273,25 @@ impl<S: DatasetStore> ParquetExportService<S> {
             }
 
             // Flush portal buffer when full
-            if let Some(buf) = portal_buffers.get(&portal_key) {
-                if buf.len() >= self.config.batch_size {
-                    let buf = portal_buffers
-                        .remove(&portal_key)
-                        .expect("buffer must exist: checked by get() above");
-                    let batch = build_record_batch(&buf, &schema)?;
-                    let (_, ref fname) = portal_info[&portal_key];
-                    let writer = get_or_create_portal_writer(
-                        &mut portal_writers,
-                        &portal_key,
-                        fname,
-                        &data_dir,
-                        &schema,
-                        &writer_props,
-                    )?;
-                    writer
-                        .write(&batch)
-                        .map_err(|e| AppError::Generic(format!("Parquet write error: {}", e)))?;
-                }
+            if let Some(buf) = portal_buffers.get(&portal_key)
+                && buf.len() >= self.config.batch_size
+            {
+                let buf = portal_buffers
+                    .remove(&portal_key)
+                    .expect("buffer must exist: checked by get() above");
+                let batch = build_record_batch(&buf, &schema)?;
+                let (_, ref fname) = portal_info[&portal_key];
+                let writer = get_or_create_portal_writer(
+                    &mut portal_writers,
+                    &portal_key,
+                    fname,
+                    &data_dir,
+                    &schema,
+                    &writer_props,
+                )?;
+                writer
+                    .write(&batch)
+                    .map_err(|e| AppError::Generic(format!("Parquet write error: {}", e)))?;
             }
         }
 

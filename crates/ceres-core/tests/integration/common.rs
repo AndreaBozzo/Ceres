@@ -750,12 +750,12 @@ impl JobQueue for MockJobQueue {
 
     async fn release_job(&self, job_id: Uuid) -> Result<(), AppError> {
         let mut jobs = self.jobs.lock().unwrap();
-        if let Some(job) = jobs.get_mut(&job_id) {
-            if job.status == JobStatus::Running {
-                job.status = JobStatus::Pending;
-                job.worker_id = None;
-                job.updated_at = Utc::now();
-            }
+        if let Some(job) = jobs.get_mut(&job_id)
+            && job.status == JobStatus::Running
+        {
+            job.status = JobStatus::Pending;
+            job.worker_id = None;
+            job.updated_at = Utc::now();
         }
         Ok(())
     }

@@ -74,19 +74,19 @@ fn make_failing_worker(
 async fn wait_for_terminal(queue: &MockJobQueue, job_id: Uuid) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        if let Some(status) = queue.job_status(job_id) {
-            if status.is_terminal() || status == JobStatus::Pending {
-                // Pending is also a valid "done" state for retryable failures
-                // (fail_job resets to Pending with next_retry_at).
-                // We check if error_message is set to distinguish from initial pending.
-                if status.is_terminal() {
-                    return;
-                }
-                if let Some(job) = queue.get_job_snapshot(job_id) {
-                    if job.error_message.is_some() {
-                        return; // It was retried back to pending
-                    }
-                }
+        if let Some(status) = queue.job_status(job_id)
+            && (status.is_terminal() || status == JobStatus::Pending)
+        {
+            // Pending is also a valid "done" state for retryable failures
+            // (fail_job resets to Pending with next_retry_at).
+            // We check if error_message is set to distinguish from initial pending.
+            if status.is_terminal() {
+                return;
+            }
+            if let Some(job) = queue.get_job_snapshot(job_id)
+                && job.error_message.is_some()
+            {
+                return; // It was retried back to pending
             }
         }
         if tokio::time::Instant::now() > deadline {

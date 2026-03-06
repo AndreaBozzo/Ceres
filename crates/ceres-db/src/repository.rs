@@ -617,15 +617,15 @@ impl DatasetRepository {
         &self,
         provider_dimension: usize,
     ) -> Result<(), AppError> {
-        if let Some(config) = self.get_embedding_config().await? {
-            if config.dimension as usize != provider_dimension {
-                return Err(AppError::ConfigError(format!(
-                    "Embedding dimension mismatch: database configured for {} dimensions ({}), \
-                     but provider generates {} dimensions. \
-                     To switch providers, clear existing embeddings and update the embedding_config table.",
-                    config.dimension, config.provider_name, provider_dimension
-                )));
-            }
+        if let Some(config) = self.get_embedding_config().await?
+            && config.dimension as usize != provider_dimension
+        {
+            return Err(AppError::ConfigError(format!(
+                "Embedding dimension mismatch: database configured for {} dimensions ({}), \
+                 but provider generates {} dimensions. \
+                 To switch providers, clear existing embeddings and update the embedding_config table.",
+                config.dimension, config.provider_name, provider_dimension
+            )));
         }
         Ok(())
     }

@@ -451,17 +451,16 @@ impl CircuitBreaker {
 
     /// Check if we should transition from Open to HalfOpen.
     fn maybe_transition_to_half_open(&self, inner: &mut CircuitBreakerInner) {
-        if inner.state == CircuitState::Open {
-            if let Some(last_failure) = inner.last_failure_time {
-                if last_failure.elapsed() >= inner.current_recovery_timeout {
-                    tracing::info!(
-                        circuit = %self.name,
-                        "Circuit breaker transitioning to half-open state"
-                    );
-                    inner.state = CircuitState::HalfOpen;
-                    inner.success_count = 0;
-                }
-            }
+        if inner.state == CircuitState::Open
+            && let Some(last_failure) = inner.last_failure_time
+            && last_failure.elapsed() >= inner.current_recovery_timeout
+        {
+            tracing::info!(
+                circuit = %self.name,
+                "Circuit breaker transitioning to half-open state"
+            );
+            inner.state = CircuitState::HalfOpen;
+            inner.success_count = 0;
         }
     }
 }
