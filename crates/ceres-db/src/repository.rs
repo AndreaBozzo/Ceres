@@ -260,7 +260,8 @@ impl DatasetRepository {
         let result = sqlx::query(
             r#"
             UPDATE datasets
-            SET last_updated_at = NOW()
+            SET last_updated_at = NOW(),
+                is_stale = FALSE
             WHERE source_portal = $1 AND original_id = ANY($2)
             "#,
         )
@@ -311,7 +312,20 @@ impl DatasetRepository {
         seen_ids: &[String],
     ) -> Result<u64, AppError> {
         if seen_ids.is_empty() {
-            return Ok(0);
+            let result = sqlx::query(
+                r#"
+                UPDATE datasets
+                SET is_stale = TRUE
+                WHERE source_portal = $1
+                  AND is_stale = FALSE
+                "#,
+            )
+            .bind(portal_url)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+            return Ok(result.rows_affected());
         }
 
         let result = sqlx::query(
@@ -660,7 +674,7 @@ impl DatasetRepository {
         let rows = if let Some(portal) = portal_filter {
             if let Some(lim) = limit {
                 let query = format!(
-                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2",
+                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2",
                     DATASET_COLUMNS
                 );
                 sqlx::query_as::<_, DatasetRow>(&query)
@@ -670,7 +684,7 @@ impl DatasetRepository {
                     .await
             } else {
                 let query = format!(
-                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND source_portal = $1 ORDER BY last_updated_at DESC",
+                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1 ORDER BY last_updated_at DESC",
                     DATASET_COLUMNS
                 );
                 sqlx::query_as::<_, DatasetRow>(&query)
@@ -680,7 +694,7 @@ impl DatasetRepository {
             }
         } else if let Some(lim) = limit {
             let query = format!(
-                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale ORDER BY last_updated_at DESC LIMIT $1",
+                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' ORDER BY last_updated_at DESC LIMIT $1",
                 DATASET_COLUMNS
             );
             sqlx::query_as::<_, DatasetRow>(&query)
@@ -689,7 +703,7 @@ impl DatasetRepository {
                 .await
         } else {
             let query = format!(
-                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale ORDER BY last_updated_at DESC",
+                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' ORDER BY last_updated_at DESC",
                 DATASET_COLUMNS
             );
             sqlx::query_as::<_, DatasetRow>(&query)
@@ -710,13 +724,13 @@ impl DatasetRepository {
     ) -> Result<i64, AppError> {
         let row: (i64,) = if let Some(portal) = portal_filter {
             sqlx::query_as(
-                "SELECT COUNT(*) FROM datasets WHERE embedding IS NULL AND NOT is_stale AND source_portal = $1",
+                "SELECT COUNT(*) FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1",
             )
             .bind(portal)
             .fetch_one(&self.pool)
             .await
         } else {
-            sqlx::query_as("SELECT COUNT(*) FROM datasets WHERE embedding IS NULL AND NOT is_stale")
+            sqlx::query_as("SELECT COUNT(*) FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != ''")
                 .fetch_one(&self.pool)
                 .await
         }

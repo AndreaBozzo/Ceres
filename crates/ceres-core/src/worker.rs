@@ -1,7 +1,7 @@
 //! Worker service for processing harvest jobs from the queue.
 //!
 //! This module provides the [`WorkerService`] that polls for pending jobs
-//! and processes them using the [`crate::HarvestService`].
+//! and processes them using the [`crate::HarvestPipeline`].
 //!
 //! # Architecture
 //!
@@ -10,7 +10,7 @@
 //! loop {
 //!     1. Check for cancellation
 //!     2. Claim next available job (SELECT FOR UPDATE SKIP LOCKED)
-//!     3. Process job using HarvestService
+//!     3. Process job using HarvestPipeline
 //!     4. Update job status (completed/failed/cancelled)
 //!     5. If no jobs available, sleep for poll_interval
 //! }

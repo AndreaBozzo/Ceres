@@ -146,10 +146,7 @@ impl CkanClient {
     /// the portal to serve reliably. Network errors during body streaming also
     /// qualify since a smaller page means less data to transfer.
     fn is_page_size_reducible(err: &AppError) -> bool {
-        matches!(
-            err,
-            AppError::Timeout(_) | AppError::ClientError(_) | AppError::NetworkError(_)
-        )
+        matches!(err, AppError::Timeout(_) | AppError::NetworkError(_))
     }
 
     /// Creates a new CKAN client for the specified portal.
@@ -838,7 +835,7 @@ mod tests {
     #[test]
     fn test_is_page_size_reducible_client_error() {
         let err = AppError::ClientError("error decoding response body".to_string());
-        assert!(CkanClient::is_page_size_reducible(&err));
+        assert!(!CkanClient::is_page_size_reducible(&err));
     }
 
     #[test]

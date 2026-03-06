@@ -31,7 +31,7 @@ const MIGRATIONS: &[&str] = &[
     )"#,
     "CREATE INDEX IF NOT EXISTS idx_datasets_embedding ON datasets USING hnsw (embedding vector_cosine_ops)",
     "CREATE INDEX IF NOT EXISTS idx_datasets_portal_hash ON datasets(source_portal) INCLUDE (original_id, content_hash)",
-    "CREATE INDEX IF NOT EXISTS idx_datasets_not_stale ON datasets (is_stale) WHERE is_stale = FALSE",
+    "CREATE INDEX IF NOT EXISTS idx_datasets_pending_embedding ON datasets (source_portal, last_updated_at DESC) WHERE embedding IS NULL AND NOT is_stale",
 ];
 
 /// Sets up a PostgreSQL container with pgvector and returns a connection pool.

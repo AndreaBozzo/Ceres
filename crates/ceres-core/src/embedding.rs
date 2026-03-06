@@ -285,18 +285,18 @@ where
                 let upsert_datasets: Vec<NewDataset> = embeddable
                     .iter()
                     .zip(embeddings)
-                    .filter_map(|((d, _), emb)| {
+                    .map(|((d, _), emb)| {
                         let content_hash = match &d.content_hash {
                             Some(h) => h.clone(),
                             None => {
-                                tracing::warn!(
+                                tracing::info!(
                                     original_id = %d.original_id,
-                                    "Dataset missing content_hash, skipping embedding upsert"
+                                    "Dataset missing content_hash, automatically generating one"
                                 );
-                                return None;
+                                NewDataset::compute_content_hash(&d.title, d.description.as_deref())
                             }
                         };
-                        Some(NewDataset {
+                        NewDataset {
                             original_id: d.original_id.clone(),
                             source_portal: d.source_portal.clone(),
                             url: d.url.clone(),
@@ -305,7 +305,7 @@ where
                             embedding: Some(emb),
                             metadata: d.metadata.clone(),
                             content_hash,
-                        })
+                        }
                     })
                     .collect();
 
