@@ -25,9 +25,15 @@ Ceres harvests metadata from CKAN open data portals and indexes them with vector
 
 ## Why Ceres?
 
+<details>
+<summary><strong>See the Open Data Galaxy visualization and methodology</strong></summary>
+
+<div align="center">
   <img src="website/public/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" width="800"/>
   <sub>354,000+ datasets (dedup. to 270k) from 22 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar.</sub>
 </div>
+
+</details>
 
 Open data portals are everywhere, but finding the right dataset is still painful:
 
@@ -78,6 +84,9 @@ Found 3 matching datasets:
 
 Ceres comes with 25 verified CKAN portals ready to use, covering 354,000+ datasets:
 
+<details>
+<summary><strong>Show full portal list</strong></summary>
+
 | Portal | Region | Datasets |
 |--------|--------|----------|
 | Australia | Australia | ~109,440 |
@@ -105,6 +114,8 @@ Ceres comes with 25 verified CKAN portals ready to use, covering 354,000+ datase
 | Genova | Italy | ~171 |
 | Liguria | Italy | ~124 |
 | Napoli | Italy | ~33 |
+
+</details>
 
 See [`examples/portals.toml`](examples/portals.toml) for the full configuration. Want to add more? Check [issue #19](https://github.com/AndreaBozzo/Ceres/issues/19).
 
@@ -207,6 +218,9 @@ ceres stats
 
 ## CLI Reference
 
+<details>
+<summary><strong>Show commands, flags, and environment variables</strong></summary>
+
 ```
 ceres <COMMAND>
 
@@ -235,6 +249,8 @@ Environment Variables:
   OPENAI_API_KEY        OpenAI API key (when using openai provider)
 ```
 
+</details>
+
 ## REST API
 
 Start the server:
@@ -257,6 +273,10 @@ Available endpoints:
 - `GET  /swagger-ui` — Interactive API docs
 
 Server environment variables:
+
+<details>
+<summary><strong>Show server environment variables</strong></summary>
+
 ```
 PORT                   Server port (default: 3000)
 HOST                   Server host (default: 0.0.0.0)
@@ -269,6 +289,8 @@ RATE_LIMIT_RPS         Requests per second per IP (default: 10)
 RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
 ```
 
+</details>
+
 ## Architecture
 
 <div align="center">
@@ -278,6 +300,9 @@ RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
 </div>
 
 ### Harvesting Internals
+
+<details>
+<summary><strong>Show harvesting and circuit breaker diagrams</strong></summary>
 
 <div align="center">
   <img src="website/src/assets/images/harvesting.png" alt="Harvesting Flow Diagram" width="900" />
@@ -290,6 +315,8 @@ RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
   <br/>
   <sub>Circuit breaker states and recovery behavior for embedding requests.</sub>
 </div>
+
+</details>
 
 ## Roadmap
 
