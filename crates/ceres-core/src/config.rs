@@ -150,11 +150,18 @@ pub fn embedding_dimension(provider: EmbeddingProviderType, model: Option<&str>)
             "text-embedding-3-large" => 3072,
             _ => 1536, // text-embedding-3-small and ada-002
         },
-        EmbeddingProviderType::Ollama => match model.unwrap_or("nomic-embed-text") {
-            "mxbai-embed-large" | "snowflake-arctic-embed" => 1024,
-            "all-minilm" => 384,
-            _ => 768, // nomic-embed-text and unknown models
-        },
+        EmbeddingProviderType::Ollama => {
+            // Normalize tagged model identifiers like "snowflake-arctic-embed:335m"
+            let normalized = model
+                .map(|m| m.split(':').next().unwrap_or(m))
+                .unwrap_or("nomic-embed-text");
+
+            match normalized {
+                "mxbai-embed-large" | "snowflake-arctic-embed" => 1024,
+                "all-minilm" => 384,
+                _ => 768, // nomic-embed-text and unknown models
+            }
+        }
     }
 }
 
@@ -1010,6 +1017,21 @@ description = "A fully configured portal"
         );
         assert_eq!(
             embedding_dimension(EmbeddingProviderType::Ollama, Some("unknown-model")),
+            768
+        );
+        // Tagged model identifiers
+        assert_eq!(
+            embedding_dimension(
+                EmbeddingProviderType::Ollama,
+                Some("snowflake-arctic-embed:335m")
+            ),
+            1024
+        );
+        assert_eq!(
+            embedding_dimension(
+                EmbeddingProviderType::Ollama,
+                Some("nomic-embed-text:latest")
+            ),
             768
         );
     }

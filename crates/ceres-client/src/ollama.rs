@@ -25,6 +25,7 @@
 //! # }
 //! ```
 
+use ceres_core::HttpConfig;
 use ceres_core::error::AppError;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -36,14 +37,26 @@ const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
 /// Default embedding model.
 const DEFAULT_MODEL: &str = "nomic-embed-text";
 
-/// Timeout for Ollama requests (CPU inference can be slow).
-const TIMEOUT_SECS: u64 = 120;
+/// Timeout for Ollama requests in seconds.
+///
+/// Overrides the default `HttpConfig` timeout because CPU inference
+/// can be significantly slower than cloud API calls.
+const OLLAMA_TIMEOUT_SECS: u64 = 120;
+
+/// Returns the base model name, stripping any `:tag` suffix.
+///
+/// Ollama model identifiers commonly include tags (e.g., `nomic-embed-text:latest`,
+/// `snowflake-arctic-embed:335m`). We match on the base name only.
+fn normalize_model_name(model: &str) -> &str {
+    model.split(':').next().unwrap_or(model)
+}
 
 /// Returns the embedding dimension for a known Ollama model.
 ///
+/// Handles tagged model identifiers (e.g., `snowflake-arctic-embed:335m`).
 /// For unknown models, returns 768 (the most common dimension).
 pub fn model_dimension(model: &str) -> usize {
-    match model {
+    match normalize_model_name(model) {
         "nomic-embed-text" => 768,
         "mxbai-embed-large" | "snowflake-arctic-embed" => 1024,
         "all-minilm" => 384,
@@ -62,12 +75,13 @@ pub fn model_dimension(model: &str) -> usize {
 ///
 /// Ollama runs embedding models locally with zero per-request cost,
 /// making it ideal for bulk embedding, development, and self-hosted deployments.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OllamaClient {
     client: Client,
     model: String,
     endpoint: String,
     dim: usize,
+    timeout_secs: u64,
 }
 
 /// Request body for Ollama embed API.
@@ -109,12 +123,37 @@ impl OllamaClient {
     /// * `model` - Ollama model name (e.g., `nomic-embed-text`)
     /// * `endpoint` - Custom Ollama API endpoint (default: `http://localhost:11434`)
     pub fn with_config(model: &str, endpoint: Option<&str>) -> Result<Self, AppError> {
+        let endpoint = endpoint.unwrap_or(DEFAULT_ENDPOINT);
+
+        // Validate endpoint URL to ensure it uses an allowed scheme
+        let parsed = reqwest::Url::parse(endpoint).map_err(|e| {
+            AppError::ConfigError(format!("Invalid Ollama endpoint '{}': {}", endpoint, e))
+        })?;
+        match parsed.scheme() {
+            "http" | "https" => {}
+            scheme => {
+                return Err(AppError::ConfigError(format!(
+                    "Invalid Ollama endpoint scheme '{}'. Only http and https are allowed.",
+                    scheme
+                )));
+            }
+        }
+
+        // Use HttpConfig as base, override timeout for local inference
+        let http_config = HttpConfig::default();
+        let timeout_secs = if http_config.timeout.as_secs() < OLLAMA_TIMEOUT_SECS {
+            OLLAMA_TIMEOUT_SECS
+        } else {
+            http_config.timeout.as_secs()
+        };
+
         let client = Client::builder()
-            .timeout(Duration::from_secs(TIMEOUT_SECS))
+            .timeout(Duration::from_secs(timeout_secs))
             .build()
             .map_err(|e| AppError::ClientError(e.to_string()))?;
 
-        let endpoint = endpoint.unwrap_or(DEFAULT_ENDPOINT).to_string();
+        // Normalize endpoint by trimming trailing slash
+        let endpoint = endpoint.trim_end_matches('/').to_string();
         let dim = model_dimension(model);
 
         Ok(Self {
@@ -122,6 +161,7 @@ impl OllamaClient {
             model: model.to_string(),
             endpoint,
             dim,
+            timeout_secs,
         })
     }
 
@@ -177,7 +217,7 @@ impl OllamaClient {
     /// Maps reqwest connection/transport errors to AppError.
     fn map_connection_error(&self, err: reqwest::Error) -> AppError {
         if err.is_timeout() {
-            AppError::Timeout(TIMEOUT_SECS)
+            AppError::Timeout(self.timeout_secs)
         } else if err.is_connect() {
             AppError::NetworkError(format!(
                 "Cannot connect to Ollama at {}. Is it running? Try: ollama serve",
@@ -194,10 +234,26 @@ impl OllamaClient {
             .map(|e| e.error)
             .unwrap_or_else(|_| format!("HTTP {}: {}", status_code, error_text));
 
-        if status_code == 404 || message.contains("not found") {
+        let lower_message = message.to_lowercase();
+        let lower_model = self.model.to_lowercase();
+
+        // Treat as "model not found" only when status is 404 and the message
+        // clearly refers to a missing model, to avoid misclassifying generic 404s.
+        let is_model_not_found = status_code == 404
+            && (lower_message.contains("not found")
+                && (lower_message.contains("model") || lower_message.contains(&lower_model)));
+
+        if is_model_not_found {
             return AppError::ClientError(format!(
                 "Ollama model '{}' not found. Try: ollama pull {}",
                 self.model, self.model
+            ));
+        }
+
+        if status_code == 404 {
+            return AppError::ClientError(format!(
+                "Received 404 from Ollama at {}: {}. Check that the endpoint is correct.",
+                self.endpoint, message
             ));
         }
 
@@ -246,6 +302,14 @@ mod tests {
     }
 
     #[test]
+    fn test_model_dimension_with_tags() {
+        assert_eq!(model_dimension("nomic-embed-text:latest"), 768);
+        assert_eq!(model_dimension("snowflake-arctic-embed:335m"), 1024);
+        assert_eq!(model_dimension("mxbai-embed-large:latest"), 1024);
+        assert_eq!(model_dimension("all-minilm:l6-v2"), 384);
+    }
+
+    #[test]
     fn test_new_client() {
         let client = OllamaClient::new();
         assert!(client.is_ok());
@@ -268,6 +332,27 @@ mod tests {
             OllamaClient::with_config("nomic-embed-text", Some("http://myhost:11434")).unwrap();
         assert_eq!(client.endpoint, "http://myhost:11434");
         assert_eq!(client.model(), "nomic-embed-text");
+    }
+
+    #[test]
+    fn test_endpoint_trailing_slash_normalized() {
+        let client =
+            OllamaClient::with_config("nomic-embed-text", Some("http://localhost:11434/")).unwrap();
+        assert_eq!(client.endpoint, "http://localhost:11434");
+    }
+
+    #[test]
+    fn test_invalid_endpoint_scheme() {
+        let result = OllamaClient::with_config("nomic-embed-text", Some("ftp://localhost:11434"));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("scheme"));
+    }
+
+    #[test]
+    fn test_invalid_endpoint_url() {
+        let result = OllamaClient::with_config("nomic-embed-text", Some("not a url"));
+        assert!(result.is_err());
     }
 
     #[test]
@@ -301,6 +386,17 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("not found"));
         assert!(msg.contains("ollama pull"));
+    }
+
+    #[test]
+    fn test_map_api_error_generic_404() {
+        let client = OllamaClient::new().unwrap();
+
+        // A generic 404 (wrong endpoint) should NOT suggest "ollama pull"
+        let err = client.map_api_error(404, r#"{"error":"Not Found"}"#);
+        let msg = err.to_string();
+        assert!(!msg.contains("ollama pull"));
+        assert!(msg.contains("endpoint"));
     }
 
     #[test]
