@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
             gemini_api_key: config.gemini_api_key.clone(),
             openai_api_key: config.openai_api_key.clone(),
             embedding_model: config.embedding_model.clone(),
+            ollama_endpoint: config.ollama_endpoint.clone(),
         })
     };
 

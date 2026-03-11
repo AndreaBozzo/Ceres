@@ -31,7 +31,7 @@ use ceres_core::config::EmbeddingProviderType;
 use ceres_core::error::AppError;
 use ceres_core::traits::EmbeddingProvider;
 
-use crate::{GeminiClient, OpenAIClient};
+use crate::{GeminiClient, OllamaClient, OpenAIClient};
 
 /// Configuration needed to create an embedding provider.
 ///
@@ -42,6 +42,7 @@ pub struct EmbeddingConfig {
     pub gemini_api_key: Option<String>,
     pub openai_api_key: Option<String>,
     pub embedding_model: Option<String>,
+    pub ollama_endpoint: Option<String>,
 }
 
 /// Mock embedding client for testing (returns deterministic 768-dim vectors).
@@ -96,6 +97,8 @@ pub enum EmbeddingProviderEnum {
     Gemini(GeminiClient),
     /// OpenAI embedding provider (1536 or 3072 dimensions).
     OpenAI(OpenAIClient),
+    /// Ollama local embedding provider (default 768 dimensions).
+    Ollama(OllamaClient),
     /// Mock embedding provider for testing (768 dimensions).
     #[cfg(feature = "test-support")]
     Mock(MockEmbeddingClient),
@@ -130,6 +133,18 @@ impl EmbeddingProviderEnum {
     /// * `model` - Model name (e.g., `text-embedding-3-large`)
     pub fn openai_with_model(api_key: &str, model: &str) -> Result<Self, AppError> {
         Ok(Self::OpenAI(OpenAIClient::with_model(api_key, model)?))
+    }
+
+    /// Creates an Ollama embedding provider with default settings.
+    ///
+    /// Uses `nomic-embed-text` model at `http://localhost:11434`.
+    pub fn ollama() -> Result<Self, AppError> {
+        Ok(Self::Ollama(OllamaClient::new()?))
+    }
+
+    /// Creates an Ollama embedding provider with custom configuration.
+    pub fn ollama_with_config(model: &str, endpoint: Option<&str>) -> Result<Self, AppError> {
+        Ok(Self::Ollama(OllamaClient::with_config(model, endpoint)?))
     }
 
     /// Creates a mock embedding provider for testing.
@@ -167,6 +182,15 @@ impl EmbeddingProviderEnum {
                     Self::openai(api_key).context("Failed to initialize OpenAI client")
                 }
             }
+            EmbeddingProviderType::Ollama => {
+                let model = config
+                    .embedding_model
+                    .as_deref()
+                    .unwrap_or("nomic-embed-text");
+                let endpoint = config.ollama_endpoint.as_deref();
+                Self::ollama_with_config(model, endpoint)
+                    .context("Failed to initialize Ollama client")
+            }
         }
     }
 }
@@ -176,6 +200,7 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.name(),
             Self::OpenAI(c) => c.name(),
+            Self::Ollama(c) => c.name(),
             #[cfg(feature = "test-support")]
             Self::Mock(c) => c.name(),
         }
@@ -185,6 +210,7 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.dimension(),
             Self::OpenAI(c) => c.dimension(),
+            Self::Ollama(c) => c.dimension(),
             #[cfg(feature = "test-support")]
             Self::Mock(c) => c.dimension(),
         }
@@ -194,6 +220,7 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.max_batch_size(),
             Self::OpenAI(c) => c.max_batch_size(),
+            Self::Ollama(c) => c.max_batch_size(),
             #[cfg(feature = "test-support")]
             Self::Mock(c) => c.max_batch_size(),
         }
@@ -203,6 +230,7 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.generate(text).await,
             Self::OpenAI(c) => c.generate(text).await,
+            Self::Ollama(c) => c.generate(text).await,
             #[cfg(feature = "test-support")]
             Self::Mock(c) => c.generate(text).await,
         }
@@ -212,6 +240,7 @@ impl EmbeddingProvider for EmbeddingProviderEnum {
         match self {
             Self::Gemini(c) => c.generate_batch(texts).await,
             Self::OpenAI(c) => c.generate_batch(texts).await,
+            Self::Ollama(c) => c.generate_batch(texts).await,
             #[cfg(feature = "test-support")]
             Self::Mock(c) => c.generate_batch(texts).await,
         }
@@ -255,6 +284,7 @@ mod tests {
             gemini_api_key: None,
             openai_api_key: None,
             embedding_model: None,
+            ollama_endpoint: None,
         }
     }
 
@@ -300,5 +330,46 @@ mod tests {
     fn test_from_config_missing_openai_key() {
         let config = base_config("openai");
         assert!(EmbeddingProviderEnum::from_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_ollama_provider_creation() {
+        let provider = EmbeddingProviderEnum::ollama();
+        assert!(provider.is_ok());
+        let provider = provider.unwrap();
+        assert_eq!(provider.name(), "ollama");
+        assert_eq!(provider.dimension(), 768);
+    }
+
+    #[test]
+    fn test_ollama_provider_custom_model() {
+        let provider = EmbeddingProviderEnum::ollama_with_config("mxbai-embed-large", None);
+        assert!(provider.is_ok());
+        let provider = provider.unwrap();
+        assert_eq!(provider.dimension(), 1024);
+    }
+
+    #[test]
+    fn test_from_config_ollama() {
+        let config = base_config("ollama");
+        let provider = EmbeddingProviderEnum::from_config(&config).unwrap();
+        assert!(matches!(provider, EmbeddingProviderEnum::Ollama(_)));
+        assert_eq!(provider.dimension(), 768);
+    }
+
+    #[test]
+    fn test_from_config_ollama_custom_model() {
+        let mut config = base_config("ollama");
+        config.embedding_model = Some("mxbai-embed-large".to_string());
+        let provider = EmbeddingProviderEnum::from_config(&config).unwrap();
+        assert_eq!(provider.dimension(), 1024);
+    }
+
+    #[test]
+    fn test_from_config_ollama_custom_endpoint() {
+        let mut config = base_config("ollama");
+        config.ollama_endpoint = Some("http://myhost:11434".to_string());
+        let provider = EmbeddingProviderEnum::from_config(&config).unwrap();
+        assert!(matches!(provider, EmbeddingProviderEnum::Ollama(_)));
     }
 }
