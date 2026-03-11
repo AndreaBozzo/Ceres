@@ -128,6 +128,7 @@ impl TestApp {
             gemini_api_key: None,
             openai_api_key: None,
             embedding_model: None,
+            ollama_endpoint: None,
             port: 3000,
             host: "127.0.0.1".to_string(),
             portals_config: None,

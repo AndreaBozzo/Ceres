@@ -6,6 +6,7 @@
 //! - [`portal`] - Unified portal client factory (enum dispatch over portal types)
 //! - [`gemini`] - Google Gemini embeddings API
 //! - [`openai`] - OpenAI embeddings API
+//! - [`ollama`] - Ollama local embeddings
 //!
 //! # Overview
 //!
@@ -31,9 +32,12 @@
 //! | Gemini | gemini-embedding-001 | 768 |
 //! | OpenAI | text-embedding-3-small | 1536 |
 //! | OpenAI | text-embedding-3-large | 3072 |
+//! | Ollama | nomic-embed-text | 768 |
+//! | Ollama | mxbai-embed-large | 1024 |
 
 pub mod ckan;
 pub mod gemini;
+pub mod ollama;
 pub mod openai;
 pub mod portal;
 pub mod provider;
@@ -41,6 +45,7 @@ pub mod provider;
 // Re-export main client types
 pub use ckan::{CkanClient, CkanClientFactory};
 pub use gemini::GeminiClient;
+pub use ollama::OllamaClient;
 pub use openai::OpenAIClient;
 pub use portal::{PortalClientEnum, PortalClientFactoryEnum, PortalDataEnum};
 #[cfg(feature = "test-support")]

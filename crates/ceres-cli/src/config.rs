@@ -37,13 +37,14 @@ pub fn version_info() -> &'static str {
 
 Embedding providers:
   EMBEDDING_PROVIDER=gemini (default) - Google Gemini (768 dimensions)
-  EMBEDDING_PROVIDER=openai           - OpenAI (1536 or 3072 dimensions)")]
+  EMBEDDING_PROVIDER=openai           - OpenAI (1536 or 3072 dimensions)
+  EMBEDDING_PROVIDER=ollama           - Ollama local (768 dimensions, default: nomic-embed-text)")]
 pub struct Config {
     /// PostgreSQL database connection URL
     #[arg(long, env = "DATABASE_URL")]
     pub database_url: String,
 
-    /// Embedding provider to use: gemini (default) or openai
+    /// Embedding provider to use: gemini (default), openai, or ollama
     #[arg(long, env = "EMBEDDING_PROVIDER", default_value = "gemini")]
     pub embedding_provider: String,
 
@@ -58,6 +59,10 @@ pub struct Config {
     /// Embedding model name (provider-specific, uses default if not set)
     #[arg(long, env = "EMBEDDING_MODEL")]
     pub embedding_model: Option<String>,
+
+    /// Ollama API endpoint (default: http://localhost:11434)
+    #[arg(long, env = "OLLAMA_ENDPOINT")]
+    pub ollama_endpoint: Option<String>,
 
     #[command(subcommand)]
     pub command: Command,

@@ -36,6 +36,8 @@ pub enum EmbeddingProviderType {
     Gemini,
     /// OpenAI text-embedding-3-small (1536d) or text-embedding-3-large (3072d).
     OpenAI,
+    /// Ollama local embedding (default: nomic-embed-text, 768 dimensions).
+    Ollama,
 }
 
 impl fmt::Display for EmbeddingProviderType {
@@ -43,6 +45,7 @@ impl fmt::Display for EmbeddingProviderType {
         match self {
             Self::Gemini => write!(f, "gemini"),
             Self::OpenAI => write!(f, "openai"),
+            Self::Ollama => write!(f, "ollama"),
         }
     }
 }
@@ -54,8 +57,9 @@ impl FromStr for EmbeddingProviderType {
         match s.to_lowercase().as_str() {
             "gemini" => Ok(Self::Gemini),
             "openai" => Ok(Self::OpenAI),
+            "ollama" => Ok(Self::Ollama),
             _ => Err(AppError::ConfigError(format!(
-                "Unknown embedding provider: '{}'. Valid options: gemini, openai",
+                "Unknown embedding provider: '{}'. Valid options: gemini, openai, ollama",
                 s
             ))),
         }
@@ -105,6 +109,34 @@ impl Default for OpenAIEmbeddingConfig {
     }
 }
 
+/// Ollama embedding provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaEmbeddingConfig {
+    /// Ollama model name.
+    #[serde(default = "default_ollama_model")]
+    pub model: String,
+    /// Ollama API endpoint.
+    #[serde(default = "default_ollama_endpoint")]
+    pub endpoint: String,
+}
+
+fn default_ollama_model() -> String {
+    "nomic-embed-text".to_string()
+}
+
+fn default_ollama_endpoint() -> String {
+    "http://localhost:11434".to_string()
+}
+
+impl Default for OllamaEmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            model: default_ollama_model(),
+            endpoint: default_ollama_endpoint(),
+        }
+    }
+}
+
 /// Returns the embedding dimension for a given provider and model.
 ///
 /// # Arguments
@@ -117,6 +149,11 @@ pub fn embedding_dimension(provider: EmbeddingProviderType, model: Option<&str>)
         EmbeddingProviderType::OpenAI => match model.unwrap_or("text-embedding-3-small") {
             "text-embedding-3-large" => 3072,
             _ => 1536, // text-embedding-3-small and ada-002
+        },
+        EmbeddingProviderType::Ollama => match model.unwrap_or("nomic-embed-text") {
+            "mxbai-embed-large" | "snowflake-arctic-embed" => 1024,
+            "all-minilm" => 384,
+            _ => 768, // nomic-embed-text and unknown models
         },
     }
 }
@@ -877,6 +914,14 @@ description = "A fully configured portal"
             "OpenAI".parse::<EmbeddingProviderType>().unwrap(),
             EmbeddingProviderType::OpenAI
         );
+        assert_eq!(
+            "ollama".parse::<EmbeddingProviderType>().unwrap(),
+            EmbeddingProviderType::Ollama
+        );
+        assert_eq!(
+            "OLLAMA".parse::<EmbeddingProviderType>().unwrap(),
+            EmbeddingProviderType::Ollama
+        );
     }
 
     #[test]
@@ -889,6 +934,7 @@ description = "A fully configured portal"
     fn test_embedding_provider_type_display() {
         assert_eq!(EmbeddingProviderType::Gemini.to_string(), "gemini");
         assert_eq!(EmbeddingProviderType::OpenAI.to_string(), "openai");
+        assert_eq!(EmbeddingProviderType::Ollama.to_string(), "ollama");
     }
 
     #[test]
@@ -935,5 +981,36 @@ description = "A fully configured portal"
         let config = OpenAIEmbeddingConfig::default();
         assert_eq!(config.model, "text-embedding-3-small");
         assert!(config.endpoint.is_none());
+    }
+
+    #[test]
+    fn test_ollama_embedding_config_default() {
+        let config = OllamaEmbeddingConfig::default();
+        assert_eq!(config.model, "nomic-embed-text");
+        assert_eq!(config.endpoint, "http://localhost:11434");
+    }
+
+    #[test]
+    fn test_embedding_dimension_ollama() {
+        assert_eq!(
+            embedding_dimension(EmbeddingProviderType::Ollama, None),
+            768
+        );
+        assert_eq!(
+            embedding_dimension(EmbeddingProviderType::Ollama, Some("nomic-embed-text")),
+            768
+        );
+        assert_eq!(
+            embedding_dimension(EmbeddingProviderType::Ollama, Some("mxbai-embed-large")),
+            1024
+        );
+        assert_eq!(
+            embedding_dimension(EmbeddingProviderType::Ollama, Some("all-minilm")),
+            384
+        );
+        assert_eq!(
+            embedding_dimension(EmbeddingProviderType::Ollama, Some("unknown-model")),
+            768
+        );
     }
 }
