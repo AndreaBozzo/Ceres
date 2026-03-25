@@ -47,4 +47,5 @@ anyhow.workspace = true
 dirs.workspace = true
 
 [build-dependencies]
+vergen = "=9.0.1"
 vergen-git2 = { version = "1.0", features = ["build", "cargo", "rustc", "si"] }
