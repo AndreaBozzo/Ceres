@@ -5,7 +5,7 @@ description: How the data extraction works in Ceres
 
 # Harvesting Architecture
 
-Ceres harvests dataset metadata from open data portals and indexes them with vector embeddings for semantic search. Since portals can host tens of thousands of datasets, and embedding generation requires paid API calls, Ceres implements a **two-tier optimization strategy** to minimize both portal API calls and embedding API costs.
+Ceres harvests dataset metadata from open data portals and indexes them with vector embeddings for semantic search. Since portals can host tens of thousands of datasets, Ceres implements a **two-tier optimization strategy** to minimize both portal API calls and embedding costs (whether using paid cloud APIs or local inference).
 
 ## Two-Tier Optimization
 
@@ -89,7 +89,7 @@ Content hashes are stored in the `datasets` table in the `content_hash` column (
 
 ## Circuit Breaker
 
-The embedding API (Gemini) is protected by a circuit breaker to prevent cascading failures during harvesting:
+The embedding API (Gemini, OpenAI, or local Ollama) is protected by a circuit breaker to prevent cascading failures during harvesting:
 
 ![Circuit Breaker Diagram](../../assets/images/circuitbreaker.png)
 
@@ -107,7 +107,7 @@ With `--metadata-only`, harvesting fetches and stores dataset metadata without g
 
 Use the standalone `ceres embed` command afterwards to generate embeddings for pending datasets. This enables:
 
-- Harvesting without an API key
+- Harvesting without an API key (using local Ollama or metadata-only mode)
 - Switching embedding providers without re-harvesting
 - Backfilling embeddings after outages
 - Independent scaling of harvest and embedding workloads

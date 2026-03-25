@@ -59,7 +59,7 @@ RUST_LOG=debug cargo run
 ## Areas for Contribution
 
 - **Portal Types**: Add support for new portal types (Socrata, DCAT-AP) via the `PortalClient` trait
-- **Embeddings**: Implement alternative embedding providers (e.g., Ollama for local inference)
+- **Embeddings**: Implement support for additional cloud or local embedding providers
 - **CLI**: Improve user experience and add new commands
 - **Documentation**: Improve guides, examples, and API docs
 - **Tests**: Increase test coverage

@@ -74,7 +74,7 @@ Found 3 matching datasets:
 - **Real-time Progress** — Live progress reporting during harvest with batch timestamp updates
 - **Dry Run Mode** — Preview what a harvest would do without writing to DB or calling embedding APIs
 - **Semantic Search** — Find datasets by meaning using vector embeddings
-- **Pluggable Embeddings** — Switchable embedding backend via trait (Gemini, OpenAI)
+- **Pluggable Embeddings** — Switchable embedding backend via trait (Gemini, OpenAI, Ollama)
 - **Bearer Token Auth** — Protected admin endpoints with configurable API key authentication
 - **Docker Support** — Production-ready multi-stage Docker image and Docker Compose setup
 - **Multi-format Export** — Export to JSON, JSON Lines, CSV, or Parquet
@@ -125,7 +125,7 @@ See [`examples/portals.toml`](examples/portals.toml) for the full configuration.
 |-----------|------------|
 | Language | Rust (async with Tokio) |
 | Database | PostgreSQL 16+ with pgvector |
-| Embeddings | Pluggable: Google Gemini, OpenAI (trait-based) |
+| Embeddings | Pluggable: Google Gemini, OpenAI, Ollama (local) |
 | Portal Protocol | CKAN API v3 |
 | REST API | Axum with OpenAPI/Swagger UI |
 
@@ -135,7 +135,7 @@ See [`examples/portals.toml`](examples/portals.toml) for the full configuration.
 
 - Rust 1.88+
 - Docker & Docker Compose
-- Google Gemini API key ([get one free](https://aistudio.google.com/apikey)) or OpenAI API key *(only needed for embedding — harvest with `--metadata-only` works without any API key)*
+- Google Gemini API key ([get one free](https://aistudio.google.com/apikey)), OpenAI API key, or **[Ollama](https://ollama.com)** installed locally *(only needed for embedding — harvest with `--metadata-only` works without any API key)*
 
 ### Docker (recommended)
 
@@ -144,7 +144,7 @@ See [`examples/portals.toml`](examples/portals.toml) for the full configuration.
 git clone https://github.com/AndreaBozzo/Ceres.git
 cd Ceres
 cp .env.example .env
-# Edit .env with your settings (API key optional — only needed for embedding)
+# Edit .env with your settings (API key optional if using Ollama locally)
 
 # Start everything (DB + server)
 docker compose up -d
@@ -244,9 +244,10 @@ Embed Flags:
 
 Environment Variables:
   DATABASE_URL          PostgreSQL connection string
-  EMBEDDING_PROVIDER    Embedding backend: gemini or openai (default: gemini)
+  EMBEDDING_PROVIDER    Embedding backend: gemini, openai, or ollama (default: gemini)
   GEMINI_API_KEY        Google Gemini API key (when using gemini provider)
   OPENAI_API_KEY        OpenAI API key (when using openai provider)
+  OLLAMA_ENDPOINT       Ollama API endpoint (default: http://localhost:11434)
 ```
 
 </details>
@@ -287,6 +288,7 @@ PORTALS_CONFIG         Path to portals.toml (optional)
 CORS_ALLOWED_ORIGINS   Comma-separated allowed origins (default: *)
 RATE_LIMIT_RPS         Requests per second per IP (default: 10)
 RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
+OLLAMA_ENDPOINT        Ollama API endpoint (default: http://localhost:11434)
 ```
 
 </details>
@@ -330,6 +332,9 @@ For past releases, see the [CHANGELOG](CHANGELOG.md).
 - Schema-level search ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
 - Socrata / DCAT-AP portal support ([#61](https://github.com/AndreaBozzo/Ceres/issues/61))
 
+### v0.3.x — Done
+- Local embeddings via Ollama ([#79](https://github.com/AndreaBozzo/Ceres/issues/79))
+
 ### Backlog
 - Standalone library support ([#35](https://github.com/AndreaBozzo/Ceres/issues/35))
 - data.europa.eu integration
@@ -350,5 +355,5 @@ Apache-2.0 — see [LICENSE](LICENSE).
 ---
 
 <div align="center">
-  <sub>Built with <a href="https://github.com/pgvector/pgvector">pgvector</a>, <a href="https://ai.google.dev/">Google Gemini</a>, and <a href="https://ckan.org/">CKAN</a>.</sub>
+  <sub>Built with <a href="https://github.com/pgvector/pgvector">pgvector</a>, <a href="https://ai.google.dev/">Google Gemini</a>, <a href="https://ollama.com">Ollama</a>, and <a href="https://ckan.org/">CKAN</a>.</sub>
 </div>

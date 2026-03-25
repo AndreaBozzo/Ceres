@@ -21,3 +21,9 @@ This scenario estimates the one-time cost to index a catalog of 50,000 datasets.
 | **Total Initial Cost** | `(25,000,000 / 1,000,000) * $0.15 =` **$3.75** |
 
 As shown, the initial cost to index a substantial number of datasets is just a few dollars. Monthly maintenance for incremental updates would be even lower, typically amounting to a few cents.
+
+## Local Inference (Ollama)
+
+If you prefer to avoid all API costs, Ceres supports local embeddings via **Ollama**. This allows you to generate embeddings on your own hardware (CPU or GPU) with **zero per-request cost**. 
+
+While this saves money, it requires sufficient local resources and typically results in slower indexing throughput compared to cloud APIs, depending on your hardware.
