@@ -353,7 +353,3 @@ Contributions are welcome! See [CONTRIBUTING.md](website/src/content/docs/CONTRI
 Apache-2.0 — see [LICENSE](LICENSE).
 
 ---
-
-<div align="center">
-  <sub>Built with <a href="https://github.com/pgvector/pgvector">pgvector</a>, <a href="https://ai.google.dev/">Google Gemini</a>, <a href="https://ollama.com">Ollama</a>, and <a href="https://ckan.org/">CKAN</a>.</sub>
-</div>
