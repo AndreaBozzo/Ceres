@@ -154,3 +154,24 @@ description = "Open Data NRW (Germany)"
 # url = "https://data.gov.au/data/"
 # type = "ckan"
 # description = "Australian Government Open Data (~109,000 datasets, English, very large)"
+
+# =============================================================================
+# DCAT-AP portals (udata REST flavor)
+# =============================================================================
+
+# Luxembourg Open Data Portal (~2,490 datasets) — DCAT-AP udata REST
+[[portals]]
+name = "luxembourg"
+url = "https://data.public.lu"
+type = "dcat"
+language = "fr"
+enabled = false
+description = "Luxembourg Open Data Portal (DCAT-AP / udata)"
+
+# [[portals]]
+# name = "france"
+# url = "https://data.gouv.fr"
+# type = "dcat"
+# language = "fr"
+# enabled = false
+# description = "data.gouv.fr — French Government Open Data Portal (~50,000+ datasets)"

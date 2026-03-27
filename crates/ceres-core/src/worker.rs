@@ -41,7 +41,6 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::SyncStats;
-use crate::config::PortalType;
 use crate::error::AppError;
 use crate::job::{HarvestJob, WorkerConfig};
 use crate::job_queue::JobQueue;
@@ -295,7 +294,6 @@ where
 
         // Execute the harvest + embed pipeline with cancellation support.
         // The pipeline first harvests metadata, then embeds pending datasets.
-        // TODO: Add portal_type to HarvestJob when Socrata/DCAT support is added
         let language = job.language.as_deref().unwrap_or("en");
         let result = self
             .pipeline
@@ -306,7 +304,7 @@ where
                 harvest_reporter,
                 job_cancel.clone(),
                 job.force_full_sync,
-                PortalType::default(),
+                job.portal_type,
             )
             .await;
 

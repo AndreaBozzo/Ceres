@@ -569,7 +569,9 @@ where
             return Ok(SyncResult::cancelled(SyncStats::default()));
         }
 
-        let portal_client = self.portal_factory.create(portal_url, portal_type)?;
+        let portal_client = self
+            .portal_factory
+            .create(portal_url, portal_type, language)?;
 
         // Determine sync plan (IDs for full sync, datasets for incremental)
         let (sync_mode, plan) = self

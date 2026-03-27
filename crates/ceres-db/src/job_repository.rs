@@ -8,6 +8,7 @@ use sqlx::{PgPool, Pool, Postgres};
 use uuid::Uuid;
 
 use ceres_core::SyncStats;
+use ceres_core::config::PortalType;
 use ceres_core::error::AppError;
 use ceres_core::job::{CreateJobRequest, HarvestJob, JobStatus};
 use ceres_core::job_queue::JobQueue;
@@ -52,6 +53,7 @@ struct JobRow {
     force_full_sync: bool,
     url_template: Option<String>,
     language: Option<String>,
+    portal_type: String,
 }
 
 /// JSON representation of SyncStats for database storage.
@@ -97,6 +99,7 @@ impl From<JobRow> for HarvestJob {
             id: row.id,
             portal_url: row.portal_url,
             portal_name: row.portal_name,
+            portal_type: row.portal_type.parse().unwrap_or(PortalType::Ckan),
             // TODO(correctness): log warning when unknown job status falls back to Pending
             status: row.status.parse().unwrap_or(JobStatus::Pending),
             created_at: row.created_at,
@@ -126,8 +129,8 @@ impl JobQueue for JobRepository {
 
         let row: JobRow = sqlx::query_as(
             r#"
-            INSERT INTO harvest_jobs (portal_url, portal_name, force_full_sync, max_retries, url_template, language)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO harvest_jobs (portal_url, portal_name, force_full_sync, max_retries, url_template, language, portal_type)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING *
             "#,
         )
@@ -137,6 +140,7 @@ impl JobQueue for JobRepository {
         .bind(max_retries)
         .bind(&request.url_template)
         .bind(&request.language)
+        .bind(request.portal_type.to_string())
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;

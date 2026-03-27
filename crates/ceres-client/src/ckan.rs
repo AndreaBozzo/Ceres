@@ -912,6 +912,7 @@ impl ceres_core::traits::PortalClientFactory for CkanClientFactory {
         &self,
         portal_url: &str,
         portal_type: ceres_core::config::PortalType,
+        _language: &str,
     ) -> Result<Self::Client, AppError> {
         match portal_type {
             ceres_core::config::PortalType::Ckan => CkanClient::new(portal_url),

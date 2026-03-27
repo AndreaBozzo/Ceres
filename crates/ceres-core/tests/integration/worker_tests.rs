@@ -53,6 +53,7 @@ impl PortalClientFactory for FailingPortalClientFactory {
         &self,
         _portal_url: &str,
         _portal_type: PortalType,
+        _language: &str,
     ) -> Result<Self::Client, AppError> {
         Err(AppError::NetworkError(
             "simulated network failure".to_string(),

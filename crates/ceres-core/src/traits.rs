@@ -203,7 +203,13 @@ pub trait PortalClientFactory: Send + Sync + Clone {
     ///
     /// * `portal_url` - The portal API base URL
     /// * `portal_type` - The type of portal to create a client for
-    fn create(&self, portal_url: &str, portal_type: PortalType) -> Result<Self::Client, AppError>;
+    /// * `language` - Preferred language for multilingual portals (e.g. "en", "fr")
+    fn create(
+        &self,
+        portal_url: &str,
+        portal_type: PortalType,
+        language: &str,
+    ) -> Result<Self::Client, AppError>;
 }
 
 /// Store for dataset persistence and retrieval.

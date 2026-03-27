@@ -20,8 +20,8 @@
 //! | Portal Type | Status | API |
 //! |-------------|--------|-----|
 //! | CKAN | Supported | [CKAN API](https://docs.ckan.org/en/2.9/api/) |
+//! | DCAT-AP (udata REST) | Supported | [DCAT-AP](https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe) |
 //! | Socrata | Planned | [Socrata API](https://dev.socrata.com/) |
-//! | DCAT-AP | Planned | [DCAT-AP](https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe) |
 //!
 //! # Embedding Providers
 //!
@@ -36,6 +36,7 @@
 //! | Ollama | mxbai-embed-large | 1024 |
 
 pub mod ckan;
+pub mod dcat;
 pub mod gemini;
 pub mod ollama;
 pub mod openai;
@@ -44,6 +45,7 @@ pub mod provider;
 
 // Re-export main client types
 pub use ckan::{CkanClient, CkanClientFactory};
+pub use dcat::DcatClient;
 pub use gemini::GeminiClient;
 pub use ollama::OllamaClient;
 pub use openai::OpenAIClient;

@@ -1,3 +1,4 @@
+use ceres_core::PortalType;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -71,17 +72,27 @@ pub struct Config {
 /// Available CLI commands
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Harvest datasets from CKAN portals
+    /// Harvest datasets from open data portals
     #[command(after_help = "Examples:
-  ceres harvest                               # Harvest all enabled portals from config
-  ceres harvest https://dati.comune.milano.it # Harvest single URL (backward compatible)
-  ceres harvest --portal milano               # Harvest portal by name from config
-  ceres harvest --config ~/custom.toml        # Use custom config file
-  ceres harvest --full-sync                   # Force full sync even if incremental is available")]
+  ceres harvest                                       # Harvest all enabled portals from config
+  ceres harvest https://dati.comune.milano.it         # Harvest single CKAN URL (default type)
+  ceres harvest https://data.public.lu --type dcat    # Harvest DCAT portal by URL
+  ceres harvest --portal milano                       # Harvest portal by name from config
+  ceres harvest --config ~/custom.toml                # Use custom config file
+  ceres harvest --full-sync                           # Force full sync even if incremental is available")]
     Harvest {
-        /// URL of a single CKAN portal to harvest (backward compatible)
+        /// URL of a portal to harvest (ad-hoc, not from config)
         #[arg(value_name = "URL")]
         portal_url: Option<String>,
+
+        /// Portal type when harvesting an ad-hoc URL (ignored when using --portal or batch mode)
+        #[arg(
+            long,
+            value_name = "TYPE",
+            default_value = "ckan",
+            requires = "portal_url"
+        )]
+        r#type: PortalType,
 
         /// Harvest a specific portal by name from config file
         #[arg(short, long, value_name = "NAME", conflicts_with = "portal_url")]
