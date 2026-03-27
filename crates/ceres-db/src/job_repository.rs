@@ -99,7 +99,14 @@ impl From<JobRow> for HarvestJob {
             id: row.id,
             portal_url: row.portal_url,
             portal_name: row.portal_name,
-            portal_type: row.portal_type.parse().unwrap_or(PortalType::Ckan),
+            portal_type: row.portal_type.parse().unwrap_or_else(|_| {
+                tracing::warn!(
+                    job_id = %row.id,
+                    raw_value = %row.portal_type,
+                    "Unknown portal_type in harvest_jobs, defaulting to CKAN"
+                );
+                PortalType::Ckan
+            }),
             // TODO(correctness): log warning when unknown job status falls back to Pending
             status: row.status.parse().unwrap_or(JobStatus::Pending),
             created_at: row.created_at,

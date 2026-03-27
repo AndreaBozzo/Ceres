@@ -28,6 +28,9 @@ serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 
+# Logging
+tracing.workspace = true
+
 [dev-dependencies]
 testcontainers = "0.27"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

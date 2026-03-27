@@ -405,41 +405,39 @@ where
 
     /// Determines the best full sync plan for a portal.
     ///
-    /// Fetches dataset IDs first (cheap `package_list` call), then attempts
-    /// bulk fetch via `search_all_datasets` (paginated `package_search`).
-    /// If bulk fails, the pre-fetched IDs are used for ID-by-ID fetching
-    /// without making additional requests to an already-stressed portal.
+    /// Attempts bulk fetch via `search_all_datasets` first (paginated search).
+    /// If that fails, falls back to `list_dataset_ids` for ID-by-ID fetching.
+    ///
+    /// This order avoids a redundant full catalog crawl on portals where
+    /// `list_dataset_ids` has no cheap endpoint (e.g., DCAT portals delegate to
+    /// `search_all_datasets` internally).
     async fn full_sync_plan<R: ProgressReporter>(
         &self,
         portal_url: &str,
         portal_client: &F::Client,
         reporter: &R,
     ) -> Result<(SyncMode, SyncPlan<<F::Client as PortalClient>::PortalData>), AppError> {
-        // Fetch IDs first — lightweight call that serves as both a
-        // connectivity probe and a ready fallback if bulk fetch fails.
-        let ids = portal_client.list_dataset_ids().await?;
-        let id_count = ids.len();
-
-        // Try bulk fetch (much faster for large portals)
+        // Try bulk fetch first (most efficient for all portal types)
         match portal_client.search_all_datasets().await {
             Ok(datasets) => {
                 let count = datasets.len();
                 tracing::info!(
                     portal = portal_url,
                     count,
-                    "Full sync: bulk-fetched all datasets via package_search"
+                    "Full sync: bulk-fetched all datasets"
                 );
                 reporter.report(HarvestEvent::PortalDatasetsFound { count });
                 Ok((SyncMode::Full, SyncPlan::FullBulk { datasets }))
             }
             Err(e) => {
-                // Bulk fetch failed — use the pre-fetched IDs for ID-by-ID sync.
+                // Bulk fetch failed — fall back to ID list for ID-by-ID sync
                 tracing::info!(
                     portal = portal_url,
                     error = %e,
-                    id_count,
                     "Bulk fetch failed, falling back to ID-by-ID sync"
                 );
+                let ids = portal_client.list_dataset_ids().await?;
+                let id_count = ids.len();
                 reporter.report(HarvestEvent::PortalDatasetsFound { count: id_count });
                 Ok((SyncMode::Full, SyncPlan::Full { ids }))
             }

@@ -1,3 +1,4 @@
 -- Add portal_type column to harvest_jobs to support non-CKAN portal types.
--- Resolves TODO in worker.rs: "Add portal_type to HarvestJob when Socrata/DCAT support is added"
-ALTER TABLE harvest_jobs ADD COLUMN portal_type TEXT NOT NULL DEFAULT 'ckan';
+-- This column records the type of remote portal (for example CKAN, Socrata, or DCAT-based portals).
+ALTER TABLE harvest_jobs ADD COLUMN portal_type TEXT NOT NULL DEFAULT 'ckan'
+    CHECK (portal_type IN ('ckan', 'dcat', 'socrata'));

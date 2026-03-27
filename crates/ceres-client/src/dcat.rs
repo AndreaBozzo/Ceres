@@ -170,8 +170,9 @@ impl DcatClient {
 
     /// Core paginated catalog fetcher.
     ///
-    /// Fetches the catalog JSON-LD endpoint page by page, following `hydra:next`
-    /// links until the last page is reached.
+    /// Fetches the first catalog page, then follows the `hydra:next` URL from
+    /// each response until no more pages remain. This correctly handles portals
+    /// that use cursor-based or non-numeric pagination schemes.
     ///
     /// # Arguments
     ///
@@ -182,10 +183,9 @@ impl DcatClient {
         modified_since: Option<&str>,
     ) -> Result<Vec<DcatDataset>, AppError> {
         let mut all_datasets = Vec::new();
-        let mut page: u32 = 1;
+        let mut next_url = Some(self.build_first_page_url(modified_since)?);
 
-        loop {
-            let url = self.build_catalog_url(page, modified_since)?;
+        while let Some(url) = next_url {
             let graph = self.fetch_graph(&url).await?;
 
             // Extract Dataset nodes from @graph
@@ -197,21 +197,24 @@ impl DcatClient {
                 }
             }
 
-            // Check for next page
-            match extract_hydra_next(&graph) {
-                Some(_) => {
-                    page += 1;
-                    sleep(PAGE_DELAY).await;
-                }
-                None => break,
-            }
+            // Follow hydra:next link if present, otherwise stop
+            next_url =
+                match extract_hydra_next(&graph) {
+                    Some(next) => {
+                        sleep(PAGE_DELAY).await;
+                        Some(Url::parse(&next).map_err(|e| {
+                            AppError::Generic(format!("Invalid hydra:next URL: {e}"))
+                        })?)
+                    }
+                    None => None,
+                };
         }
 
         Ok(all_datasets)
     }
 
-    /// Builds the catalog URL for a given page number.
-    fn build_catalog_url(&self, page: u32, modified_since: Option<&str>) -> Result<Url, AppError> {
+    /// Builds the catalog URL for the first page of results.
+    fn build_first_page_url(&self, modified_since: Option<&str>) -> Result<Url, AppError> {
         let mut url = self
             .base_url
             .join("api/1/site/catalog.jsonld")
@@ -220,7 +223,7 @@ impl DcatClient {
         {
             let mut pairs = url.query_pairs_mut();
             pairs
-                .append_pair("page", &page.to_string())
+                .append_pair("page", "1")
                 .append_pair("page_size", "100");
             if let Some(since) = modified_since {
                 pairs.append_pair("modified_since", since);
@@ -416,7 +419,9 @@ pub fn is_dataset_node(node: &Value) -> bool {
 /// Returns `None` if no pagination node with a `next` link is found (last page).
 pub fn extract_hydra_next(graph: &[Value]) -> Option<String> {
     for node in graph {
-        let obj = node.as_object()?;
+        let Some(obj) = node.as_object() else {
+            continue;
+        };
 
         // Detect hydra:PartialCollectionView by @type
         let is_pcv = obj.get("@type").map(|t| match t {
@@ -626,6 +631,20 @@ mod tests {
             json!({"@type": ["Catalog", "hydra:Collection"], "totalItems": 100}),
         ];
         assert_eq!(extract_hydra_next(&graph), None);
+    }
+
+    #[test]
+    fn extract_hydra_next_skips_non_object_nodes() {
+        // Non-object nodes in @graph must not cause early return
+        let graph = vec![
+            json!("https://example.org/context"),
+            json!(42),
+            json!({"@type": "hydra:PartialCollectionView", "next": "https://example.org/?page=2"}),
+        ];
+        assert_eq!(
+            extract_hydra_next(&graph),
+            Some("https://example.org/?page=2".to_string())
+        );
     }
 
     // ---- extract_dataset ---------------------------------------------------
