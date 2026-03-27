@@ -33,6 +33,12 @@ use tokio::time::sleep;
 /// Delay between paginated catalog requests to be polite to udata portals.
 const PAGE_DELAY: Duration = Duration::from_millis(200);
 
+/// Per-request timeout for DCAT catalog fetches.
+///
+/// JSON-LD pages carry large payloads (100 datasets with full metadata each),
+/// so we use a longer timeout than the default `HttpConfig` value.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// Maximum backoff delay for rate-limited retries.
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
@@ -75,10 +81,9 @@ impl DcatClient {
         let base_url = Url::parse(base_url_str)
             .map_err(|_| AppError::InvalidPortalUrl(base_url_str.to_string()))?;
 
-        let http_config = HttpConfig::default();
         let client = Client::builder()
             .user_agent("Ceres/0.1 (semantic-search-bot)")
-            .timeout(http_config.timeout)
+            .timeout(REQUEST_TIMEOUT)
             .build()
             .map_err(|e| AppError::ClientError(e.to_string()))?;
 
@@ -184,9 +189,28 @@ impl DcatClient {
     ) -> Result<Vec<DcatDataset>, AppError> {
         let mut all_datasets = Vec::new();
         let mut next_url = Some(self.build_first_page_url(modified_since)?);
+        let mut page = 0u32;
 
         while let Some(url) = next_url {
-            let graph = self.fetch_graph(&url).await?;
+            page += 1;
+
+            let graph = match self.fetch_graph(&url).await {
+                Ok(g) => g,
+                Err(e) => {
+                    // If we already collected datasets, return partial results
+                    // rather than discarding everything.
+                    if all_datasets.is_empty() {
+                        return Err(e);
+                    }
+                    tracing::warn!(
+                        page,
+                        collected = all_datasets.len(),
+                        error = %e,
+                        "Page fetch failed; returning partial results"
+                    );
+                    break;
+                }
+            };
 
             // Extract Dataset nodes from @graph
             for node in &graph {
@@ -305,7 +329,7 @@ impl DcatClient {
                 }
                 Err(e) => {
                     if e.is_timeout() {
-                        last_error = AppError::Timeout(http_config.timeout.as_secs());
+                        last_error = AppError::Timeout(REQUEST_TIMEOUT.as_secs());
                     } else if e.is_connect() {
                         last_error = AppError::NetworkError(format!("Connection failed: {e}"));
                     } else {
