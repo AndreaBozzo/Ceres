@@ -201,6 +201,7 @@ impl PortalClientFactory for MockPortalClientFactory {
         &self,
         portal_url: &str,
         _portal_type: ceres_core::config::PortalType,
+        _language: &str,
     ) -> Result<Self::Client, AppError> {
         Ok(MockPortalClient::new(portal_url, self.datasets.clone()))
     }
@@ -582,6 +583,7 @@ impl MockJobQueue {
             id,
             portal_url: portal_url.to_string(),
             portal_name: None,
+            portal_type: ceres_core::config::PortalType::default(),
             status: JobStatus::Pending,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -632,6 +634,7 @@ impl JobQueue for MockJobQueue {
             id,
             portal_url: request.portal_url,
             portal_name: request.portal_name,
+            portal_type: request.portal_type,
             status: JobStatus::Pending,
             created_at: Utc::now(),
             updated_at: Utc::now(),

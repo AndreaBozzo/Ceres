@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::SyncStats;
+use crate::config::PortalType;
 
 // =============================================================================
 // Job Status
@@ -165,6 +166,9 @@ pub struct HarvestJob {
     /// Optional friendly portal name.
     pub portal_name: Option<String>,
 
+    /// Type of portal (ckan, dcat, etc.).
+    pub portal_type: PortalType,
+
     /// Current job status.
     pub status: JobStatus,
 
@@ -241,6 +245,9 @@ pub struct CreateJobRequest {
 
     /// Preferred language for multilingual portals.
     pub language: Option<String>,
+
+    /// Type of portal (ckan, dcat, etc.).
+    pub portal_type: PortalType,
 }
 
 impl CreateJobRequest {
@@ -253,6 +260,7 @@ impl CreateJobRequest {
             max_retries: None,
             url_template: None,
             language: None,
+            portal_type: PortalType::default(),
         }
     }
 
@@ -283,6 +291,12 @@ impl CreateJobRequest {
     /// Set preferred language for multilingual portals.
     pub fn with_language(mut self, language: impl Into<String>) -> Self {
         self.language = Some(language.into());
+        self
+    }
+
+    /// Set the portal type.
+    pub fn with_portal_type(mut self, portal_type: PortalType) -> Self {
+        self.portal_type = portal_type;
         self
     }
 }
@@ -425,6 +439,7 @@ mod tests {
             id: Uuid::new_v4(),
             portal_url: "https://example.com".to_string(),
             portal_name: None,
+            portal_type: crate::config::PortalType::default(),
             status: JobStatus::Running,
             created_at: Utc::now(),
             updated_at: Utc::now(),

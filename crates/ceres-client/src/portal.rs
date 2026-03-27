@@ -17,12 +17,15 @@ use ceres_core::traits::{PortalClient, PortalClientFactory};
 use chrono::{DateTime, Utc};
 
 use crate::ckan::{CkanClient, CkanDataset};
+use crate::dcat::{DcatClient, DcatDataset};
 
 /// Portal-specific dataset data, wrapping concrete types from each portal client.
 #[derive(Debug, Clone)]
 pub enum PortalDataEnum {
     /// Data from a CKAN portal.
     Ckan(CkanDataset),
+    /// Data from a DCAT-AP portal.
+    Dcat(DcatDataset),
 }
 
 /// Unified portal client that wraps concrete portal implementations.
@@ -33,6 +36,8 @@ pub enum PortalDataEnum {
 pub enum PortalClientEnum {
     /// CKAN portal client.
     Ckan(CkanClient),
+    /// DCAT-AP udata REST portal client.
+    Dcat(DcatClient),
 }
 
 impl PortalClient for PortalClientEnum {
@@ -41,24 +46,28 @@ impl PortalClient for PortalClientEnum {
     fn portal_type(&self) -> &'static str {
         match self {
             Self::Ckan(c) => c.portal_type(),
+            Self::Dcat(c) => c.portal_type(),
         }
     }
 
     fn base_url(&self) -> &str {
         match self {
             Self::Ckan(c) => c.base_url(),
+            Self::Dcat(c) => c.base_url(),
         }
     }
 
     async fn list_dataset_ids(&self) -> Result<Vec<String>, AppError> {
         match self {
             Self::Ckan(c) => c.list_dataset_ids().await,
+            Self::Dcat(c) => c.list_dataset_ids().await,
         }
     }
 
     async fn get_dataset(&self, id: &str) -> Result<Self::PortalData, AppError> {
         match self {
             Self::Ckan(c) => c.get_dataset(id).await.map(PortalDataEnum::Ckan),
+            Self::Dcat(c) => c.get_dataset(id).await.map(PortalDataEnum::Dcat),
         }
     }
 
@@ -72,6 +81,9 @@ impl PortalClient for PortalClientEnum {
             PortalDataEnum::Ckan(ckan_data) => {
                 CkanClient::into_new_dataset(ckan_data, portal_url, url_template, language)
             }
+            PortalDataEnum::Dcat(dcat_data) => {
+                DcatClient::into_new_dataset(dcat_data, portal_url, url_template, language)
+            }
         }
     }
 
@@ -84,6 +96,10 @@ impl PortalClient for PortalClientEnum {
                 .search_modified_since(since)
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Ckan).collect()),
+            Self::Dcat(c) => c
+                .search_modified_since(since)
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect()),
         }
     }
 
@@ -93,6 +109,10 @@ impl PortalClient for PortalClientEnum {
                 .search_all_datasets()
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Ckan).collect()),
+            Self::Dcat(c) => c
+                .search_all_datasets()
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect()),
         }
     }
 }
@@ -114,11 +134,19 @@ impl PortalClientFactoryEnum {
 impl PortalClientFactory for PortalClientFactoryEnum {
     type Client = PortalClientEnum;
 
-    fn create(&self, portal_url: &str, portal_type: PortalType) -> Result<Self::Client, AppError> {
+    fn create(
+        &self,
+        portal_url: &str,
+        portal_type: PortalType,
+        language: &str,
+    ) -> Result<Self::Client, AppError> {
         match portal_type {
             PortalType::Ckan => Ok(PortalClientEnum::Ckan(CkanClient::new(portal_url)?)),
+            PortalType::Dcat => Ok(PortalClientEnum::Dcat(DcatClient::new(
+                portal_url, language,
+            )?)),
             other => Err(AppError::ConfigError(format!(
-                "Portal type '{}' is not yet supported. Currently only 'ckan' is implemented.",
+                "Portal type '{}' is not yet supported.",
                 other
             ))),
         }
@@ -132,7 +160,7 @@ mod tests {
     #[test]
     fn test_factory_creates_ckan_client() {
         let factory = PortalClientFactoryEnum::new();
-        let client = factory.create("https://dati.comune.milano.it", PortalType::Ckan);
+        let client = factory.create("https://dati.comune.milano.it", PortalType::Ckan, "en");
         assert!(client.is_ok());
         let client = client.unwrap();
         assert_eq!(client.portal_type(), "ckan");
@@ -140,9 +168,19 @@ mod tests {
     }
 
     #[test]
+    fn test_factory_creates_dcat_client() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory.create("https://data.public.lu", PortalType::Dcat, "fr");
+        assert!(client.is_ok());
+        let client = client.unwrap();
+        assert_eq!(client.portal_type(), "dcat");
+        assert_eq!(client.base_url(), "https://data.public.lu/");
+    }
+
+    #[test]
     fn test_factory_rejects_unsupported_type() {
         let factory = PortalClientFactoryEnum::new();
-        let result = factory.create("https://data.cityofnewyork.us", PortalType::Socrata);
+        let result = factory.create("https://data.cityofnewyork.us", PortalType::Socrata, "en");
         assert!(result.is_err());
     }
 }
