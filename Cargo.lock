@@ -678,6 +678,7 @@ dependencies = [
  "anyhow",
  "ceres-core",
  "chrono",
+ "futures",
  "reqwest",
  "serde",
  "serde_json",

@@ -136,18 +136,19 @@ fn preprocess_dataset<C: PortalClient, D: DeltaDetector>(
 /// individually inside the processing stream. For incremental sync, the
 /// datasets were already fetched by `search_modified_since`.
 /// For bulk full sync, all datasets were fetched via `search_all_datasets`.
+#[allow(dead_code)]
 enum SyncPlan<PD: Send> {
     /// Full sync (ID-by-ID): fetch each dataset individually in the stream pipeline.
-    /// Used as fallback when the portal doesn't support bulk search.
+    /// Retained as fallback for portals that don't support streaming search.
     Full {
         /// Dataset IDs to fetch and process.
         ids: Vec<String>,
     },
-    /// Full sync (bulk): all datasets pre-fetched via `search_all_datasets`.
-    /// Much more efficient for large portals that enforce rate limits (e.g., HDX).
-    FullBulk {
-        /// Pre-fetched dataset objects.
-        datasets: Vec<PD>,
+    /// Full sync (streaming): datasets streamed page-by-page from the portal.
+    /// Memory is bounded to one page at a time instead of the entire catalog.
+    FullBulkStream {
+        /// Estimated total datasets (from a lightweight count query, 0 if unknown).
+        estimated_total: usize,
     },
     /// Incremental sync: datasets already fetched.
     Incremental {
@@ -161,7 +162,7 @@ impl<PD: Send> SyncPlan<PD> {
     fn len(&self) -> usize {
         match self {
             SyncPlan::Full { ids } => ids.len(),
-            SyncPlan::FullBulk { datasets } => datasets.len(),
+            SyncPlan::FullBulkStream { estimated_total } => *estimated_total,
             SyncPlan::Incremental { datasets } => datasets.len(),
         }
     }
@@ -403,45 +404,36 @@ where
         }
     }
 
-    /// Determines the best full sync plan for a portal.
+    /// Determines the full sync plan for a portal.
     ///
-    /// Attempts bulk fetch via `search_all_datasets` first (paginated search).
-    /// If that fails, falls back to `list_dataset_ids` for ID-by-ID fetching.
-    ///
-    /// This order avoids a redundant full catalog crawl on portals where
-    /// `list_dataset_ids` has no cheap endpoint (e.g., DCAT portals delegate to
-    /// `search_all_datasets` internally).
+    /// Always uses streaming (`FullBulkStream`). Attempts a lightweight count
+    /// query for progress reporting; if unavailable, streams without a known total.
     async fn full_sync_plan<R: ProgressReporter>(
         &self,
         portal_url: &str,
         portal_client: &F::Client,
         reporter: &R,
     ) -> Result<(SyncMode, SyncPlan<<F::Client as PortalClient>::PortalData>), AppError> {
-        // Try bulk fetch first (most efficient for all portal types)
-        match portal_client.search_all_datasets().await {
-            Ok(datasets) => {
-                let count = datasets.len();
-                tracing::info!(
-                    portal = portal_url,
-                    count,
-                    "Full sync: bulk-fetched all datasets"
-                );
-                reporter.report(HarvestEvent::PortalDatasetsFound { count });
-                Ok((SyncMode::Full, SyncPlan::FullBulk { datasets }))
-            }
-            Err(e) => {
-                // Bulk fetch failed — fall back to ID list for ID-by-ID sync
-                tracing::info!(
-                    portal = portal_url,
-                    error = %e,
-                    "Bulk fetch failed, falling back to ID-by-ID sync"
-                );
-                let ids = portal_client.list_dataset_ids().await?;
-                let id_count = ids.len();
-                reporter.report(HarvestEvent::PortalDatasetsFound { count: id_count });
-                Ok((SyncMode::Full, SyncPlan::Full { ids }))
-            }
+        // Always stream page-by-page for full syncs. Try to get a dataset count
+        // for progress reporting; if unavailable, stream without a known total.
+        let estimated_total = portal_client.dataset_count().await.unwrap_or(0);
+        if estimated_total > 0 {
+            tracing::info!(
+                portal = portal_url,
+                count = estimated_total,
+                "Full sync: streaming {} datasets page-by-page",
+                estimated_total
+            );
+            reporter.report(HarvestEvent::PortalDatasetsFound {
+                count: estimated_total,
+            });
+        } else {
+            tracing::info!(
+                portal = portal_url,
+                "Full sync: streaming datasets (total unknown)"
+            );
         }
+        Ok((SyncMode::Full, SyncPlan::FullBulkStream { estimated_total }))
     }
 
     /// Harvests multiple portals sequentially with error isolation.
@@ -600,7 +592,10 @@ where
         });
 
         let total = plan.len();
-        if total == 0 {
+        // For FullBulkStream, total may be 0 (unknown count) — don't short-circuit.
+        // For Full/Incremental, 0 genuinely means no datasets to process.
+        let is_definitely_empty = total == 0 && !matches!(plan, SyncPlan::FullBulkStream { .. });
+        if is_definitely_empty {
             tracing::info!(
                 portal = portal_url,
                 "No datasets to process (portal up to date)"
@@ -648,8 +643,11 @@ where
         // For Full (ID-by-ID) sync: Phase 1 uses buffer_unordered for concurrent
         // HTTP fetches. Phase 2 accumulates items into full batches before upserting.
         //
-        // For FullBulk/Incremental: datasets are already in memory, so both phases
-        // run synchronously — no async overhead for what is just hash comparison.
+        // For FullBulkStream: datasets are streamed page-by-page from the portal.
+        // Each page is processed and dropped before fetching the next, bounding
+        // peak memory to one page (~1000 datasets) + one upsert batch (500).
+        //
+        // For Incremental: datasets are already in memory (typically small).
         // =====================================================================
 
         match plan {
@@ -772,10 +770,131 @@ where
                     }
                 }
             }
-            SyncPlan::Incremental { datasets } | SyncPlan::FullBulk { datasets } => {
+            SyncPlan::FullBulkStream { estimated_total: _ } => {
+                // Stream datasets page-by-page from the portal. Each page is
+                // processed and dropped before fetching the next, bounding peak
+                // memory to one page + one upsert batch.
+                let ctx = PreprocessContext {
+                    existing_hashes,
+                    all_seen_ids: Arc::clone(&all_seen_ids),
+                    stats: Arc::clone(&stats),
+                    processed_count: Arc::clone(&processed_count),
+                    delta_detector: self.delta_detector.clone(),
+                };
+
+                let url_template_ref = url_template_arc.as_deref();
+                let mut page_stream = portal_client.search_all_datasets_stream();
+                let mut batch = Vec::with_capacity(upsert_batch_size);
+
+                while let Some(page_result) = page_stream.next().await {
+                    if cancel_token.is_cancelled() {
+                        was_cancelled.store(true, Ordering::SeqCst);
+                        break;
+                    }
+
+                    let page = match page_result {
+                        Ok(datasets) => datasets,
+                        Err(e) => {
+                            tracing::warn!(
+                                portal = portal_url,
+                                error = %e,
+                                "Page fetch failed during streaming harvest"
+                            );
+                            // Record failures for the remaining estimated datasets
+                            stats.record(SyncOutcome::Failed);
+                            break;
+                        }
+                    };
+
+                    for portal_data in page {
+                        if cancel_token.is_cancelled() {
+                            was_cancelled.store(true, Ordering::SeqCst);
+                            break;
+                        }
+
+                        if self.config.dry_run {
+                            if let Some(item) = preprocess_dataset::<F::Client, D>(
+                                portal_data,
+                                portal_url,
+                                url_template_ref,
+                                language,
+                                &ctx,
+                            ) {
+                                stats.record(item.outcome);
+                                let current = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                                let last = last_reported.load(Ordering::Relaxed);
+                                if (current >= last + report_interval
+                                    || (total > 0 && current >= total))
+                                    && last_reported
+                                        .compare_exchange(
+                                            last,
+                                            current,
+                                            Ordering::SeqCst,
+                                            Ordering::Relaxed,
+                                        )
+                                        .is_ok()
+                                {
+                                    let current_stats = stats.to_stats();
+                                    reporter.report(HarvestEvent::DatasetProcessed {
+                                        current,
+                                        total,
+                                        created: current_stats.created,
+                                        updated: current_stats.updated,
+                                        unchanged: current_stats.unchanged,
+                                        failed: current_stats.failed,
+                                        skipped: current_stats.skipped,
+                                    });
+                                }
+                            }
+                        } else if let Some(item) = preprocess_dataset::<F::Client, D>(
+                            portal_data,
+                            portal_url,
+                            url_template_ref,
+                            language,
+                            &ctx,
+                        ) {
+                            batch.push(item);
+                            if batch.len() >= upsert_batch_size {
+                                let full_batch = std::mem::replace(
+                                    &mut batch,
+                                    Vec::with_capacity(upsert_batch_size),
+                                );
+                                let batch_len = full_batch.len();
+                                Self::process_upsert_batch(full_batch, &self.store, &stats).await;
+                                Self::report_progress(
+                                    &processed_count,
+                                    batch_len,
+                                    total,
+                                    report_interval,
+                                    &last_reported,
+                                    &stats,
+                                    reporter,
+                                );
+                            }
+                        }
+                    }
+                    // page is dropped here — memory freed
+                }
+
+                // Flush remaining items
+                if !batch.is_empty() {
+                    let batch_len = batch.len();
+                    Self::process_upsert_batch(batch, &self.store, &stats).await;
+                    Self::report_progress(
+                        &processed_count,
+                        batch_len,
+                        total,
+                        report_interval,
+                        &last_reported,
+                        &stats,
+                        reporter,
+                    );
+                }
+            }
+            SyncPlan::Incremental { datasets } => {
                 // Datasets are already in memory — preprocessing is synchronous
-                // (hash comparison only, no HTTP). A simple loop avoids the overhead
-                // of async task spawning, Arc cloning, and stream buffering.
+                // (hash comparison only, no HTTP). Incremental results are typically
+                // small (only datasets modified since last sync).
                 let ctx = PreprocessContext {
                     existing_hashes,
                     all_seen_ids: Arc::clone(&all_seen_ids),

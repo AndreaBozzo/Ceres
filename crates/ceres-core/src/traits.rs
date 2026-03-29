@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use std::future::Future;
 
 use chrono::{DateTime, Utc};
-use futures::stream::BoxStream;
+use futures::stream::{self, BoxStream};
 use uuid::Uuid;
 
 use crate::config::PortalType;
@@ -187,6 +187,26 @@ pub trait PortalClient: Send + Sync + Clone {
                 "search_all_datasets not supported".to_string(),
             ))
         }
+    }
+
+    /// Streams all datasets from the portal page-by-page.
+    ///
+    /// Each stream item is a page of datasets (e.g., 1000 for CKAN, 100 for DCAT),
+    /// matching natural pagination boundaries. This bounds peak memory to one page
+    /// instead of accumulating the entire catalog.
+    ///
+    /// The default implementation wraps `search_all_datasets()` as a single-page
+    /// stream, so existing implementors work without changes.
+    fn search_all_datasets_stream(&self) -> BoxStream<'_, Result<Vec<Self::PortalData>, AppError>> {
+        Box::pin(stream::once(self.search_all_datasets()))
+    }
+
+    /// Returns the total number of datasets on the portal.
+    ///
+    /// Used for progress reporting when streaming. Portals that support a cheap
+    /// count query should override this. The default returns an error.
+    fn dataset_count(&self) -> impl Future<Output = Result<usize, AppError>> + Send {
+        async { Err(AppError::Generic("dataset_count not supported".to_string())) }
     }
 }
 
