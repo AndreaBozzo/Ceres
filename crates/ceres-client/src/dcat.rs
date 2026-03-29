@@ -249,31 +249,19 @@ impl DcatClient {
         struct PaginationState {
             next_url: Option<Url>,
             page: u32,
-            first_page_failed: bool,
         }
 
-        let initial_url = self.build_first_page_url(modified_since.as_deref());
-
-        let initial = match initial_url {
-            Ok(url) => PaginationState {
-                next_url: Some(url),
-                page: 0,
-                first_page_failed: false,
-            },
-            Err(_) => PaginationState {
-                next_url: None,
-                page: 0,
-                first_page_failed: true,
-            },
+        let first_url = match self.build_first_page_url(modified_since.as_deref()) {
+            Ok(url) => url,
+            Err(err) => {
+                return Box::pin(futures::stream::once(async move { Err(err) }));
+            }
         };
 
-        // If URL building failed, yield the error immediately
-        if initial.first_page_failed {
-            let err = self
-                .build_first_page_url(modified_since.as_deref())
-                .unwrap_err();
-            return Box::pin(futures::stream::once(async move { Err(err) }));
-        }
+        let initial = PaginationState {
+            next_url: Some(first_url),
+            page: 0,
+        };
 
         Box::pin(futures::stream::unfold(
             initial,
@@ -291,7 +279,6 @@ impl DcatClient {
                                 PaginationState {
                                     next_url: None,
                                     page: state.page,
-                                    first_page_failed: true,
                                 },
                             ));
                         }

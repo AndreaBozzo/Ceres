@@ -136,9 +136,10 @@ fn preprocess_dataset<C: PortalClient, D: DeltaDetector>(
 /// individually inside the processing stream. For incremental sync, the
 /// datasets were already fetched by `search_modified_since`.
 /// For bulk full sync, all datasets were fetched via `search_all_datasets`.
+#[allow(dead_code)]
 enum SyncPlan<PD: Send> {
     /// Full sync (ID-by-ID): fetch each dataset individually in the stream pipeline.
-    /// Used as fallback when the portal doesn't support bulk search.
+    /// Retained as fallback for portals that don't support streaming search.
     Full {
         /// Dataset IDs to fetch and process.
         ids: Vec<String>,
@@ -403,61 +404,36 @@ where
         }
     }
 
-    /// Determines the best full sync plan for a portal.
+    /// Determines the full sync plan for a portal.
     ///
-    /// Attempts bulk fetch via `search_all_datasets` first (paginated search).
-    /// If that fails, falls back to `list_dataset_ids` for ID-by-ID fetching.
-    ///
-    /// This order avoids a redundant full catalog crawl on portals where
-    /// `list_dataset_ids` has no cheap endpoint (e.g., DCAT portals delegate to
-    /// `search_all_datasets` internally).
+    /// Always uses streaming (`FullBulkStream`). Attempts a lightweight count
+    /// query for progress reporting; if unavailable, streams without a known total.
     async fn full_sync_plan<R: ProgressReporter>(
         &self,
         portal_url: &str,
         portal_client: &F::Client,
         reporter: &R,
     ) -> Result<(SyncMode, SyncPlan<<F::Client as PortalClient>::PortalData>), AppError> {
-        // Try to get a dataset count for progress reporting, then stream page-by-page.
-        // If count fails, we still stream — progress will update after the first page.
-        match portal_client.dataset_count().await {
-            Ok(count) => {
-                tracing::info!(
-                    portal = portal_url,
-                    count,
-                    "Full sync: streaming {} datasets page-by-page",
-                    count
-                );
-                reporter.report(HarvestEvent::PortalDatasetsFound { count });
-                Ok((
-                    SyncMode::Full,
-                    SyncPlan::FullBulkStream {
-                        estimated_total: count,
-                    },
-                ))
-            }
-            Err(_) => {
-                // Count query not supported — try ID list for ID-by-ID sync
-                match portal_client.list_dataset_ids().await {
-                    Ok(ids) => {
-                        let id_count = ids.len();
-                        reporter.report(HarvestEvent::PortalDatasetsFound { count: id_count });
-                        Ok((SyncMode::Full, SyncPlan::Full { ids }))
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            portal = portal_url,
-                            error = %e,
-                            "ID list failed, attempting streaming without count"
-                        );
-                        reporter.report(HarvestEvent::PortalDatasetsFound { count: 0 });
-                        Ok((
-                            SyncMode::Full,
-                            SyncPlan::FullBulkStream { estimated_total: 0 },
-                        ))
-                    }
-                }
-            }
+        // Always stream page-by-page for full syncs. Try to get a dataset count
+        // for progress reporting; if unavailable, stream without a known total.
+        let estimated_total = portal_client.dataset_count().await.unwrap_or(0);
+        if estimated_total > 0 {
+            tracing::info!(
+                portal = portal_url,
+                count = estimated_total,
+                "Full sync: streaming {} datasets page-by-page",
+                estimated_total
+            );
+            reporter.report(HarvestEvent::PortalDatasetsFound {
+                count: estimated_total,
+            });
+        } else {
+            tracing::info!(
+                portal = portal_url,
+                "Full sync: streaming datasets (total unknown)"
+            );
         }
+        Ok((SyncMode::Full, SyncPlan::FullBulkStream { estimated_total }))
     }
 
     /// Harvests multiple portals sequentially with error isolation.
@@ -616,7 +592,10 @@ where
         });
 
         let total = plan.len();
-        if total == 0 {
+        // For FullBulkStream, total may be 0 (unknown count) — don't short-circuit.
+        // For Full/Incremental, 0 genuinely means no datasets to process.
+        let is_definitely_empty = total == 0 && !matches!(plan, SyncPlan::FullBulkStream { .. });
+        if is_definitely_empty {
             tracing::info!(
                 portal = portal_url,
                 "No datasets to process (portal up to date)"
@@ -844,7 +823,8 @@ where
                                 stats.record(item.outcome);
                                 let current = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
                                 let last = last_reported.load(Ordering::Relaxed);
-                                if (current >= last + report_interval || current >= total)
+                                if (current >= last + report_interval
+                                    || (total > 0 && current >= total))
                                     && last_reported
                                         .compare_exchange(
                                             last,
