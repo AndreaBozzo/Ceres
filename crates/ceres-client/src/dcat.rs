@@ -26,6 +26,7 @@ use ceres_core::HttpConfig;
 use ceres_core::error::AppError;
 use ceres_core::models::NewDataset;
 use chrono::{DateTime, Utc};
+use futures::stream::BoxStream;
 use reqwest::{Client, StatusCode, Url};
 use serde_json::Value;
 use tokio::time::sleep;
@@ -235,6 +236,101 @@ impl DcatClient {
         }
 
         Ok(all_datasets)
+    }
+
+    /// Streams catalog datasets page-by-page instead of accumulating into a single Vec.
+    ///
+    /// Each yielded item contains the datasets extracted from one catalog page
+    /// (~100 datasets). Memory is bounded to a single page at a time.
+    pub fn paginate_catalog_stream(
+        &self,
+        modified_since: Option<String>,
+    ) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
+        struct PaginationState {
+            next_url: Option<Url>,
+            page: u32,
+            first_page_failed: bool,
+        }
+
+        let initial_url = self.build_first_page_url(modified_since.as_deref());
+
+        let initial = match initial_url {
+            Ok(url) => PaginationState {
+                next_url: Some(url),
+                page: 0,
+                first_page_failed: false,
+            },
+            Err(_) => PaginationState {
+                next_url: None,
+                page: 0,
+                first_page_failed: true,
+            },
+        };
+
+        // If URL building failed, yield the error immediately
+        if initial.first_page_failed {
+            let err = self
+                .build_first_page_url(modified_since.as_deref())
+                .unwrap_err();
+            return Box::pin(futures::stream::once(async move { Err(err) }));
+        }
+
+        Box::pin(futures::stream::unfold(
+            initial,
+            move |mut state| async move {
+                let url = state.next_url.take()?;
+                state.page += 1;
+
+                let graph = match self.fetch_graph(&url).await {
+                    Ok(g) => g,
+                    Err(e) => {
+                        if state.page == 1 {
+                            // First page failed — propagate error
+                            return Some((
+                                Err(e),
+                                PaginationState {
+                                    next_url: None,
+                                    page: state.page,
+                                    first_page_failed: true,
+                                },
+                            ));
+                        }
+                        tracing::warn!(
+                            page = state.page,
+                            error = %e,
+                            "Page fetch failed; stopping stream"
+                        );
+                        return None;
+                    }
+                };
+                // Extract Dataset nodes from @graph
+                let mut datasets = Vec::new();
+                for node in &graph {
+                    if is_dataset_node(node)
+                        && let Some(dataset) = extract_dataset(node, &self.language)
+                    {
+                        datasets.push(dataset);
+                    }
+                }
+
+                // Follow hydra:next link if present
+                state.next_url = match extract_hydra_next(&graph) {
+                    Some(next) => {
+                        sleep(PAGE_DELAY).await;
+                        match Url::parse(&next) {
+                            Ok(u) => Some(u),
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Invalid hydra:next URL; stopping stream");
+                                None
+                            }
+                        }
+                    }
+                    None => None,
+                };
+
+                Some((Ok(datasets), state))
+            },
+        ))
     }
 
     /// Builds the catalog URL for the first page of results.

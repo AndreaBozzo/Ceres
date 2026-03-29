@@ -176,6 +176,10 @@ impl PortalClient for MockPortalClient {
         // For testing, return all datasets
         Ok(self.datasets.clone())
     }
+
+    async fn dataset_count(&self) -> Result<usize, AppError> {
+        Ok(self.datasets.len())
+    }
 }
 
 // =============================================================================

@@ -15,6 +15,8 @@ use ceres_core::error::AppError;
 use ceres_core::models::NewDataset;
 use ceres_core::traits::{PortalClient, PortalClientFactory};
 use chrono::{DateTime, Utc};
+use futures::StreamExt;
+use futures::stream::BoxStream;
 
 use crate::ckan::{CkanClient, CkanDataset};
 use crate::dcat::{DcatClient, DcatDataset};
@@ -113,6 +115,32 @@ impl PortalClient for PortalClientEnum {
                 .search_all_datasets()
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect()),
+        }
+    }
+
+    fn search_all_datasets_stream(&self) -> BoxStream<'_, Result<Vec<Self::PortalData>, AppError>> {
+        match self {
+            Self::Ckan(c) => Box::pin(StreamExt::map(
+                c.search_all_datasets_stream(),
+                |r: Result<Vec<CkanDataset>, AppError>| {
+                    r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Ckan).collect())
+                },
+            )),
+            Self::Dcat(c) => Box::pin(StreamExt::map(
+                c.paginate_catalog_stream(None),
+                |r: Result<Vec<DcatDataset>, AppError>| {
+                    r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect())
+                },
+            )),
+        }
+    }
+
+    async fn dataset_count(&self) -> Result<usize, AppError> {
+        match self {
+            Self::Ckan(c) => c.dataset_count().await,
+            Self::Dcat(_) => Err(AppError::Generic(
+                "dataset_count not supported for DCAT portals".to_string(),
+            )),
         }
     }
 }

@@ -14,6 +14,7 @@ use ceres_core::LocalizedField;
 use ceres_core::error::AppError;
 use ceres_core::models::NewDataset;
 use chrono::{DateTime, Utc};
+use futures::stream::BoxStream;
 use reqwest::{Client, StatusCode, Url};
 use serde::Deserialize;
 use serde_json::Value;
@@ -361,6 +362,106 @@ impl CkanClient {
         }
 
         Ok(all_datasets)
+    }
+
+    /// Streams datasets page-by-page instead of accumulating into a single Vec.
+    ///
+    /// Each yielded item is one page of results (up to `page_size` datasets).
+    /// Memory is bounded to a single page at a time on the consumer side.
+    /// Uses the same adaptive page size and rate-limit logic as `paginated_search`.
+    fn paginated_search_stream(
+        &self,
+        fq: Option<String>,
+    ) -> BoxStream<'_, Result<Vec<CkanDataset>, AppError>> {
+        struct PaginationState {
+            start: usize,
+            page_size: usize,
+            page_delay: Duration,
+            done: bool,
+            fq: Option<String>,
+        }
+
+        let initial = PaginationState {
+            start: 0,
+            page_size: 1000,
+            page_delay: Self::PAGE_DELAY,
+            done: false,
+            fq,
+        };
+
+        Box::pin(futures::stream::unfold(
+            initial,
+            move |mut state| async move {
+                if state.done {
+                    return None;
+                }
+
+                loop {
+                    match self
+                        .fetch_search_page(
+                            state.fq.as_deref(),
+                            state.start,
+                            state.page_size,
+                            &mut state.page_delay,
+                        )
+                        .await
+                    {
+                        Ok((datasets, total_count)) => {
+                            let page_count = datasets.len();
+
+                            if state.start + page_count >= total_count
+                                || page_count < state.page_size
+                            {
+                                state.done = true;
+                            } else {
+                                state.start += state.page_size;
+                            }
+
+                            // Sleep between pages (skipped for last page)
+                            if !state.done {
+                                sleep(state.page_delay).await;
+                            }
+
+                            return Some((Ok(datasets), state));
+                        }
+                        Err(e)
+                            if state.page_size > Self::MIN_PAGE_SIZE
+                                && Self::is_page_size_reducible(&e) =>
+                        {
+                            state.page_size = (state.page_size / 4).max(Self::MIN_PAGE_SIZE);
+                            tracing::warn!(
+                                new_page_size = state.page_size,
+                                offset = state.start,
+                                error = %e,
+                                "Page failed, reducing page size and retrying"
+                            );
+                            continue; // retry same offset with smaller page
+                        }
+                        Err(e) if Self::is_page_size_reducible(&e) => {
+                            state.done = true;
+                            return Some((
+                                Err(AppError::Generic(format!(
+                                    "package_search unreliable even at page_size={}: {e}",
+                                    state.page_size
+                                ))),
+                                state,
+                            ));
+                        }
+                        Err(e) => {
+                            state.done = true;
+                            return Some((Err(e), state));
+                        }
+                    }
+                }
+            },
+        ))
+    }
+
+    /// Returns the total dataset count from a lightweight `rows=0` query.
+    pub async fn dataset_count(&self) -> Result<usize, AppError> {
+        let mut page_delay = Self::PAGE_DELAY;
+        let (_, total) = self.fetch_search_page(None, 0, 0, &mut page_delay).await?;
+        Ok(total)
     }
 
     /// Fetches a single page of search results with rate-limit resilience.
@@ -896,6 +997,14 @@ impl ceres_core::traits::PortalClient for CkanClient {
 
     async fn search_all_datasets(&self) -> Result<Vec<Self::PortalData>, AppError> {
         self.search_all_datasets().await
+    }
+
+    fn search_all_datasets_stream(&self) -> BoxStream<'_, Result<Vec<Self::PortalData>, AppError>> {
+        self.paginated_search_stream(None)
+    }
+
+    async fn dataset_count(&self) -> Result<usize, AppError> {
+        self.dataset_count().await
     }
 }
 
