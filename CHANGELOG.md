@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-03-30
+
+
+### Added
+
+- Add Ollama embedding provider support and configuration
+- Implement streaming for dataset retrieval in portal clients
+
+
+### Dependencies
+
+- **deps**: Bump quinn-proto from 0.11.13 to 0.11.14
+- **deps**: Bump devalue from 5.6.3 to 5.6.4 in /website
+- **deps**: Bump h3 from 1.15.5 to 1.15.8 in /website
+- **deps**: Bump rustls-webpki from 0.103.8 to 0.103.10 in Cargo.lock
+- **deps**: Bump aws-lc-rs from 1.16.1 to 1.16.2 and aws-lc-sys from 0.38.0 to 0.39.0 in Cargo.lock
+- **deps**: Bump h3 from 1.15.8 to 1.15.9 in /website
+- **deps**: Bump picomatch in /website
+- **deps**: Bump smol-toml from 1.6.0 to 1.6.1 in /website
+- **deps**: Bump astro from 5.18.0 to 5.18.1 in /website
+
+
+### Documentation
+
+- Add collapsible sections for Open Data Galaxy visualization, portal list, CLI commands, and server environment variables in README
+- Integrate Ollama for local embedding inference, updating documentation, features, and configuration.
+- Removed footer
+
+
+### Miscellaneous
+
+- Updated logo path
+- Update aws-lc-rs to version 1.16.1 and aws-lc-sys to version 0.38.0 in Cargo.lock
+- Pin vergen build dependency to 9.0.1
+- Doc updates and 0.3.5 bump
 ## [0.3.1] - 2026-03-06
 
 
@@ -29,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CI**: Added logo path to release workflow, for next release
 - Update version numbers to 0.3.1 and adjust Rust version to 1.88 in configuration files
+
+
+### clippy
+
+- Simplify conditional checks using pattern matching in circuit breaker, parquet export, job queue, and repository
 ## [0.3.0] - 2026-02-26
 
 
