@@ -1,29 +1,67 @@
 ---
-title: Costs of using external embedders
-description: Break-down of possible costs while utilizing Ceres with external embedding models (OpenAI, Gemini etc.)
+title: Embeddings and costs
+description: Embeddings in Ceres are optional, and local Ollama keeps the default path cost-free
 ---
 
-# Cost-Effectiveness
+# Embeddings are optional
 
-API costs, based on the Gemini embedding model, are almost negligible, making the solution extremely efficient even for personal projects or those with limited budgets.
+Ceres does not require embeddings to be useful.
 
-The main cost is for the initial creation of vector embeddings. Below is a cost breakdown for a large catalog.
+You can run the full harvesting pipeline in metadata-only mode, keep a synchronized catalog in PostgreSQL, export it, and operate the API without ever generating vectors.
 
-## Cost Analysis for Initial Indexing
+## Recommended path: local Ollama
 
-This scenario estimates the one-time cost to index a catalog of 50,000 datasets.
+If you want semantic search, the preferred setup is local Ollama:
+
+```bash
+ollama serve
+ollama pull nomic-embed-text
+
+export EMBEDDING_PROVIDER=ollama
+export OLLAMA_ENDPOINT=http://localhost:11434
+ceres embed
+```
+
+That gives you:
+
+- zero per-request embedding cost
+- a clean separation between harvesting and embedding runs
+- the option to backfill vectors only when you decide the catalog is ready
+
+## When cloud providers still make sense
+
+Gemini and OpenAI are still supported when you want managed infrastructure or different model characteristics. In that case, your cost is driven by the standalone embedding pass, not by harvesting itself.
+
+Typical pattern:
+
+1. Harvest with `--metadata-only`
+2. Decide whether a portal or snapshot is worth embedding
+3. Run `ceres embed` with your chosen provider
+
+That keeps cloud spend explicit and isolated.
+
+## Cost shape by workflow
 
 | Metric | Detail |
 |--------------------------------|--------------------------------------------------------------------------------|
-| **Cost per 1M Input Tokens** | ~$0.15 USD (Standard rate for Google's `gemini-embedding-001` model) |
-| **Estimated Tokens per Dataset** | 500 tokens (A generous estimate for title, description, and tags) |
-| **Total Tokens** | `50,000 datasets * 500 tokens/dataset = 25,000,000 tokens` |
-| **Total Initial Cost** | `(25,000,000 / 1,000,000) * $0.15 =` **$3.75** |
+| Harvest only | No embedding cost |
+| Harvest + local Ollama | No per-request cost, only your own CPU/GPU/runtime cost |
+| Harvest + Gemini/OpenAI | Pay only for the texts you choose to embed |
+| Re-sync after first run | Usually cheap because incremental sync and delta detection reduce re-embedding |
 
-As shown, the initial cost to index a substantial number of datasets is just a few dollars. Monthly maintenance for incremental updates would be even lower, typically amounting to a few cents.
+## Why later runs are cheaper
 
-## Local Inference (Ollama)
+Ceres uses two mechanisms to keep optional embedding passes under control:
 
-If you prefer to avoid all API costs, Ceres supports local embeddings via **Ollama**. This allows you to generate embeddings on your own hardware (CPU or GPU) with **zero per-request cost**. 
+- incremental sync reduces the amount of portal data fetched
+- content-hash delta detection skips re-embedding when the embeddable text did not actually change
 
-While this saves money, it requires sufficient local resources and typically results in slower indexing throughput compared to cloud APIs, depending on your hardware.
+That matters whether you run Ollama locally or use a hosted provider.
+
+## Practical guidance
+
+- If your goal is catalog maintenance, stay in metadata-only mode.
+- If your goal is semantic retrieval, start with Ollama.
+- If you need hosted inference, harvest first and embed second so the spend is isolated and reversible.
+
+The important shift is operational: in Ceres, embeddings are now an optional downstream stage, not a prerequisite for using the project.

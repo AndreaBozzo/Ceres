@@ -1,355 +1,298 @@
 <div align="center">
-  <img src="website/src/assets/images/logo.png" alt="Ceres Logo" width="800" height='auto'/>
+  <img src="website/src/assets/images/logo.png" alt="Ceres Logo" width="800" height="auto"/>
   <h1>Ceres</h1>
-  <p><strong>Semantic search engine for open data portals</strong></p>
+  <p><strong>Harvest-first toolkit for open data portals</strong></p>
   <p>
     <a href="https://crates.io/crates/ceres-search"><img src="https://img.shields.io/crates/v/ceres-search.svg" alt="crates.io"></a>
     <a href="https://github.com/AndreaBozzo/Ceres/actions"><img src="https://github.com/AndreaBozzo/Ceres/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <a href="https://github.com/AndreaBozzo/Ceres/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
     <a href="https://discord.gg/fztdKSPXSz"><img src="https://img.shields.io/discord/1469399961987711161?color=5865F2&logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
-    <a href="https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-350k%20datasets-yellow" alt="HuggingFace Dataset"></a>
+    <a href="https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-Open%20Data%20Index-yellow" alt="HuggingFace Dataset"></a>
   </p>
   <p>
     <a href="#quick-start">Quick Start</a> •
-    <a href="#features">Features</a> •
+    <a href="#what-ceres-does">What Ceres Does</a> •
     <a href="#usage">Usage</a> •
-    <a href="#roadmap">Roadmap</a>
+    <a href="#rest-api">REST API</a>
   </p>
 </div>
 
 ---
 
-Ceres harvests metadata from CKAN open data portals and indexes them with vector embeddings, enabling semantic search across fragmented data sources.
+Ceres is a Rust toolkit for harvesting metadata from open data portals and keeping that catalog synchronized over time.
 
-> *Named after the Roman goddess of harvest and agriculture.*
+Harvesting is the center of the project. Embeddings, semantic search, exports, and the REST API build on top of the harvested catalog when you want them.
 
-## Why Ceres?
+> Named after the Roman goddess of harvest and agriculture.
 
-<details>
-<summary><strong>See the Open Data Galaxy visualization and methodology</strong></summary>
+## What Ceres Does
 
-<div align="center">
-  <img src="website/public/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" width="800"/>
-  <sub>354,000+ datasets (dedup. to 270k) from 22 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar.</sub>
-</div>
+- Harvests dataset metadata from portal APIs into PostgreSQL with incremental sync, delta detection, and stale dataset tracking
+- Works in metadata-only mode, so you can build and maintain a local catalog without any embedding provider configured
+- Adds embeddings later through a separate pipeline, with local Ollama as the recommended zero-cost path and OpenAI or Gemini still available
+- Exposes optional search, export, and API layers once your catalog is populated
 
-</details>
+## Why This Shape
 
-Open data portals are everywhere, but finding the right dataset is still painful:
+Most open data tooling focuses on search first. In practice, the hard part is getting a reliable, repeatable harvesting pipeline:
 
-- **Keyword search fails**: "public transport" won't find "mobility data" or "bus schedules"
-- **Portals are fragmented**: Italy alone has 20+ regional portals with different interfaces
-- **No cross-portal search**: You can't query Milano and Roma datasets together
+- Portals expose different APIs and quality levels
+- Large catalogs need incremental syncs and bounded memory usage
+- Removed datasets need to be detected without deleting history
+- Embedding should not be coupled to harvesting, because it is optional, slower, and operationally distinct
 
-Ceres solves this by creating a unified semantic index. Search by *meaning*, not just keywords.
+Ceres addresses that by splitting the system into two stages:
 
-```
-$ ceres search "trasporto pubblico" --limit 3
+1. Harvest and normalize metadata
+2. Optionally embed and search that catalog
 
-Found 3 matching datasets:
+## Current Scope
 
-1. [████████░░] [78%] TPL - Percorsi linee di superficie
-   📍 https://dati.comune.milano.it
-   🔗 https://dati.comune.milano.it/dataset/ds534-tpl-percorsi-linee-di-superficie
+- Harvesting: CKAN and DCAT-AP udata REST portals
+- Embeddings: Ollama locally, or Gemini/OpenAI if you prefer hosted providers
+- Search: semantic search over datasets that already have embeddings
+- Export: JSONL, JSON, CSV, and curated Parquet
+- Operations: CLI, REST API, database-backed harvest jobs, graceful shutdown, protected admin endpoints
 
-2. [████████░░] [76%] TPL - Fermate linee di superficie
-   📍 https://dati.comune.milano.it
-   🔗 https://dati.comune.milano.it/dataset/ds535-tpl-fermate-linee-di-superficie
+## Key Capabilities
 
-3. [███████░░░] [72%] Mobilità: flussi veicolari rilevati dai spire
-   📍 https://dati.comune.milano.it
-   🔗 https://dati.comune.milano.it/dataset/ds418-mobilita-flussi-veicolari
-```
+- Harvest-first workflow with optional embedding and search
+- Streaming harvest pipeline for large portals
+- Incremental sync plus content-hash delta detection
+- Metadata-only mode with no embedding dependency
+- Standalone `embed` command for backfills and provider switches
+- Local Ollama embedding support with native batching
+- Recoverable job queue for API-triggered harvests
+- Soft stale detection for datasets removed upstream
+- Batch harvesting through `portals.toml`
+- Export pipeline for downstream analytics and HuggingFace publishing
 
-## Features
+## Supported Portal Types
 
-- **CKAN Harvester** — Fetch datasets from any CKAN-compatible portal, including multilingual portals
-- **Multi-portal Batch Harvest** — Configure multiple portals in `portals.toml` and harvest them all at once
-- **Streaming Harvest** — Memory-efficient streaming pipeline for large portals (100k+ datasets)
-- **Delta Detection** — Only regenerate embeddings for changed datasets (99.8% API cost savings). See [Harvesting Architecture](website/src/content/docs/HARVESTING.md)
-- **Stale Detection** — Automatically marks datasets removed from portals without deleting local data
-- **Batch Embeddings** — Batched embedding API calls for higher throughput during harvest
-- **Persistent Jobs** — Recoverable database-backed job queue with automatic retries and exponential backoff
-- **Graceful Shutdown** — Safely interrupt harvesting to ensure data consistency and release in-progress jobs back to the queue
-- **Real-time Progress** — Live progress reporting during harvest with batch timestamp updates
-- **Dry Run Mode** — Preview what a harvest would do without writing to DB or calling embedding APIs
-- **Semantic Search** — Find datasets by meaning using vector embeddings
-- **Pluggable Embeddings** — Switchable embedding backend via trait (Gemini, OpenAI, Ollama)
-- **Bearer Token Auth** — Protected admin endpoints with configurable API key authentication
-- **Docker Support** — Production-ready multi-stage Docker image and Docker Compose setup
-- **Multi-format Export** — Export to JSON, JSON Lines, CSV, or Parquet
-- **Custom URL Templates** — Support portals with non-standard frontend URLs
+Today, the shipped portal clients cover:
 
-## Pre-configured Portals
+- `ckan`
+- `dcat` for udata-flavored DCAT-AP portals such as `data.public.lu` and `data.gouv.fr`
 
-Ceres comes with 25 verified CKAN portals ready to use, covering 354,000+ datasets:
-
-<details>
-<summary><strong>Show full portal list</strong></summary>
-
-| Portal | Region | Datasets |
-|--------|--------|----------|
-| Australia | Australia | ~109,440 |
-| Italy (National) | Italy | ~70,141 |
-| Ukraine | Ukraine | ~39,790 |
-| HDX (Humanitarian) | Global | ~26,654 |
-| NRW | Germany | ~22,849 |
-| Ireland | Ireland | ~21,855 |
-| Switzerland | Switzerland | ~14,559 |
-| Toscana | Italy | ~12,886 |
-| Tokyo | Japan | ~9,707 |
-| Marche | Italy | ~5,440 |
-| Romania | Romania | ~5,038 |
-| Chile | Chile | ~2,897 |
-| Aragón | Spain | ~2,881 |
-| Emilia-Romagna | Italy | ~2,871 |
-| Milano | Italy | ~2,580 |
-| Puglia | Italy | ~1,801 |
-| Trentino | Italy | ~1,388 |
-| Umbria | Italy | ~457 |
-| Lazio | Italy | ~407 |
-| Roma | Italy | ~365 |
-| Campania | Italy | ~332 |
-| Sicilia | Italy | ~186 |
-| Genova | Italy | ~171 |
-| Liguria | Italy | ~124 |
-| Napoli | Italy | ~33 |
-
-</details>
-
-See [`examples/portals.toml`](examples/portals.toml) for the full configuration. Want to add more? Check [issue #19](https://github.com/AndreaBozzo/Ceres/issues/19).
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| Language | Rust (async with Tokio) |
-| Database | PostgreSQL 16+ with pgvector |
-| Embeddings | Pluggable: Google Gemini, OpenAI, Ollama (local) |
-| Portal Protocol | CKAN API v3 |
-| REST API | Axum with OpenAPI/Swagger UI |
+The codebase already models additional portal types such as `socrata`, but they are not yet implemented in the current client factory.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Rust 1.88+
-- Docker & Docker Compose
-- Google Gemini API key ([get one free](https://aistudio.google.com/apikey)), OpenAI API key, or **[Ollama](https://ollama.com)** installed locally *(only needed for embedding — harvest with `--metadata-only` works without any API key)*
+- Docker and Docker Compose
+- PostgreSQL 16+ with `pgvector` when running outside Docker
+- Optional for embeddings: [Ollama](https://ollama.com) locally, or Gemini/OpenAI credentials
 
-### Docker (recommended)
+### 1. Clone and start the database
 
 ```bash
-# Clone and configure
 git clone https://github.com/AndreaBozzo/Ceres.git
 cd Ceres
-cp .env.example .env
-# Edit .env with your settings (API key optional if using Ollama locally)
-
-# Start everything (DB + server)
-docker compose up -d
-```
-
-### From source
-
-```bash
-# Install from crates.io
-cargo install ceres-search
-
-# Or build from source
-git clone https://github.com/AndreaBozzo/Ceres.git
-cd Ceres
-cargo build --release
-```
-
-### Setup (from source)
-
-```bash
-# Start PostgreSQL with pgvector
 docker compose up db -d
-
-# Configure environment
 cp .env.example .env
-# Edit .env with your settings (API key optional — only needed for embedding)
-
-# Run database migrations
 make migrate
 ```
 
-> **Tip**: Run `make help` to see all available Makefile shortcuts.
+### 2. Harvest metadata first
+
+```bash
+# Single CKAN portal
+cargo run --bin ceres -- harvest https://dati.comune.milano.it --metadata-only
+
+# Single DCAT portal
+cargo run --bin ceres -- harvest https://data.public.lu --type dcat --metadata-only
+
+# All enabled portals from config
+cargo run --bin ceres -- harvest --config examples/portals.toml --metadata-only
+```
+
+### 3. Add embeddings only if you want semantic search
+
+With Ollama locally:
+
+```bash
+ollama serve
+ollama pull nomic-embed-text
+
+export EMBEDDING_PROVIDER=ollama
+cargo run --bin ceres -- embed
+```
+
+### 4. Search or export
+
+```bash
+cargo run --bin ceres -- search "public transport" --limit 5
+cargo run --bin ceres -- export --format jsonl > datasets.jsonl
+cargo run --bin ceres -- stats
+```
+
+## Configuration
+
+### Embeddings are optional
+
+If you only want harvesting, run with `--metadata-only` and skip embedding configuration entirely.
+
+If you want embeddings later, set:
+
+```bash
+EMBEDDING_PROVIDER=ollama
+OLLAMA_ENDPOINT=http://localhost:11434
+EMBEDDING_MODEL=nomic-embed-text
+```
+
+Hosted providers are still supported:
+
+```bash
+EMBEDDING_PROVIDER=gemini
+GEMINI_API_KEY=...
+
+# or
+
+EMBEDDING_PROVIDER=openai
+OPENAI_API_KEY=...
+EMBEDDING_MODEL=text-embedding-3-small
+```
+
+### Portal configuration
+
+Batch harvesting uses `portals.toml`:
+
+```toml
+[[portals]]
+name = "milano"
+url = "https://dati.comune.milano.it"
+type = "ckan"
+language = "it"
+
+[[portals]]
+name = "luxembourg"
+url = "https://data.public.lu"
+type = "dcat"
+language = "fr"
+enabled = false
+```
+
+See `examples/portals.toml` for a larger configuration set.
 
 ## Usage
 
-### Harvest datasets from a CKAN portal
+### Harvest
 
 ```bash
+# All enabled portals from config
+ceres harvest
+
+# Ad-hoc CKAN harvest
 ceres harvest https://dati.comune.milano.it
+
+# Ad-hoc DCAT harvest
+ceres harvest https://data.public.lu --type dcat
+
+# Named portal from config
+ceres harvest --portal milano --config examples/portals.toml
+
+# Force full sync
+ceres harvest --portal milano --full-sync
+
+# Dry run
+ceres harvest --portal milano --dry-run --metadata-only
 ```
 
-> **Tip**: Running a harvest command for the first time without a config generates a pre-configured `portals.toml` automatically.
-
-### Search indexed datasets
+### Embed
 
 ```bash
-ceres search "trasporto pubblico" --limit 10
+# Embed everything pending
+ceres embed
+
+# Only one portal
+ceres embed --portal https://dati.comune.milano.it
 ```
 
-### Export datasets
+### Search
 
 ```bash
-# JSON Lines (default)
-ceres export > datasets.jsonl
+ceres search "air quality monitoring" --limit 10
+```
 
-# JSON array
-ceres export --format json > datasets.json
+### Export
 
-# CSV
+```bash
+ceres export --format jsonl > datasets.jsonl
 ceres export --format csv > datasets.csv
-
-# Filter by portal
-ceres export --portal https://dati.comune.milano.it
+ceres export --format parquet --output ./ceres-export
 ```
 
-### View statistics
+### Stats
 
 ```bash
 ceres stats
 ```
 
-## CLI Reference
+## Harvesting Model
 
-<details>
-<summary><strong>Show commands, flags, and environment variables</strong></summary>
+The harvesting pipeline is built around a few operational principles:
 
-```
-ceres <COMMAND>
+- Incremental sync when the source supports it
+- Full-sync fallback when incremental fetch is not available or fails
+- Content-hash delta detection so unchanged datasets are not re-embedded
+- Streaming page-by-page processing to keep memory bounded
+- Stale dataset marking instead of hard deletion
 
-Commands:
-  harvest  Harvest datasets from a CKAN portal or batch harvest from portals.toml
-  embed    Generate embeddings for datasets that don't have them yet
-  search   Search indexed datasets using semantic similarity
-  export   Export indexed datasets to various formats
-  stats    Show database statistics
-  help     Print help information
+Embedding is fully decoupled from harvesting:
 
-Harvest Flags:
-  --full-sync          Force full sync even if incremental is available
-  --dry-run            Preview what would be harvested without writing to DB
-  --metadata-only      Harvest metadata without generating embeddings (no API key needed)
-  --portal <NAME>      Harvest a specific portal by name from config
-  --config <PATH>      Use custom portals.toml location
+- `HarvestService` stores and updates metadata
+- `EmbeddingService` processes datasets with missing embeddings
+- `HarvestPipeline` composes both when you want the combined flow
 
-Embed Flags:
-  --portal <URL>       Only embed pending datasets from this portal
-
-Environment Variables:
-  DATABASE_URL          PostgreSQL connection string
-  EMBEDDING_PROVIDER    Embedding backend: gemini, openai, or ollama (default: gemini)
-  GEMINI_API_KEY        Google Gemini API key (when using gemini provider)
-  OPENAI_API_KEY        OpenAI API key (when using openai provider)
-  OLLAMA_ENDPOINT       Ollama API endpoint (default: http://localhost:11434)
-```
-
-</details>
+That separation is what makes local-first embedding practical and keeps harvest jobs usable even when no embedder is configured.
 
 ## REST API
 
 Start the server:
 
 ```bash
-ceres-server
+cargo run --bin ceres-server
 ```
 
 Available endpoints:
-- `GET  /api/v1/health` — Health check
-- `GET  /api/v1/stats` — Database statistics
-- `GET  /api/v1/search` — Semantic search
-- `GET  /api/v1/portals` — List configured portals
-- `GET  /api/v1/portals/:name/stats` — Portal-specific statistics
-- `POST /api/v1/portals/:name/harvest` — Trigger harvest for a portal
-- `POST /api/v1/harvest` — Trigger harvest for all portals
-- `GET  /api/v1/harvest/status` — Check harvest job status
-- `GET  /api/v1/export` — Export datasets
-- `GET  /api/v1/datasets/:id` — Get dataset by ID
-- `GET  /swagger-ui` — Interactive API docs
 
-Server environment variables:
+- `GET /api/v1/health`
+- `GET /api/v1/stats`
+- `GET /api/v1/search`
+- `GET /api/v1/portals`
+- `GET /api/v1/portals/{name}/stats`
+- `GET /api/v1/harvest/status`
+- `GET /api/v1/datasets/{id}`
+- `POST /api/v1/portals/{name}/harvest`
+- `POST /api/v1/harvest`
+- `GET /api/v1/export`
+- `GET /swagger-ui`
 
-<details>
-<summary><strong>Show server environment variables</strong></summary>
+Set `CERES_ADMIN_TOKEN` to enable protected write endpoints.
 
-```
-PORT                   Server port (default: 3000)
-HOST                   Server host (default: 0.0.0.0)
-EMBEDDING_PROVIDER     Embedding backend: gemini or openai (default: gemini)
-EMBEDDING_MODEL        Model name (uses provider default if unset)
-CERES_ADMIN_TOKEN      Bearer token for protected endpoints (harvest, etc.)
-PORTALS_CONFIG         Path to portals.toml (optional)
-CORS_ALLOWED_ORIGINS   Comma-separated allowed origins (default: *)
-RATE_LIMIT_RPS         Requests per second per IP (default: 10)
-RATE_LIMIT_BURST       Burst size for rate limiting (default: 30)
-OLLAMA_ENDPOINT        Ollama API endpoint (default: http://localhost:11434)
-```
+## Website Docs
 
-</details>
+The website lives in `website/` and documents the same harvest-first model:
 
-## Architecture
-
-<div align="center">
-  <img src="website/src/assets/images/Ceres_architecture.png" alt="Ceres Architecture Diagram" width="100%" />
-  <br/>
-  <sub>High-level architecture of Ceres components and data flow.</sub>
-</div>
-
-### Harvesting Internals
-
-<details>
-<summary><strong>Show harvesting and circuit breaker diagrams</strong></summary>
-
-<div align="center">
-  <img src="website/src/assets/images/harvesting.png" alt="Harvesting Flow Diagram" width="900" />
-  <br/>
-  <sub>Two-tier optimization flow: incremental sync + delta detection.</sub>
-</div>
-
-<div align="center">
-  <img src="website/src/assets/images/circuitbreaker.png" alt="Circuit Breaker Diagram" width="900" />
-  <br/>
-  <sub>Circuit breaker states and recovery behavior for embedding requests.</sub>
-</div>
-
-</details>
-
-## Roadmap
-
-For past releases, see the [CHANGELOG](CHANGELOG.md).
-
-### v0.4.0 — Scale & Ecosystem
-- Parquet export endpoint in REST API ([#98](https://github.com/AndreaBozzo/Ceres/issues/98))
-- HNSW index tuning for production ([#92](https://github.com/AndreaBozzo/Ceres/issues/92))
-- Multi-tenancy support ([#91](https://github.com/AndreaBozzo/Ceres/issues/91))
-- Local embeddings via Ollama ([#79](https://github.com/AndreaBozzo/Ceres/issues/79))
-- Schema-level search ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
-- Socrata / DCAT-AP portal support ([#61](https://github.com/AndreaBozzo/Ceres/issues/61))
-
-### v0.3.x — Done
-- Local embeddings via Ollama ([#79](https://github.com/AndreaBozzo/Ceres/issues/79))
-
-### Backlog
-- Standalone library support ([#35](https://github.com/AndreaBozzo/Ceres/issues/35))
-- data.europa.eu integration
+- harvesting architecture
+- optional embeddings and costs
+- contributing and security notes
 
 ## Related Projects
 
-- **[databricks-ceres-pipeline](https://github.com/AndreaBozzo/databricks-ceres-pipeline)** — A Databricks medallion architecture pipeline that provides batch analytics, ML features, and dashboards on top of the same open data index.
-- **[Ceres-Claude-Skill](https://github.com/AndreaBozzo/Ceres-Claude-Skill)** — Claude skill integration for querying and exploring Ceres indexed datasets.
+- [Ceres-Claude-Skill](https://github.com/AndreaBozzo/Ceres-Claude-Skill) for Claude Code and Claude custom skill support
+- [AndreaBozzo/ceres-open-data-index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index) for published dataset snapshots
+
+## Version
+
+Current version: `0.3.5`
 
 ## Contributing
 
-Contributions are welcome! See [CONTRIBUTING.md](website/src/content/docs/CONTRIBUTING.md) for setup instructions and guidelines.
+See `website/src/content/docs/CONTRIBUTING.md` and the crate-level docs for development setup, tests, and release workflow.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
-
----
+Apache-2.0. See `LICENSE`.

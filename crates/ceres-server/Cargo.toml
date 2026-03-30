@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-description = "REST API server for Ceres semantic search"
+description = "REST API server for Ceres harvesting, embedding, and search workflows"
 
 [[bin]]
 name = "ceres-server"

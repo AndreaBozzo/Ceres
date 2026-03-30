@@ -5,8 +5,8 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core types, business logic, and services for Ceres"
-keywords = ["ckan", "open-data", "semantic-search", "embeddings"]
+description = "Core types, harvesting logic, and services for Ceres"
+keywords = ["ckan", "dcat", "open-data", "harvesting", "embeddings"]
 categories = ["data-structures"]
 
 [dependencies]

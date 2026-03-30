@@ -5,8 +5,8 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "HTTP clients for CKAN portals and Gemini embeddings API"
-keywords = ["ckan", "gemini", "embeddings", "http-client"]
+description = "HTTP clients for Ceres portal harvesters and embedding providers"
+keywords = ["ckan", "dcat", "ollama", "embeddings", "http-client"]
 categories = ["web-programming::http-client"]
 
 [features]

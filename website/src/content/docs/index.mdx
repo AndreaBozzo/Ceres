@@ -1,9 +1,9 @@
 ---
 title: Ceres
-description: Semantic search engine for open data portals
+description: Harvest-first toolkit for open data portals
 template: splash
 hero:
-  tagline: Semantic search engine for open data portals
+  tagline: Harvest-first toolkit for open data portals
   image:
     file: ../../assets/images/logo.png
   actions:
@@ -22,37 +22,37 @@ import Terminal from '../../components/Terminal.astro';
 import FeatureGrid from '../../components/FeatureGrid.astro';
 
 <div class="animate-fade-in-up">
-Ceres harvests metadata from CKAN open data portals and indexes them with vector embeddings, enabling semantic search across fragmented data sources.
+Ceres harvests metadata from open data portals and keeps a local catalog in sync over time. Embeddings, semantic search, and exports sit on top as optional layers.
 
 > *Named after the Roman goddess of harvest and agriculture.*
 </div>
 
-## The Problem
+## Why Ceres
 
 <div class="animate-fade-in-up animate-delay-1">
 <CardGrid>
-  <Card title="Keyword Match Fails" icon="warning">
-    "Public transport" won't find datasets tagged as "mobility data" or "bus schedules".
+  <Card title="Harvesting Is The Hard Part" icon="warning">
+    Open data work usually breaks on synchronization, portal quirks, and stale records before search even starts.
   </Card>
-  <Card title="Fragmented Ecosystems" icon="error">
-    Italy alone has over 20+ regional portals with completely different interfaces.
+  <Card title="Portals Are Fragmented" icon="error">
+    CKAN and DCAT portals expose different capabilities, languages, and reliability profiles.
   </Card>
-  <Card title="No Cross-Querying" icon="magnifier">
-    You fundamentally cannot run a single query across Milano, Roma, and Napoli datasets at once.
+  <Card title="Embedding Should Be Optional" icon="magnifier">
+    Many teams need a trustworthy harvested catalog first, then decide later whether to add local or hosted embeddings.
   </Card>
 </CardGrid>
 
-Ceres solves this by creating a unified semantic index. You search once, across all harvested portals, by **meaning**!
+Ceres is designed around that order of work: harvest first, embed later if useful, search once the catalog is ready.
 
 <div align="center" style="margin-top: 2rem;">
   <img src="/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" />
   <br/>
-  <sub>354,000+ datasets (dedup. to 270k) from 22 portals, embedded with <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">all-MiniLM-L6-v2</a>, projected to 3D via UMAP, and clustered with HDBSCAN. Each color is a portal — nearby points are semantically similar.</sub>
+  <sub>The published Open Data Index is one downstream product of the pipeline: harvest and normalize first, then optionally embed, search, export, and visualize.</sub>
 </div>
 </div>
 
 
-## See It in Action
+## See It In Action
 
 <Terminal />
 
@@ -61,24 +61,24 @@ Ceres solves this by creating a unified semantic index. You search once, across 
 
 <FeatureGrid>
   <div class="ceres-card animate-fade-in-up animate-delay-2">
-    <h3>Enterprise Harvester</h3>
-    <p>Fetch datasets from any CKAN-compatible portal, including multi-lingual ones. Harvest multiple portals simultaneously via <code>portals.toml</code> configurations. Recoverable, fault-tolerant job queue with stale dataset detection built-in.</p>
+    <h3>Harvest First</h3>
+    <p>Stream metadata from CKAN and DCAT udata portals into PostgreSQL, track sync history, detect stale datasets, and keep the catalog current even when embeddings are disabled.</p>
   </div>
   <div class="ceres-card animate-fade-in-up animate-delay-3">
-    <h3>Streaming & Delta Detection</h3>
-    <p>A memory-efficient streaming pipeline handles massive portals (100k+ datasets). Built-in Smart Delta Detection skips embedding un-changed entities — yielding 99.8% API cost savings per run.</p>
+    <h3>Decoupled Pipeline</h3>
+    <p>Harvesting and embedding are separate services. Run metadata-only syncs, backfill embeddings later, or switch provider without re-harvesting your sources.</p>
   </div>
   <div class="ceres-card animate-fade-in-up animate-delay-4">
-    <h3>Production-Ready Scale</h3>
-    <p>Currently powers an index of <strong>354,000+ datasets</strong> across 25 pre-verified portals (from Australia to Italy to HDX). All exposed via Axum REST APIs with OpenAPI interfaces and OpenAPI docs.</p>
+    <h3>Local Embeddings By Default</h3>
+    <p>When you do want vectors, Ollama gives you a local zero-cost path. Gemini and OpenAI remain supported, but the project no longer assumes cloud embeddings are required.</p>
   </div>
   <div class="ceres-card animate-fade-in-up animate-delay-5">
-    <h3>Tech Stack & Extensibility</h3>
+    <h3>Operations Layer</h3>
     <ul>
-      <li><strong>Core:</strong> Rust (async with Tokio)</li>
-      <li><strong>Database:</strong> PostgreSQL 16+ with <code>pgvector</code></li>
-      <li><strong>Embeddings:</strong> Pluggable Backend (Google Gemini, OpenAI, Ollama) — optional, harvest metadata without any API key</li>
-      <li><strong>Exports:</strong> JSON, CSV, JSON Lines, Parquet Supported!</li>
+      <li><strong>CLI:</strong> harvest, embed, search, export, stats</li>
+      <li><strong>API:</strong> Axum server with Swagger UI</li>
+      <li><strong>Jobs:</strong> database-backed harvest queue with retries</li>
+      <li><strong>Exports:</strong> JSON, JSONL, CSV, and curated Parquet</li>
     </ul>
   </div>
 </FeatureGrid>
@@ -89,15 +89,32 @@ Ceres solves this by creating a unified semantic index. You search once, across 
   ![Ceres Architecture Diagram](../../assets/images/Ceres_architecture.png)
 </div>
 
+## Operational Model
+
+<FeatureGrid>
+  <div class="ceres-card animate-fade-in-up">
+    <h3>Step 1: Harvest</h3>
+    <p>Use <code>ceres harvest</code> to populate the catalog, optionally in metadata-only mode. Incremental sync, delta detection, and stale marking reduce churn and keep memory bounded.</p>
+  </div>
+  <div class="ceres-card animate-fade-in-up">
+    <h3>Step 2: Embed</h3>
+    <p>Run <code>ceres embed</code> when you want vectors. Ollama is the preferred local option; hosted providers are still available for teams that want them.</p>
+  </div>
+  <div class="ceres-card animate-fade-in-up">
+    <h3>Step 3: Search Or Export</h3>
+    <p>Search, API access, HuggingFace exports, and downstream analytics all build on the same harvested catalog.</p>
+  </div>
+</FeatureGrid>
+
 ## Roadmap
 
 <FeatureGrid>
   <div class="ceres-card animate-fade-in-up">
-    <h3>Now (v0.3.1)</h3>
-    <p>Multi-portal streaming harvests, Gemini / OpenAI / Ollama embeddings (optional — harvest metadata without API key), Advanced CLI with standalone embed command, stale dataset detection, PostgreSQL + pgvector, Axum REST API, CSV/JSON/Parquet export capabilities.</p>
+    <h3>Now (v0.3.5)</h3>
+    <p>Harvest-first sync pipeline, CKAN plus DCAT udata support, standalone embedding passes, local Ollama support, job-driven API operations, and export flows for downstream publishing.</p>
   </div>
   <div class="ceres-card animate-fade-in-up">
     <h3>Next (v0.4.0)</h3>
-    <p>Scale and ecosystem tuning: Production HNSW index tuning, Multi-tenancy support, Schema-level search, Socrata/DCAT-AP expansion.</p>
+    <p>Scale and ecosystem tuning: HNSW optimization, more portal client coverage, stronger multi-tenant operations, and better downstream dataset publishing ergonomics.</p>
   </div>
 </FeatureGrid>

@@ -6,8 +6,8 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Command-line interface for Ceres semantic search engine"
-keywords = ["ckan", "semantic-search", "cli", "open-data"]
+description = "Command-line interface for harvesting, embedding, and searching with Ceres"
+keywords = ["ckan", "dcat", "harvesting", "cli", "open-data"]
 categories = ["command-line-utilities"]
 
 [[bin]]

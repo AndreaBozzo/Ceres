@@ -1,37 +1,58 @@
 ---
 title: Harvesting in Ceres
-description: How the data extraction works in Ceres
+description: How Ceres harvests and synchronizes portal metadata before optional embedding and search
 ---
 
 # Harvesting Architecture
 
-Ceres harvests dataset metadata from open data portals and indexes them with vector embeddings for semantic search. Since portals can host tens of thousands of datasets, Ceres implements a **two-tier optimization strategy** to minimize both portal API calls and embedding costs (whether using paid cloud APIs or local inference).
+Ceres is organized around harvesting first.
+
+The primary job of the system is to pull dataset metadata from portal APIs, normalize it, and keep a local catalog synchronized over time. Embeddings are a separate stage that can run later through Ollama or a hosted provider.
+
+Today the shipping portal clients cover:
+
+- CKAN portals
+- DCAT-AP portals that expose the udata REST JSON-LD catalog
+
+## Core pipeline
+
+```text
+Portal API -> PortalClient -> HarvestService -> DatasetStore
+									 |
+									 +-> sync history
+									 +-> stale detection
+									 +-> pending embeddings
+
+DatasetStore (pending) -> EmbeddingService -> vectors for search
+```
 
 ## Two-Tier Optimization
 
 ![Harvesting Flow Diagram](../../assets/images/harvesting.png)
 
-*Incremental sync reduces portal calls, delta detection reduces embedding calls.*
+Incremental sync reduces portal calls. Delta detection reduces optional embedding work.
 
 ### Streaming Pipeline
 
-Since v0.3.0, the harvest pipeline streams datasets through the processing stages instead of loading all datasets into memory at once. This allows Ceres to handle very large portals (100k+ datasets) with a constant memory footprint. Batched embedding API calls further improve throughput by sending multiple texts per request.
+The harvest pipeline streams datasets through processing stages instead of loading an entire catalog into memory. That keeps memory bounded even on very large portals.
+
+Embedding is no longer part of the mandatory hot path. When enabled, it runs through a separate service and can batch texts according to provider capabilities.
 
 ### Tier 1: Incremental Sync
 
-Incremental sync uses CKAN's `package_search` API with a `metadata_modified` filter to fetch only datasets that have changed since the last successful sync. The last sync timestamp is stored in the `portal_sync_status` table.
+When a portal supports modified-since querying, Ceres fetches only datasets changed since the last successful sync. The last sync timestamp is stored in `portal_sync_status`.
 
-On the **first sync** for a portal, or when `--full-sync` is passed, Ceres performs a full sync by listing all dataset IDs and fetching each one. If an incremental sync attempt fails (e.g., the portal doesn't support the `metadata_modified` filter), Ceres automatically falls back to a full sync.
+On the first sync for a portal, or when `--full-sync` is passed, Ceres performs a full sync. If incremental sync is unsupported or fails, the service falls back to a full sync automatically.
 
-**What it saves:** portal API calls. Instead of fetching metadata for all 50,000 datasets on every run, only the handful that changed since the last sync are fetched.
+This is what keeps repeated harvests operationally cheap.
 
 ### Tier 2: Delta Detection
 
-Even when a dataset is fetched (because its `metadata_modified` timestamp changed), its **embeddable content** (title + description) may not have actually changed. For example, adding a tag or updating a resource URL changes `metadata_modified` but doesn't affect what Ceres embeds.
+Even when a dataset is fetched, its embeddable content may not have changed. A portal can update tags, resources, or minor metadata without changing the text that would be embedded.
 
 Delta detection computes a SHA-256 hash of `title + description` (the `content_hash`) and compares it against the stored hash. If the hash matches, the embedding regeneration is skipped entirely.
 
-**What it saves:** embedding API calls. In typical runs, 99%+ of datasets have unchanged content, saving significant API costs.
+This matters most when you run the optional embedding stage, whether locally through Ollama or through a hosted provider.
 
 ### Why Both Tiers Are Necessary
 
@@ -39,11 +60,11 @@ Delta detection computes a SHA-256 hash of `title + description` (the `content_h
 |----------|------------------------------|------------------------|--------|
 | Tag added to dataset | Yes | No | Fetch metadata, skip embedding |
 | Resource URL updated | Yes | No | Fetch metadata, skip embedding |
-| Title rewritten | Yes | Yes | Fetch metadata, regenerate embedding |
-| New dataset published | N/A (new) | N/A (new) | Fetch metadata, generate embedding |
+| Title rewritten | Yes | Yes | Fetch metadata, mark for embedding |
+| New dataset published | N/A (new) | N/A (new) | Fetch metadata, mark for embedding |
 | Nothing changed | No | N/A (not fetched) | Not fetched at all |
 
-Without incremental sync, every run would fetch all datasets from the portal. Without delta detection, every fetched dataset would trigger an embedding API call. Together, they minimize both sources of cost.
+Without incremental sync, every run would fetch the full portal. Without delta detection, every changed record would be re-embedded even when the relevant text stayed the same.
 
 ## Sync Outcomes
 
@@ -51,11 +72,11 @@ Each dataset processed during a sync receives one of these outcomes:
 
 | Outcome | Meaning | Embedding generated? |
 |---------|---------|---------------------|
-| `Created` | New dataset, not seen before | Yes |
-| `Updated` | Content hash changed (title or description modified) | Yes |
+| `Created` | New dataset, not seen before | Marked pending |
+| `Updated` | Content hash changed (title or description modified) | Marked pending |
 | `Unchanged` | Content hash matches stored value | No |
 | `Failed` | Error during processing | No |
-| `Skipped` | Circuit breaker is open, dataset skipped | No |
+| `Skipped` | Embedding step was skipped or the circuit breaker is open | No |
 
 These are tracked via `SyncStats` and reported at the end of each sync operation.
 
@@ -69,6 +90,17 @@ These are tracked via `SyncStats` and reported at the end of each sync operation
 | `--metadata-only` | Same as default | Skipped (no embedding) | Harvest without API key |
 
 Delta detection is always active regardless of flags. There is no flag to bypass it — if you need to force full re-embedding, delete the stored content hashes from the database.
+
+## Metadata-only mode is the normal harvest path
+
+`--metadata-only` is not a degraded mode. It is the cleanest way to operate Ceres when your immediate goal is harvesting and synchronization.
+
+Use it when you want to:
+
+- build the catalog before choosing an embedding provider
+- run fully locally without any vector generation
+- separate crawl operations from search operations
+- backfill vectors later with `ceres embed`
 
 ## Database Tracking
 
@@ -87,9 +119,19 @@ The `last_successful_sync` value is set to the sync start time (not end time), e
 
 Content hashes are stored in the `datasets` table in the `content_hash` column (`VARCHAR(64)`, nullable for backward compatibility with records indexed before delta detection was added).
 
+## Optional embedding stage
+
+Embeddings are processed later by `EmbeddingService`:
+
+- `HarvestService` writes datasets and tracks changes
+- `EmbeddingService` reads pending rows and generates vectors
+- `HarvestPipeline` composes both when you want the combined workflow
+
+This split lets you harvest regardless of embedding availability and makes Ollama a practical local-first default.
+
 ## Circuit Breaker
 
-The embedding API (Gemini, OpenAI, or local Ollama) is protected by a circuit breaker to prevent cascading failures during harvesting:
+When embeddings are enabled, the embedding provider is protected by a circuit breaker to avoid cascading failures:
 
 ![Circuit Breaker Diagram](../../assets/images/circuitbreaker.png)
 
@@ -99,18 +141,7 @@ The embedding API (Gemini, OpenAI, or local Ollama) is protected by a circuit br
 - **Open**: all embedding requests are rejected immediately, datasets are recorded as `Skipped`
 - **Half-Open**: requests are allowed to probe recovery; 2 successes close the circuit, any failure reopens it
 
-On HTTP 429 (rate limit), the recovery timeout is multiplied by a backoff factor (default 2x), up to a maximum of 5 minutes. Configuration is via environment variables: `CB_FAILURE_THRESHOLD`, `CB_RECOVERY_TIMEOUT_SECS`, `CB_SUCCESS_THRESHOLD`, `CB_RATE_LIMIT_BACKOFF_MULTIPLIER`, `CB_MAX_RECOVERY_TIMEOUT_SECS`.
-
-## Metadata-Only Mode
-
-With `--metadata-only`, harvesting fetches and stores dataset metadata without generating embeddings. No embedding API key is needed. Datasets are stored with `embedding = NULL`; any existing embeddings are preserved via SQL `COALESCE`.
-
-Use the standalone `ceres embed` command afterwards to generate embeddings for pending datasets. This enables:
-
-- Harvesting without an API key (using local Ollama or metadata-only mode)
-- Switching embedding providers without re-harvesting
-- Backfilling embeddings after outages
-- Independent scaling of harvest and embedding workloads
+On HTTP 429, the recovery timeout is multiplied by a backoff factor, up to a configured maximum.
 
 ## Stale Dataset Detection
 
@@ -122,6 +153,13 @@ Stale datasets are:
 - **Not deleted** — soft-marked so they can be recovered if the portal re-publishes them
 
 Stale detection only runs on full syncs because incremental syncs fetch only modified datasets and cannot definitively determine which datasets have been removed.
+
+## Protocol-specific behavior
+
+The exact harvest behavior depends on the portal client:
+
+- CKAN clients can use modified-since filters and adaptive page sizing
+- DCAT udata clients stream paginated JSON-LD catalog pages and resolve multilingual fields according to the configured language
 
 ## Adaptive Page Size
 
@@ -143,4 +181,5 @@ This converges faster than halving and handles portals with resource-heavy datas
 - Content hash computation: [`crates/ceres-core/src/models.rs`](../crates/ceres-core/src/models.rs) (`NewDataset::compute_content_hash`)
 - Circuit breaker: [`crates/ceres-core/src/circuit_breaker.rs`](../crates/ceres-core/src/circuit_breaker.rs)
 - CKAN client: [`crates/ceres-client/src/ckan.rs`](../crates/ceres-client/src/ckan.rs) (`search_modified_since`, adaptive page size)
+- DCAT client: [`crates/ceres-client/src/dcat.rs`](../crates/ceres-client/src/dcat.rs)
 - DB schema: [`migrations/`](../migrations/)
