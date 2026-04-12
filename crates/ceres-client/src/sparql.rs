@@ -92,6 +92,17 @@ impl SparqlDcatClient {
     /// * `base_url_str` - The base URL of the portal (e.g., `https://data.europa.eu`)
     /// * `language` - Preferred language for resolving multilingual fields (e.g., `"en"`, `"nb"`)
     pub fn new(base_url_str: &str, language: &str) -> Result<Self, AppError> {
+        // Validate language as a BCP47-like tag to prevent SPARQL injection
+        if language.is_empty()
+            || !language
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return Err(AppError::ConfigError(format!(
+                "Invalid language tag '{language}'. Expected a BCP47 tag (e.g., 'en', 'nb', 'fr')."
+            )));
+        }
+
         let base_url = Url::parse(base_url_str)
             .map_err(|_| AppError::InvalidPortalUrl(base_url_str.to_string()))?;
 
@@ -443,57 +454,86 @@ impl SparqlDcatClient {
         Err(last_error)
     }
 
+    /// Returns a language-preference rank for selecting the best value.
+    /// Higher rank = better match: preferred language > "en" > untagged/other.
+    fn lang_rank(&self, lang: Option<&str>) -> u8 {
+        match lang {
+            Some(l) if l == self.language => 2,
+            Some("en") => 1,
+            _ => 0,
+        }
+    }
+
+    /// Selects the best value for a field from grouped bindings based on language preference.
+    fn best_value<'a>(
+        &self,
+        bindings: &'a [HashMap<String, SparqlValue>],
+        key: &str,
+    ) -> Option<&'a SparqlValue> {
+        bindings
+            .iter()
+            .filter_map(|b| b.get(key))
+            .filter(|v| !v.value.is_empty())
+            .max_by(|a, b| {
+                self.lang_rank(a.lang.as_deref())
+                    .cmp(&self.lang_rank(b.lang.as_deref()))
+            })
+    }
+
     /// Converts SPARQL bindings into `DcatDataset` objects, deduplicating by dataset URI.
     ///
     /// SPARQL may return multiple rows per dataset (e.g., different language tags).
-    /// The first title/description encountered for each dataset URI is kept.
+    /// For each dataset, the title and description with the best language match are selected
+    /// (preferred language > "en" > untagged).
     fn bindings_to_datasets(
         &self,
         bindings: Vec<HashMap<String, SparqlValue>>,
     ) -> Vec<DcatDataset> {
-        let mut seen: HashMap<String, DcatDataset> = HashMap::new();
+        let mut grouped: HashMap<String, Vec<HashMap<String, SparqlValue>>> = HashMap::new();
 
         for binding in bindings {
             let Some(dataset_uri) = binding.get("dataset").map(|v| v.value.clone()) else {
                 continue;
             };
-
-            if seen.contains_key(&dataset_uri) {
-                continue;
-            }
-
-            let title = match binding.get("title") {
-                Some(v) if !v.value.is_empty() => v.value.clone(),
-                _ => continue, // Skip datasets without a title
-            };
-
-            let description = binding
-                .get("description")
-                .map(|v| v.value.clone())
-                .filter(|s| !s.is_empty());
-
-            let identifier = binding
-                .get("identifier")
-                .map(|v| v.value.clone())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| extract_last_segment(&dataset_uri));
-
-            // Build raw metadata from the binding
-            let raw = binding_to_json(&binding);
-
-            seen.insert(
-                dataset_uri.clone(),
-                DcatDataset {
-                    id_uri: dataset_uri,
-                    identifier,
-                    title,
-                    description,
-                    raw,
-                },
-            );
+            grouped.entry(dataset_uri).or_default().push(binding);
         }
 
-        seen.into_values().collect()
+        let mut datasets = Vec::new();
+
+        for (dataset_uri, rows) in &grouped {
+            let Some(title_val) = self.best_value(rows, "title") else {
+                continue; // Skip datasets without a title
+            };
+            let title = title_val.value.clone();
+
+            let description = self
+                .best_value(rows, "description")
+                .map(|v| v.value.clone());
+
+            let identifier = rows
+                .iter()
+                .filter_map(|b| b.get("identifier"))
+                .map(|v| v.value.clone())
+                .find(|s| !s.is_empty())
+                .unwrap_or_else(|| extract_last_segment(dataset_uri));
+
+            // Build raw metadata from the row that provided the selected title
+            let raw_binding = rows
+                .iter()
+                .find(|b| b.get("title").map(|v| v.value.as_str()) == Some(title.as_str()))
+                .unwrap_or(&rows[0]);
+            let raw = binding_to_json(raw_binding);
+
+            datasets.push(DcatDataset {
+                id_uri: dataset_uri.clone(),
+                identifier,
+                title,
+                description,
+                raw,
+            });
+        }
+
+        datasets
     }
 }
 
@@ -624,7 +664,35 @@ mod tests {
         let resp: SparqlResponse = serde_json::from_str(json).unwrap();
         let datasets = client.bindings_to_datasets(resp.results.bindings);
         assert_eq!(datasets.len(), 1);
-        assert_eq!(datasets[0].title, "First Title");
+    }
+
+    #[test]
+    fn bindings_prefers_requested_language() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "nb").unwrap();
+        let json = r#"{
+            "results": {
+                "bindings": [
+                    {
+                        "dataset": { "type": "uri", "value": "https://example.org/d/1" },
+                        "title": { "type": "literal", "value": "English Title", "xml:lang": "en" },
+                        "description": { "type": "literal", "value": "English desc", "xml:lang": "en" }
+                    },
+                    {
+                        "dataset": { "type": "uri", "value": "https://example.org/d/1" },
+                        "title": { "type": "literal", "value": "Norsk Tittel", "xml:lang": "nb" },
+                        "description": { "type": "literal", "value": "Norsk beskrivelse", "xml:lang": "nb" }
+                    }
+                ]
+            }
+        }"#;
+        let resp: SparqlResponse = serde_json::from_str(json).unwrap();
+        let datasets = client.bindings_to_datasets(resp.results.bindings);
+        assert_eq!(datasets.len(), 1);
+        assert_eq!(datasets[0].title, "Norsk Tittel");
+        assert_eq!(
+            datasets[0].description.as_deref(),
+            Some("Norsk beskrivelse")
+        );
     }
 
     #[test]
@@ -713,6 +781,15 @@ mod tests {
     fn sparql_client_new_invalid_url() {
         let result = SparqlDcatClient::new("not-a-url", "en");
         assert!(matches!(result, Err(AppError::InvalidPortalUrl(_))));
+    }
+
+    #[test]
+    fn sparql_client_rejects_invalid_language() {
+        let result = SparqlDcatClient::new("https://data.europa.eu", "en\"}");
+        assert!(matches!(result, Err(AppError::ConfigError(_))));
+
+        let result = SparqlDcatClient::new("https://data.europa.eu", "");
+        assert!(matches!(result, Err(AppError::ConfigError(_))));
     }
 
     // ---- binding_to_json ---------------------------------------------------

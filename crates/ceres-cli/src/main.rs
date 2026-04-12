@@ -183,6 +183,10 @@ async fn handle_harvest(
         ""
     };
 
+    if ad_hoc_profile.is_some() && ad_hoc_portal_type != PortalType::Dcat {
+        anyhow::bail!("--profile is only valid with --type dcat");
+    }
+
     match (portal_url, portal_name) {
         (Some(url), None) => {
             info!("Syncing portal{}: {}", mode_label, url);

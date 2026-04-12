@@ -197,9 +197,12 @@ impl PortalClientFactory for PortalClientFactoryEnum {
                 Some("sparql") => Ok(PortalClientEnum::SparqlDcat(SparqlDcatClient::new(
                     portal_url, language,
                 )?)),
-                _ => Ok(PortalClientEnum::Dcat(DcatClient::new(
+                None | Some("" | "udata_rest") => Ok(PortalClientEnum::Dcat(DcatClient::new(
                     portal_url, language,
                 )?)),
+                Some(other) => Err(AppError::ConfigError(format!(
+                    "Unsupported DCAT profile '{other}'. Supported profiles are 'sparql' and 'udata_rest'."
+                ))),
             },
             other => Err(AppError::ConfigError(format!(
                 "Portal type '{}' is not yet supported.",
@@ -261,6 +264,18 @@ mod tests {
             .create("https://data.public.lu", PortalType::Dcat, "fr", None)
             .unwrap();
         assert!(matches!(client, PortalClientEnum::Dcat(_)));
+    }
+
+    #[test]
+    fn test_factory_rejects_unknown_dcat_profile() {
+        let factory = PortalClientFactoryEnum::new();
+        let result = factory.create(
+            "https://data.public.lu",
+            PortalType::Dcat,
+            "en",
+            Some("spqarql"),
+        );
+        assert!(result.is_err());
     }
 
     #[test]
