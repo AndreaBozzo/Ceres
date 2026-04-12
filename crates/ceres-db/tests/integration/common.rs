@@ -137,7 +137,7 @@ pub fn sample_new_dataset(id: &str, portal: &str) -> NewDataset {
 /// Useful for testing vector similarity search with varied embeddings.
 #[allow(dead_code)]
 pub fn random_vector(dims: usize) -> Vec<f32> {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     (0..dims).map(|_| rng.random::<f32>()).collect()
 }
