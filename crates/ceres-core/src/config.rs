@@ -483,12 +483,25 @@ pub struct PortalEntry {
     /// This field controls which language is selected when resolving those fields.
     /// Defaults to `"en"` when not specified.
     pub language: Option<String>,
+
+    /// Optional DCAT profile for sub-dispatch.
+    ///
+    /// Only meaningful when `type = "dcat"`. Values:
+    /// - `"udata_rest"` (default when omitted): udata REST JSON-LD catalog endpoint
+    /// - `"sparql"`: SPARQL endpoint returning DCAT-AP metadata
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 impl PortalEntry {
     /// Returns the preferred language, defaulting to `"en"`.
     pub fn language(&self) -> &str {
         self.language.as_deref().unwrap_or("en")
+    }
+
+    /// Returns the DCAT profile, if set.
+    pub fn profile(&self) -> Option<&str> {
+        self.profile.as_deref()
     }
 }
 
@@ -884,6 +897,35 @@ description = "A fully configured portal"
             portal.description,
             Some("A fully configured portal".to_string())
         );
+    }
+
+    #[test]
+    fn test_portals_config_dcat_profile() {
+        let toml = r#"
+[[portals]]
+name = "eu-sparql"
+url = "https://data.europa.eu"
+type = "dcat"
+profile = "sparql"
+language = "en"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        let portal = &config.portals[0];
+        assert_eq!(portal.portal_type, PortalType::Dcat);
+        assert_eq!(portal.profile(), Some("sparql"));
+        assert_eq!(portal.language(), "en");
+    }
+
+    #[test]
+    fn test_portals_config_profile_defaults_none() {
+        let toml = r#"
+[[portals]]
+name = "luxembourg"
+url = "https://data.public.lu"
+type = "dcat"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.portals[0].profile(), None);
     }
 
     #[test]

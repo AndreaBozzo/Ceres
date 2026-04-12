@@ -73,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Harvest {
             portal_url,
             r#type: portal_type,
+            profile,
             portal,
             config: config_path,
             full_sync,
@@ -102,6 +103,7 @@ async fn main() -> anyhow::Result<()> {
                 embedding_service.as_ref(),
                 portal_url,
                 portal_type,
+                profile,
                 portal,
                 config_path,
             )
@@ -169,6 +171,7 @@ async fn handle_harvest(
     embedding_service: Option<&EmbeddingService<DatasetRepository, EmbeddingProviderEnum>>,
     portal_url: Option<String>,
     ad_hoc_portal_type: PortalType,
+    ad_hoc_profile: Option<String>,
     portal_name: Option<String>,
     config_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
@@ -184,7 +187,14 @@ async fn handle_harvest(
         (Some(url), None) => {
             info!("Syncing portal{}: {}", mode_label, url);
             let stats = harvest_service
-                .sync_portal_with_progress(&url, None, "en", &reporter, ad_hoc_portal_type)
+                .sync_portal_with_progress(
+                    &url,
+                    None,
+                    "en",
+                    &reporter,
+                    ad_hoc_portal_type,
+                    ad_hoc_profile.as_deref(),
+                )
                 .await?;
             print_single_portal_summary(&url, &stats);
             if let Some(es) = embedding_service {
@@ -220,6 +230,7 @@ async fn handle_harvest(
                     portal.language(),
                     &reporter,
                     portal.portal_type,
+                    portal.profile(),
                 )
                 .await?;
             print_single_portal_summary(&portal.url, &stats);

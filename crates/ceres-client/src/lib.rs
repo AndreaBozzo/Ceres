@@ -21,6 +21,7 @@
 //! |-------------|--------|-----|
 //! | CKAN | Supported | [CKAN API](https://docs.ckan.org/en/2.9/api/) |
 //! | DCAT-AP (udata REST) | Supported | [DCAT-AP](https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe) |
+//! | DCAT-AP (SPARQL) | Supported | SPARQL endpoint with DCAT vocabulary |
 //! | Socrata | Planned | [Socrata API](https://dev.socrata.com/) |
 //!
 //! # Embedding Providers
@@ -42,6 +43,7 @@ pub mod ollama;
 pub mod openai;
 pub mod portal;
 pub mod provider;
+pub mod sparql;
 
 // Re-export main client types
 pub use ckan::{CkanClient, CkanClientFactory};
@@ -53,3 +55,4 @@ pub use portal::{PortalClientEnum, PortalClientFactoryEnum, PortalDataEnum};
 #[cfg(feature = "test-support")]
 pub use provider::MockEmbeddingClient;
 pub use provider::{EmbeddingConfig, EmbeddingProviderEnum};
+pub use sparql::SparqlDcatClient;

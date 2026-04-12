@@ -20,6 +20,7 @@ use futures::stream::BoxStream;
 
 use crate::ckan::{CkanClient, CkanDataset};
 use crate::dcat::{DcatClient, DcatDataset};
+use crate::sparql::SparqlDcatClient;
 
 /// Portal-specific dataset data, wrapping concrete types from each portal client.
 #[derive(Debug, Clone)]
@@ -40,6 +41,8 @@ pub enum PortalClientEnum {
     Ckan(CkanClient),
     /// DCAT-AP udata REST portal client.
     Dcat(DcatClient),
+    /// DCAT-AP SPARQL endpoint client.
+    SparqlDcat(SparqlDcatClient),
 }
 
 impl PortalClient for PortalClientEnum {
@@ -49,6 +52,7 @@ impl PortalClient for PortalClientEnum {
         match self {
             Self::Ckan(c) => c.portal_type(),
             Self::Dcat(c) => c.portal_type(),
+            Self::SparqlDcat(c) => c.portal_type(),
         }
     }
 
@@ -56,6 +60,7 @@ impl PortalClient for PortalClientEnum {
         match self {
             Self::Ckan(c) => c.base_url(),
             Self::Dcat(c) => c.base_url(),
+            Self::SparqlDcat(c) => c.base_url(),
         }
     }
 
@@ -63,6 +68,7 @@ impl PortalClient for PortalClientEnum {
         match self {
             Self::Ckan(c) => c.list_dataset_ids().await,
             Self::Dcat(c) => c.list_dataset_ids().await,
+            Self::SparqlDcat(c) => c.list_dataset_ids().await,
         }
     }
 
@@ -70,6 +76,7 @@ impl PortalClient for PortalClientEnum {
         match self {
             Self::Ckan(c) => c.get_dataset(id).await.map(PortalDataEnum::Ckan),
             Self::Dcat(c) => c.get_dataset(id).await.map(PortalDataEnum::Dcat),
+            Self::SparqlDcat(c) => c.get_dataset(id).await.map(PortalDataEnum::Dcat),
         }
     }
 
@@ -102,6 +109,10 @@ impl PortalClient for PortalClientEnum {
                 .search_modified_since(since)
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect()),
+            Self::SparqlDcat(c) => c
+                .search_modified_since(since)
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect()),
         }
     }
 
@@ -112,6 +123,10 @@ impl PortalClient for PortalClientEnum {
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Ckan).collect()),
             Self::Dcat(c) => c
+                .search_all_datasets()
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect()),
+            Self::SparqlDcat(c) => c
                 .search_all_datasets()
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect()),
@@ -132,6 +147,12 @@ impl PortalClient for PortalClientEnum {
                     r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect())
                 },
             )),
+            Self::SparqlDcat(c) => Box::pin(StreamExt::map(
+                c.paginate_sparql_stream(None),
+                |r: Result<Vec<DcatDataset>, AppError>| {
+                    r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect())
+                },
+            )),
         }
     }
 
@@ -139,8 +160,9 @@ impl PortalClient for PortalClientEnum {
         match self {
             Self::Ckan(c) => c.dataset_count().await,
             Self::Dcat(_) => Err(AppError::Generic(
-                "dataset_count not supported for DCAT portals".to_string(),
+                "dataset_count not supported for DCAT udata REST portals".to_string(),
             )),
+            Self::SparqlDcat(c) => c.dataset_count().await,
         }
     }
 }
@@ -167,12 +189,18 @@ impl PortalClientFactory for PortalClientFactoryEnum {
         portal_url: &str,
         portal_type: PortalType,
         language: &str,
+        profile: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         match portal_type {
             PortalType::Ckan => Ok(PortalClientEnum::Ckan(CkanClient::new(portal_url)?)),
-            PortalType::Dcat => Ok(PortalClientEnum::Dcat(DcatClient::new(
-                portal_url, language,
-            )?)),
+            PortalType::Dcat => match profile {
+                Some("sparql") => Ok(PortalClientEnum::SparqlDcat(SparqlDcatClient::new(
+                    portal_url, language,
+                )?)),
+                _ => Ok(PortalClientEnum::Dcat(DcatClient::new(
+                    portal_url, language,
+                )?)),
+            },
             other => Err(AppError::ConfigError(format!(
                 "Portal type '{}' is not yet supported.",
                 other
@@ -188,7 +216,12 @@ mod tests {
     #[test]
     fn test_factory_creates_ckan_client() {
         let factory = PortalClientFactoryEnum::new();
-        let client = factory.create("https://dati.comune.milano.it", PortalType::Ckan, "en");
+        let client = factory.create(
+            "https://dati.comune.milano.it",
+            PortalType::Ckan,
+            "en",
+            None,
+        );
         assert!(client.is_ok());
         let client = client.unwrap();
         assert_eq!(client.portal_type(), "ckan");
@@ -198,7 +231,7 @@ mod tests {
     #[test]
     fn test_factory_creates_dcat_client() {
         let factory = PortalClientFactoryEnum::new();
-        let client = factory.create("https://data.public.lu", PortalType::Dcat, "fr");
+        let client = factory.create("https://data.public.lu", PortalType::Dcat, "fr", None);
         assert!(client.is_ok());
         let client = client.unwrap();
         assert_eq!(client.portal_type(), "dcat");
@@ -206,9 +239,39 @@ mod tests {
     }
 
     #[test]
+    fn test_factory_creates_sparql_dcat_client() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory.create(
+            "https://data.europa.eu",
+            PortalType::Dcat,
+            "en",
+            Some("sparql"),
+        );
+        assert!(client.is_ok());
+        let client = client.unwrap();
+        assert_eq!(client.portal_type(), "dcat");
+        assert_eq!(client.base_url(), "https://data.europa.eu/");
+        assert!(matches!(client, PortalClientEnum::SparqlDcat(_)));
+    }
+
+    #[test]
+    fn test_factory_dcat_default_profile_is_udata_rest() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory
+            .create("https://data.public.lu", PortalType::Dcat, "fr", None)
+            .unwrap();
+        assert!(matches!(client, PortalClientEnum::Dcat(_)));
+    }
+
+    #[test]
     fn test_factory_rejects_unsupported_type() {
         let factory = PortalClientFactoryEnum::new();
-        let result = factory.create("https://data.cityofnewyork.us", PortalType::Socrata, "en");
+        let result = factory.create(
+            "https://data.cityofnewyork.us",
+            PortalType::Socrata,
+            "en",
+            None,
+        );
         assert!(result.is_err());
     }
 }

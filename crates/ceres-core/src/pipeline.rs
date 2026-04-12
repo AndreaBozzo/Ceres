@@ -104,6 +104,7 @@ where
                 "en",
                 &SilentReporter,
                 PortalType::default(),
+                None,
             )
             .await?;
         Ok(result.stats)
@@ -117,6 +118,7 @@ where
         language: &str,
         reporter: &R,
         portal_type: PortalType,
+        profile: Option<&str>,
     ) -> Result<(SyncResult, EmbeddingStats), AppError> {
         self.sync_portal_with_progress_cancellable_with_options(
             portal_url,
@@ -126,6 +128,7 @@ where
             CancellationToken::new(),
             false,
             portal_type,
+            profile,
         )
         .await
     }
@@ -141,6 +144,7 @@ where
         cancel_token: CancellationToken,
         force_full_sync: bool,
         portal_type: PortalType,
+        profile: Option<&str>,
     ) -> Result<(SyncResult, EmbeddingStats), AppError> {
         // Step 1: Harvest metadata
         let sync_result = self
@@ -153,6 +157,7 @@ where
                 cancel_token.clone(),
                 force_full_sync,
                 portal_type,
+                profile,
             )
             .await?;
 

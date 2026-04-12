@@ -309,6 +309,7 @@ where
             "en",
             &SilentReporter,
             PortalType::default(),
+            None,
         )
         .await
     }
@@ -330,6 +331,7 @@ where
         language: &str,
         reporter: &R,
         portal_type: PortalType,
+        profile: Option<&str>,
     ) -> Result<SyncStats, AppError> {
         let result = self
             .sync_portal_with_progress_cancellable_internal(
@@ -340,6 +342,7 @@ where
                 CancellationToken::new(), // never cancelled
                 self.config.force_full_sync,
                 portal_type,
+                profile,
             )
             .await?;
         Ok(result.stats)
@@ -476,11 +479,13 @@ where
             cancel_token,
             self.config.force_full_sync,
             PortalType::default(),
+            None,
         )
         .await
     }
 
     /// Synchronizes a single portal with progress reporting and cancellation support.
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_portal_with_progress_cancellable<R: ProgressReporter>(
         &self,
         portal_url: &str,
@@ -489,6 +494,7 @@ where
         reporter: &R,
         cancel_token: CancellationToken,
         portal_type: PortalType,
+        profile: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
@@ -498,6 +504,7 @@ where
             cancel_token,
             self.config.force_full_sync,
             portal_type,
+            profile,
         )
         .await
     }
@@ -514,6 +521,7 @@ where
         cancel_token: CancellationToken,
         force_full_sync: bool,
         portal_type: PortalType,
+        profile: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         let force_full_sync = self.config.force_full_sync || force_full_sync;
         self.sync_portal_with_progress_cancellable_internal(
@@ -524,6 +532,7 @@ where
             cancel_token,
             force_full_sync,
             portal_type,
+            profile,
         )
         .await
     }
@@ -538,6 +547,7 @@ where
         cancel_token: CancellationToken,
         force_full_sync: bool,
         portal_type: PortalType,
+        profile: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         let sync_start = Utc::now();
 
@@ -559,9 +569,9 @@ where
             return Ok(SyncResult::cancelled(SyncStats::default()));
         }
 
-        let portal_client = self
-            .portal_factory
-            .create(portal_url, portal_type, language)?;
+        let portal_client =
+            self.portal_factory
+                .create(portal_url, portal_type, language, profile)?;
 
         // Determine sync plan (IDs for full sync, datasets for incremental)
         let (sync_mode, plan) = self
@@ -1236,6 +1246,7 @@ where
                     reporter,
                     cancel_token.clone(),
                     portal.portal_type,
+                    portal.profile(),
                 )
                 .await
             {

@@ -175,3 +175,25 @@ description = "Luxembourg Open Data Portal (DCAT-AP / udata)"
 # language = "fr"
 # enabled = false
 # description = "data.gouv.fr — French Government Open Data Portal (~50,000+ datasets)"
+
+# =============================================================================
+# DCAT-AP portals (SPARQL endpoint)
+# =============================================================================
+
+# [[portals]]
+# name = "eu-open-data"
+# url = "https://data.europa.eu"
+# type = "dcat"
+# profile = "sparql"
+# language = "en"
+# enabled = false
+# description = "EU Open Data Portal (SPARQL endpoint, ~1.6M datasets)"
+
+# [[portals]]
+# name = "norway"
+# url = "https://data.norge.no"
+# type = "dcat"
+# profile = "sparql"
+# language = "nb"
+# enabled = false
+# description = "Norwegian Data Portal (SPARQL endpoint)"

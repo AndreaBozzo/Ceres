@@ -206,6 +206,7 @@ impl PortalClientFactory for MockPortalClientFactory {
         portal_url: &str,
         _portal_type: ceres_core::config::PortalType,
         _language: &str,
+        _profile: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         Ok(MockPortalClient::new(portal_url, self.datasets.clone()))
     }
@@ -602,6 +603,7 @@ impl MockJobQueue {
             force_full_sync: false,
             url_template: None,
             language: None,
+            profile: None,
         };
         self.jobs.lock().unwrap().insert(id, job);
         (self, id)
@@ -653,6 +655,7 @@ impl JobQueue for MockJobQueue {
             force_full_sync: request.force_full_sync,
             url_template: request.url_template,
             language: request.language,
+            profile: request.profile,
         };
         self.jobs.lock().unwrap().insert(id, job.clone());
         Ok(job)

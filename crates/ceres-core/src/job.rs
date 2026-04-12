@@ -210,6 +210,9 @@ pub struct HarvestJob {
 
     /// Preferred language for multilingual portals.
     pub language: Option<String>,
+
+    /// Optional DCAT profile (e.g., `"sparql"` for SPARQL endpoints).
+    pub profile: Option<String>,
 }
 
 impl HarvestJob {
@@ -248,6 +251,9 @@ pub struct CreateJobRequest {
 
     /// Type of portal (ckan, dcat, etc.).
     pub portal_type: PortalType,
+
+    /// Optional DCAT profile (e.g., `"sparql"` for SPARQL endpoints).
+    pub profile: Option<String>,
 }
 
 impl CreateJobRequest {
@@ -261,6 +267,7 @@ impl CreateJobRequest {
             url_template: None,
             language: None,
             portal_type: PortalType::default(),
+            profile: None,
         }
     }
 
@@ -297,6 +304,12 @@ impl CreateJobRequest {
     /// Set the portal type.
     pub fn with_portal_type(mut self, portal_type: PortalType) -> Self {
         self.portal_type = portal_type;
+        self
+    }
+
+    /// Set the DCAT profile (e.g., `"sparql"`).
+    pub fn with_profile(mut self, profile: impl Into<String>) -> Self {
+        self.profile = Some(profile.into());
         self
     }
 }
@@ -454,6 +467,7 @@ mod tests {
             force_full_sync: false,
             url_template: None,
             language: None,
+            profile: None,
         };
 
         assert!(job.can_retry());
