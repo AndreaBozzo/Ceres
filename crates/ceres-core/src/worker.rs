@@ -306,7 +306,7 @@ where
                 job.force_full_sync,
                 job.portal_type,
                 job.profile.as_deref(),
-                None, // sparql_endpoint not stored in job table
+                job.sparql_endpoint.as_deref(),
             )
             .await;
 

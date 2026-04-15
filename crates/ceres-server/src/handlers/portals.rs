@@ -163,7 +163,9 @@ pub async fn trigger_portal_harvest(
     if let Some(ref profile) = portal.profile {
         job_request = job_request.with_profile(profile);
     }
-
+    if let Some(ref sparql_endpoint) = portal.sparql_endpoint {
+        job_request = job_request.with_sparql_endpoint(sparql_endpoint);
+    }
     if request.force_full_sync {
         job_request = job_request.with_full_sync();
     }

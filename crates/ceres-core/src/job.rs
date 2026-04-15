@@ -213,6 +213,9 @@ pub struct HarvestJob {
 
     /// Optional DCAT profile (e.g., `"sparql"` for SPARQL endpoints).
     pub profile: Option<String>,
+
+    /// Optional SPARQL endpoint override for DCAT harvests.
+    pub sparql_endpoint: Option<String>,
 }
 
 impl HarvestJob {
@@ -254,6 +257,9 @@ pub struct CreateJobRequest {
 
     /// Optional DCAT profile (e.g., `"sparql"` for SPARQL endpoints).
     pub profile: Option<String>,
+
+    /// Optional SPARQL endpoint override for DCAT harvests.
+    pub sparql_endpoint: Option<String>,
 }
 
 impl CreateJobRequest {
@@ -268,6 +274,7 @@ impl CreateJobRequest {
             language: None,
             portal_type: PortalType::default(),
             profile: None,
+            sparql_endpoint: None,
         }
     }
 
@@ -310,6 +317,12 @@ impl CreateJobRequest {
     /// Set the DCAT profile (e.g., `"sparql"`).
     pub fn with_profile(mut self, profile: impl Into<String>) -> Self {
         self.profile = Some(profile.into());
+        self
+    }
+
+    /// Set the SPARQL endpoint override for DCAT harvests.
+    pub fn with_sparql_endpoint(mut self, sparql_endpoint: impl Into<String>) -> Self {
+        self.sparql_endpoint = Some(sparql_endpoint.into());
         self
     }
 }
@@ -468,6 +481,7 @@ mod tests {
             url_template: None,
             language: None,
             profile: None,
+            sparql_endpoint: None,
         };
 
         assert!(job.can_retry());

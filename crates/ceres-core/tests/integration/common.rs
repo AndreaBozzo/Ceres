@@ -605,6 +605,7 @@ impl MockJobQueue {
             url_template: None,
             language: None,
             profile: None,
+            sparql_endpoint: None,
         };
         self.jobs.lock().unwrap().insert(id, job);
         (self, id)
@@ -657,6 +658,7 @@ impl JobQueue for MockJobQueue {
             url_template: request.url_template,
             language: request.language,
             profile: request.profile,
+            sparql_endpoint: request.sparql_endpoint,
         };
         self.jobs.lock().unwrap().insert(id, job.clone());
         Ok(job)
