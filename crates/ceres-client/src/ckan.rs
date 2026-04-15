@@ -1023,6 +1023,7 @@ impl ceres_core::traits::PortalClientFactory for CkanClientFactory {
         portal_type: ceres_core::config::PortalType,
         _language: &str,
         _profile: Option<&str>,
+        _sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         match portal_type {
             ceres_core::config::PortalType::Ckan => CkanClient::new(portal_url),

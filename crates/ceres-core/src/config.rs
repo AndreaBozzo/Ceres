@@ -491,6 +491,15 @@ pub struct PortalEntry {
     /// - `"sparql"`: SPARQL endpoint returning DCAT-AP metadata
     #[serde(default)]
     pub profile: Option<String>,
+
+    /// Optional custom SPARQL endpoint URL.
+    ///
+    /// Only meaningful when `profile = "sparql"`. Overrides the default
+    /// convention of `{url}/sparql`. Use this when the SPARQL endpoint
+    /// lives on a different domain than the portal (e.g., Norway's
+    /// `data.norge.no` portal uses `sparql.fellesdatakatalog.digdir.no`).
+    #[serde(default)]
+    pub sparql_endpoint: Option<String>,
 }
 
 impl PortalEntry {
@@ -502,6 +511,11 @@ impl PortalEntry {
     /// Returns the DCAT profile, if set.
     pub fn profile(&self) -> Option<&str> {
         self.profile.as_deref()
+    }
+
+    /// Returns the custom SPARQL endpoint URL, if set.
+    pub fn sparql_endpoint(&self) -> Option<&str> {
+        self.sparql_endpoint.as_deref()
     }
 }
 

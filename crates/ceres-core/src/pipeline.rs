@@ -105,12 +105,14 @@ where
                 &SilentReporter,
                 PortalType::default(),
                 None,
+                None,
             )
             .await?;
         Ok(result.stats)
     }
 
     /// Synchronizes a single portal with progress reporting: harvest then embed.
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_portal_with_progress<R: ProgressReporter>(
         &self,
         portal_url: &str,
@@ -119,6 +121,7 @@ where
         reporter: &R,
         portal_type: PortalType,
         profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<(SyncResult, EmbeddingStats), AppError> {
         self.sync_portal_with_progress_cancellable_with_options(
             portal_url,
@@ -129,6 +132,7 @@ where
             false,
             portal_type,
             profile,
+            sparql_endpoint,
         )
         .await
     }
@@ -145,6 +149,7 @@ where
         force_full_sync: bool,
         portal_type: PortalType,
         profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<(SyncResult, EmbeddingStats), AppError> {
         // Step 1: Harvest metadata
         let sync_result = self
@@ -158,6 +163,7 @@ where
                 force_full_sync,
                 portal_type,
                 profile,
+                sparql_endpoint,
             )
             .await?;
 

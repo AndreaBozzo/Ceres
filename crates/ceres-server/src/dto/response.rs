@@ -119,6 +119,8 @@ pub struct PortalInfoResponse {
     pub portal_type: String,
     /// DCAT profile (e.g., "sparql"), if applicable
     pub profile: Option<String>,
+    /// Custom SPARQL endpoint URL, if applicable
+    pub sparql_endpoint: Option<String>,
     /// Whether the portal is enabled for harvesting
     pub enabled: bool,
     /// Portal description

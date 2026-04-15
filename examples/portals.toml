@@ -180,20 +180,50 @@ description = "Luxembourg Open Data Portal (DCAT-AP / udata)"
 # DCAT-AP portals (SPARQL endpoint)
 # =============================================================================
 
-# [[portals]]
-# name = "eu-open-data"
-# url = "https://data.europa.eu"
-# type = "dcat"
-# profile = "sparql"
-# language = "en"
-# enabled = false
-# description = "EU Open Data Portal (SPARQL endpoint, ~1.6M datasets)"
+[[portals]]
+name = "eu-open-data"
+url = "https://data.europa.eu"
+type = "dcat"
+profile = "sparql"
+language = "en"
+enabled = false
+description = "EU Open Data Portal (SPARQL endpoint, ~2M datasets)"
 
-# [[portals]]
-# name = "norway"
-# url = "https://data.norge.no"
-# type = "dcat"
-# profile = "sparql"
-# language = "nb"
-# enabled = false
-# description = "Norwegian Data Portal (SPARQL endpoint)"
+[[portals]]
+name = "norway"
+url = "https://data.norge.no"
+type = "dcat"
+profile = "sparql"
+language = "nb"
+sparql_endpoint = "https://sparql.fellesdatakatalog.digdir.no"
+enabled = false
+description = "Norwegian Data Portal (SPARQL endpoint, ~9k datasets)"
+
+[[portals]]
+name = "spain-datos"
+url = "https://datos.gob.es"
+type = "dcat"
+profile = "sparql"
+language = "es"
+sparql_endpoint = "https://datos.gob.es/virtuoso/sparql"
+enabled = false
+description = "Spanish Government Open Data Portal (SPARQL endpoint, ~113k datasets)"
+
+[[portals]]
+name = "switzerland-lindas"
+url = "https://lindas.admin.ch"
+type = "dcat"
+profile = "sparql"
+language = "de"
+sparql_endpoint = "https://lindas.admin.ch/query"
+enabled = false
+description = "Swiss Federal Linked Data Service (SPARQL endpoint, ~2k datasets)"
+
+[[portals]]
+name = "czech-republic"
+url = "https://data.gov.cz"
+type = "dcat"
+profile = "sparql"
+language = "cs"
+enabled = false
+description = "Czech National Open Data Catalog (SPARQL endpoint)"

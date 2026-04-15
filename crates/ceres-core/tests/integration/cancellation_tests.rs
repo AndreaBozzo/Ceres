@@ -113,6 +113,7 @@ async fn test_batch_harvest_cancellable() {
             url_template: None,
             language: None,
             profile: None,
+            sparql_endpoint: None,
         },
         ceres_core::PortalEntry {
             name: "Portal 2".to_string(),
@@ -123,6 +124,7 @@ async fn test_batch_harvest_cancellable() {
             url_template: None,
             language: None,
             profile: None,
+            sparql_endpoint: None,
         },
     ];
 

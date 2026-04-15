@@ -33,11 +33,21 @@ const PAGE_DELAY: Duration = Duration::from_millis(300);
 
 /// Per-request timeout for SPARQL queries.
 ///
-/// SPARQL queries on large catalogs can be slow, so we use a generous timeout.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// SPARQL queries on large catalogs can be slow — especially deep LIMIT/OFFSET
+/// queries on data.europa.eu (~1.6M datasets). 300s accommodates worst-case pages.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Maximum backoff delay for rate-limited retries.
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+/// Base delay for page-level retries (on top of per-request retries).
+///
+/// When all per-request retries fail, we wait longer before retrying the whole
+/// page to give overloaded SPARQL endpoints time to recover.
+const PAGE_RETRY_BASE_DELAY: Duration = Duration::from_secs(10);
+
+/// Maximum number of page-level retries before giving up on a page.
+const MAX_PAGE_RETRIES: u32 = 3;
 
 /// Default number of results per SPARQL page.
 const DEFAULT_PAGE_SIZE: usize = 1000;
@@ -85,13 +95,19 @@ pub struct SparqlDcatClient {
 impl SparqlDcatClient {
     /// Creates a new SPARQL DCAT client for the specified portal.
     ///
-    /// The SPARQL endpoint is derived by convention as `{base_url}/sparql`.
+    /// The SPARQL endpoint is derived by convention as `{base_url}/sparql`,
+    /// unless a custom endpoint is provided via `sparql_endpoint`.
     ///
     /// # Arguments
     ///
     /// * `base_url_str` - The base URL of the portal (e.g., `https://data.europa.eu`)
     /// * `language` - Preferred language for resolving multilingual fields (e.g., `"en"`, `"nb"`)
-    pub fn new(base_url_str: &str, language: &str) -> Result<Self, AppError> {
+    /// * `sparql_endpoint` - Optional custom SPARQL endpoint URL (overrides `{base_url}/sparql`)
+    pub fn new(
+        base_url_str: &str,
+        language: &str,
+        sparql_endpoint: Option<&str>,
+    ) -> Result<Self, AppError> {
         // Validate language as a BCP47-like tag to prevent SPARQL injection
         if language.is_empty()
             || !language
@@ -106,9 +122,14 @@ impl SparqlDcatClient {
         let base_url = Url::parse(base_url_str)
             .map_err(|_| AppError::InvalidPortalUrl(base_url_str.to_string()))?;
 
-        let endpoint_url = base_url
-            .join("sparql")
-            .map_err(|e| AppError::Generic(format!("Failed to build SPARQL endpoint URL: {e}")))?;
+        let endpoint_url = if let Some(ep) = sparql_endpoint {
+            Url::parse(ep)
+                .map_err(|_| AppError::ConfigError(format!("Invalid sparql_endpoint URL: {ep}")))?
+        } else {
+            base_url.join("sparql").map_err(|e| {
+                AppError::Generic(format!("Failed to build SPARQL endpoint URL: {e}"))
+            })?
+        };
 
         let client = Client::builder()
             .user_agent("Ceres/0.1 (semantic-search-bot)")
@@ -243,44 +264,74 @@ impl SparqlDcatClient {
 
                 let query = self.build_dataset_query(state.offset, filter.as_deref());
 
-                match self.execute_query(&query).await {
-                    Ok(bindings) => {
-                        if bindings.is_empty() {
-                            return None;
-                        }
+                let mut last_err = None;
 
-                        let count = bindings.len();
-                        let datasets = self.bindings_to_datasets(bindings);
+                for page_attempt in 0..=MAX_PAGE_RETRIES {
+                    match self.execute_query(&query).await {
+                        Ok(bindings) => {
+                            if bindings.is_empty() {
+                                return None;
+                            }
 
-                        if count < self.page_size {
-                            state.done = true;
-                        } else {
-                            state.offset += self.page_size;
-                            sleep(PAGE_DELAY).await;
-                        }
+                            let count = bindings.len();
+                            let datasets = self.bindings_to_datasets(bindings);
 
-                        Some((Ok(datasets), state))
-                    }
-                    Err(e) => {
-                        if state.offset == 0 {
-                            // First page failed — propagate error
-                            Some((
-                                Err(e),
-                                PaginationState {
-                                    offset: 0,
-                                    done: true,
-                                },
-                            ))
-                        } else {
-                            tracing::warn!(
+                            tracing::debug!(
                                 offset = state.offset,
-                                error = %e,
-                                "SPARQL page fetch failed; stopping stream"
+                                page_datasets = datasets.len(),
+                                "SPARQL page fetched"
                             );
-                            None
+
+                            if count < self.page_size {
+                                state.done = true;
+                            } else {
+                                state.offset += self.page_size;
+                                sleep(PAGE_DELAY).await;
+                            }
+
+                            return Some((Ok(datasets), state));
+                        }
+                        Err(e) => {
+                            if page_attempt < MAX_PAGE_RETRIES {
+                                let delay = PAGE_RETRY_BASE_DELAY * 2_u32.pow(page_attempt);
+                                tracing::warn!(
+                                    offset = state.offset,
+                                    attempt = page_attempt + 1,
+                                    delay_secs = delay.as_secs(),
+                                    error = %e,
+                                    "SPARQL page fetch failed; retrying after backoff"
+                                );
+                                last_err = Some(e);
+                                sleep(delay).await;
+                                continue;
+                            }
+                            last_err = Some(e);
                         }
                     }
                 }
+
+                // All retries exhausted
+                let e =
+                    last_err.unwrap_or_else(|| AppError::Generic("Page fetch failed".to_string()));
+
+                if state.offset == 0 {
+                    // First page: propagate error so caller knows
+                    return Some((
+                        Err(e),
+                        PaginationState {
+                            offset: 0,
+                            done: true,
+                        },
+                    ));
+                }
+
+                tracing::warn!(
+                    offset = state.offset,
+                    error = %e,
+                    "SPARQL page fetch failed after retries; stopping stream"
+                );
+
+                None
             }
         }))
     }
@@ -297,22 +348,41 @@ impl SparqlDcatClient {
         let mut all_datasets = Vec::new();
         let mut offset = 0usize;
 
-        loop {
+        'pages: loop {
             let query = self.build_dataset_query(offset, extra_filter);
-            let bindings = match self.execute_query(&query).await {
-                Ok(b) => b,
-                Err(e) => {
-                    if all_datasets.is_empty() {
-                        return Err(e);
+
+            let bindings = 'retry: {
+                for page_attempt in 0..=MAX_PAGE_RETRIES {
+                    match self.execute_query(&query).await {
+                        Ok(b) => break 'retry b,
+                        Err(e) => {
+                            if all_datasets.is_empty() && page_attempt == MAX_PAGE_RETRIES {
+                                return Err(e);
+                            }
+                            if page_attempt < MAX_PAGE_RETRIES {
+                                let delay = PAGE_RETRY_BASE_DELAY * 2_u32.pow(page_attempt);
+                                tracing::warn!(
+                                    offset,
+                                    attempt = page_attempt + 1,
+                                    delay_secs = delay.as_secs(),
+                                    error = %e,
+                                    "SPARQL page fetch failed; retrying after backoff"
+                                );
+                                sleep(delay).await;
+                                continue;
+                            }
+                            tracing::warn!(
+                                offset,
+                                collected = all_datasets.len(),
+                                error = %e,
+                                "SPARQL page fetch failed after retries; returning partial results"
+                            );
+                            break 'pages;
+                        }
                     }
-                    tracing::warn!(
-                        offset,
-                        collected = all_datasets.len(),
-                        error = %e,
-                        "SPARQL page fetch failed; returning partial results"
-                    );
-                    break;
                 }
+                // Unreachable: the loop above always breaks or returns.
+                break 'pages;
             };
 
             if bindings.is_empty() {
@@ -321,6 +391,13 @@ impl SparqlDcatClient {
 
             let count = bindings.len();
             let datasets = self.bindings_to_datasets(bindings);
+
+            tracing::debug!(
+                offset,
+                page_datasets = datasets.len(),
+                "SPARQL page fetched"
+            );
+
             all_datasets.extend(datasets);
 
             if count < self.page_size {
@@ -334,9 +411,21 @@ impl SparqlDcatClient {
     }
 
     /// Builds the SPARQL SELECT query for dataset discovery.
+    ///
+    /// The language filter is applied only to `dct:title` (mandatory) to keep the
+    /// query plan simple. Description language selection is handled client-side in
+    /// [`bindings_to_datasets`](Self::bindings_to_datasets) via [`best_value`](Self::best_value).
+    /// Filtering inside `OPTIONAL { dct:description }` causes HTTP 500 on large
+    /// catalogs (e.g., data.europa.eu with ~2M datasets).
     fn build_dataset_query(&self, offset: usize, extra_filter: Option<&str>) -> String {
-        let lang = &self.language;
         let extra = extra_filter.unwrap_or("");
+
+        let title_filter = self
+            .lang_filter_alternatives()
+            .iter()
+            .map(|l| format!("lang(?title) = \"{l}\""))
+            .collect::<Vec<_>>()
+            .join(" || ");
 
         format!(
             "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
@@ -346,14 +435,13 @@ impl SparqlDcatClient {
              WHERE {{\n\
                ?dataset a dcat:Dataset .\n\
                ?dataset dct:title ?title .\n\
-               FILTER (lang(?title) = \"{lang}\" || lang(?title) = \"en\" || lang(?title) = \"\")\n\
-               OPTIONAL {{ ?dataset dct:description ?description .\n\
-                 FILTER (lang(?description) = \"{lang}\" || lang(?description) = \"en\" || lang(?description) = \"\")\n\
-               }}\n\
+               FILTER ({title_filter})\n\
+               OPTIONAL {{ ?dataset dct:description ?description }}\n\
                OPTIONAL {{ ?dataset dct:identifier ?identifier }}\n\
                OPTIONAL {{ ?dataset dct:modified ?modified }}\n\
                {extra}\n\
              }}\n\
+             ORDER BY ?dataset\n\
              LIMIT {} OFFSET {}",
             self.page_size, offset
         )
@@ -454,11 +542,40 @@ impl SparqlDcatClient {
         Err(last_error)
     }
 
+    /// Returns the SPARQL lang() filter alternatives for the preferred language.
+    ///
+    /// Norwegian is special: `"nb"` (Bokmål), `"nn"` (Nynorsk), and `"no"`
+    /// (generic Norwegian) are used interchangeably across portals. When the
+    /// preferred language is any of these, all three variants are matched.
+    fn lang_filter_alternatives(&self) -> Vec<&str> {
+        let lang = self.language.as_str();
+        let mut alts = vec![lang];
+        match lang {
+            "nb" | "nn" | "no" => {
+                for &sibling in &["nb", "nn", "no"] {
+                    if sibling != lang {
+                        alts.push(sibling);
+                    }
+                }
+            }
+            _ => {}
+        }
+        alts.push("en");
+        alts.push(""); // untagged literals
+        alts
+    }
+
+    /// Checks whether two language tags are siblings (same macro-language).
+    fn are_sibling_languages(a: &str, b: &str) -> bool {
+        matches!((a, b), ("nb" | "nn" | "no", "nb" | "nn" | "no"))
+    }
+
     /// Returns a language-preference rank for selecting the best value.
-    /// Higher rank = better match: preferred language > "en" > untagged/other.
+    /// Higher rank = better match: preferred language > sibling > "en" > untagged/other.
     fn lang_rank(&self, lang: Option<&str>) -> u8 {
         match lang {
-            Some(l) if l == self.language => 2,
+            Some(l) if l == self.language => 3,
+            Some(l) if Self::are_sibling_languages(l, &self.language) => 2,
             Some("en") => 1,
             _ => 0,
         }
@@ -484,7 +601,11 @@ impl SparqlDcatClient {
     ///
     /// SPARQL may return multiple rows per dataset (e.g., different language tags).
     /// For each dataset, the title and description with the best language match are selected
-    /// (preferred language > "en" > untagged).
+    /// (preferred language > sibling > "en" > untagged).
+    ///
+    /// After URI-based grouping, results are also deduplicated by identifier to
+    /// prevent `ON CONFLICT` errors during batch upsert (different URIs can map
+    /// to the same identifier via `dct:identifier` or URI last-segment extraction).
     fn bindings_to_datasets(
         &self,
         bindings: Vec<HashMap<String, SparqlValue>>,
@@ -499,6 +620,8 @@ impl SparqlDcatClient {
         }
 
         let mut datasets = Vec::new();
+        let mut seen_identifiers: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         for (dataset_uri, rows) in &grouped {
             let Some(title_val) = self.best_value(rows, "title") else {
@@ -516,6 +639,11 @@ impl SparqlDcatClient {
                 .map(|v| v.value.clone())
                 .find(|s| !s.is_empty())
                 .unwrap_or_else(|| extract_last_segment(dataset_uri));
+
+            // Skip duplicate identifiers (different URIs can resolve to the same id)
+            if !seen_identifiers.insert(identifier.clone()) {
+                continue;
+            }
 
             // Build raw metadata from the row that provided the selected title
             let raw_binding = rows
@@ -620,7 +748,7 @@ mod tests {
 
     #[test]
     fn bindings_to_datasets_basic() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en").unwrap();
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         let resp: SparqlResponse = serde_json::from_str(sample_sparql_json()).unwrap();
         let datasets = client.bindings_to_datasets(resp.results.bindings);
 
@@ -646,7 +774,7 @@ mod tests {
 
     #[test]
     fn bindings_deduplicates_by_uri() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en").unwrap();
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         let json = r#"{
             "results": {
                 "bindings": [
@@ -668,7 +796,7 @@ mod tests {
 
     #[test]
     fn bindings_prefers_requested_language() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "nb").unwrap();
+        let client = SparqlDcatClient::new("https://data.europa.eu", "nb", None).unwrap();
         let json = r#"{
             "results": {
                 "bindings": [
@@ -697,7 +825,7 @@ mod tests {
 
     #[test]
     fn bindings_skip_empty_title() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en").unwrap();
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         let json = r#"{
             "results": {
                 "bindings": [
@@ -740,25 +868,31 @@ mod tests {
 
     #[test]
     fn build_dataset_query_basic() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en").unwrap();
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         let query = client.build_dataset_query(0, None);
         assert!(query.contains("dcat:Dataset"));
         assert!(query.contains("dct:title"));
+        assert!(query.contains("ORDER BY ?dataset"));
         assert!(query.contains("LIMIT 1000 OFFSET 0"));
         assert!(query.contains("lang(?title) = \"en\""));
+        // Description filter should NOT be in the query (moved to client-side)
+        assert!(!query.contains("lang(?description)"));
     }
 
     #[test]
     fn build_dataset_query_with_offset() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "nb").unwrap();
+        let client = SparqlDcatClient::new("https://data.europa.eu", "nb", None).unwrap();
         let query = client.build_dataset_query(2000, None);
         assert!(query.contains("LIMIT 1000 OFFSET 2000"));
         assert!(query.contains("lang(?title) = \"nb\""));
+        // Norwegian language siblings should all be in the filter
+        assert!(query.contains("lang(?title) = \"nn\""));
+        assert!(query.contains("lang(?title) = \"no\""));
     }
 
     #[test]
     fn build_dataset_query_with_filter() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en").unwrap();
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         let filter = "FILTER (?modified > \"2026-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)";
         let query = client.build_dataset_query(0, Some(filter));
         assert!(query.contains(filter));
@@ -768,7 +902,7 @@ mod tests {
 
     #[test]
     fn sparql_client_new_valid() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en").unwrap();
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         assert_eq!(client.portal_type(), "dcat");
         assert_eq!(client.base_url(), "https://data.europa.eu/");
         assert_eq!(
@@ -778,18 +912,58 @@ mod tests {
     }
 
     #[test]
+    fn sparql_client_new_with_custom_endpoint() {
+        let client = SparqlDcatClient::new(
+            "https://data.norge.no",
+            "nb",
+            Some("https://sparql.fellesdatakatalog.digdir.no"),
+        )
+        .unwrap();
+        assert_eq!(client.base_url(), "https://data.norge.no/");
+        assert_eq!(
+            client.endpoint_url.as_str(),
+            "https://sparql.fellesdatakatalog.digdir.no/"
+        );
+    }
+
+    #[test]
     fn sparql_client_new_invalid_url() {
-        let result = SparqlDcatClient::new("not-a-url", "en");
+        let result = SparqlDcatClient::new("not-a-url", "en", None);
         assert!(matches!(result, Err(AppError::InvalidPortalUrl(_))));
     }
 
     #[test]
     fn sparql_client_rejects_invalid_language() {
-        let result = SparqlDcatClient::new("https://data.europa.eu", "en\"}");
+        let result = SparqlDcatClient::new("https://data.europa.eu", "en\"}", None);
         assert!(matches!(result, Err(AppError::ConfigError(_))));
 
-        let result = SparqlDcatClient::new("https://data.europa.eu", "");
+        let result = SparqlDcatClient::new("https://data.europa.eu", "", None);
         assert!(matches!(result, Err(AppError::ConfigError(_))));
+    }
+
+    #[test]
+    fn bindings_deduplicates_by_identifier() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        // Two different URIs that resolve to the same identifier via last-segment extraction
+        let json = r#"{
+            "results": {
+                "bindings": [
+                    {
+                        "dataset": { "type": "uri", "value": "https://example.org/a/shared-id" },
+                        "title": { "type": "literal", "value": "First", "xml:lang": "en" }
+                    },
+                    {
+                        "dataset": { "type": "uri", "value": "https://example.org/b/shared-id" },
+                        "title": { "type": "literal", "value": "Second", "xml:lang": "en" }
+                    }
+                ]
+            }
+        }"#;
+        let resp: SparqlResponse = serde_json::from_str(json).unwrap();
+        let datasets = client.bindings_to_datasets(resp.results.bindings);
+        // Both URIs extract "shared-id" as identifier — only the first should survive
+        assert_eq!(datasets.len(), 1);
+        assert_eq!(datasets[0].identifier, "shared-id");
     }
 
     // ---- binding_to_json ---------------------------------------------------
@@ -824,7 +998,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires network access to data.europa.eu"]
     async fn test_sparql_smoke_europa() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en").unwrap();
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         let count = client.dataset_count().await.unwrap();
         assert!(count > 100, "Expected >100 datasets, got {}", count);
 

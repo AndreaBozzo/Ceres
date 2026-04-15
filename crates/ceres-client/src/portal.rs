@@ -190,12 +190,15 @@ impl PortalClientFactory for PortalClientFactoryEnum {
         portal_type: PortalType,
         language: &str,
         profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         match portal_type {
             PortalType::Ckan => Ok(PortalClientEnum::Ckan(CkanClient::new(portal_url)?)),
             PortalType::Dcat => match profile {
                 Some("sparql") => Ok(PortalClientEnum::SparqlDcat(SparqlDcatClient::new(
-                    portal_url, language,
+                    portal_url,
+                    language,
+                    sparql_endpoint,
                 )?)),
                 None | Some("" | "udata_rest") => Ok(PortalClientEnum::Dcat(DcatClient::new(
                     portal_url, language,
@@ -224,6 +227,7 @@ mod tests {
             PortalType::Ckan,
             "en",
             None,
+            None,
         );
         assert!(client.is_ok());
         let client = client.unwrap();
@@ -234,7 +238,7 @@ mod tests {
     #[test]
     fn test_factory_creates_dcat_client() {
         let factory = PortalClientFactoryEnum::new();
-        let client = factory.create("https://data.public.lu", PortalType::Dcat, "fr", None);
+        let client = factory.create("https://data.public.lu", PortalType::Dcat, "fr", None, None);
         assert!(client.is_ok());
         let client = client.unwrap();
         assert_eq!(client.portal_type(), "dcat");
@@ -249,6 +253,7 @@ mod tests {
             PortalType::Dcat,
             "en",
             Some("sparql"),
+            None,
         );
         assert!(client.is_ok());
         let client = client.unwrap();
@@ -258,10 +263,27 @@ mod tests {
     }
 
     #[test]
+    fn test_factory_creates_sparql_dcat_client_with_custom_endpoint() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory.create(
+            "https://data.norge.no",
+            PortalType::Dcat,
+            "nb",
+            Some("sparql"),
+            Some("https://sparql.fellesdatakatalog.digdir.no"),
+        );
+        assert!(client.is_ok());
+        let client = client.unwrap();
+        assert_eq!(client.portal_type(), "dcat");
+        assert_eq!(client.base_url(), "https://data.norge.no/");
+        assert!(matches!(client, PortalClientEnum::SparqlDcat(_)));
+    }
+
+    #[test]
     fn test_factory_dcat_default_profile_is_udata_rest() {
         let factory = PortalClientFactoryEnum::new();
         let client = factory
-            .create("https://data.public.lu", PortalType::Dcat, "fr", None)
+            .create("https://data.public.lu", PortalType::Dcat, "fr", None, None)
             .unwrap();
         assert!(matches!(client, PortalClientEnum::Dcat(_)));
     }
@@ -274,6 +296,7 @@ mod tests {
             PortalType::Dcat,
             "en",
             Some("spqarql"),
+            None,
         );
         assert!(result.is_err());
     }
@@ -285,6 +308,7 @@ mod tests {
             "https://data.cityofnewyork.us",
             PortalType::Socrata,
             "en",
+            None,
             None,
         );
         assert!(result.is_err());

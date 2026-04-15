@@ -310,6 +310,7 @@ where
             &SilentReporter,
             PortalType::default(),
             None,
+            None,
         )
         .await
     }
@@ -324,6 +325,7 @@ where
     /// 1. If `force_full_sync` is enabled or this is the first sync: full sync
     /// 2. Otherwise, attempt incremental sync using `metadata_modified` filter
     /// 3. If incremental fails, fall back to full sync with a warning
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_portal_with_progress<R: ProgressReporter>(
         &self,
         portal_url: &str,
@@ -332,6 +334,7 @@ where
         reporter: &R,
         portal_type: PortalType,
         profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<SyncStats, AppError> {
         let result = self
             .sync_portal_with_progress_cancellable_internal(
@@ -343,6 +346,7 @@ where
                 self.config.force_full_sync,
                 portal_type,
                 profile,
+                sparql_endpoint,
             )
             .await?;
         Ok(result.stats)
@@ -480,6 +484,7 @@ where
             self.config.force_full_sync,
             PortalType::default(),
             None,
+            None,
         )
         .await
     }
@@ -495,6 +500,7 @@ where
         cancel_token: CancellationToken,
         portal_type: PortalType,
         profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
@@ -505,6 +511,7 @@ where
             self.config.force_full_sync,
             portal_type,
             profile,
+            sparql_endpoint,
         )
         .await
     }
@@ -522,6 +529,7 @@ where
         force_full_sync: bool,
         portal_type: PortalType,
         profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         let force_full_sync = self.config.force_full_sync || force_full_sync;
         self.sync_portal_with_progress_cancellable_internal(
@@ -533,6 +541,7 @@ where
             force_full_sync,
             portal_type,
             profile,
+            sparql_endpoint,
         )
         .await
     }
@@ -548,6 +557,7 @@ where
         force_full_sync: bool,
         portal_type: PortalType,
         profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         let sync_start = Utc::now();
 
@@ -569,9 +579,13 @@ where
             return Ok(SyncResult::cancelled(SyncStats::default()));
         }
 
-        let portal_client =
-            self.portal_factory
-                .create(portal_url, portal_type, language, profile)?;
+        let portal_client = self.portal_factory.create(
+            portal_url,
+            portal_type,
+            language,
+            profile,
+            sparql_endpoint,
+        )?;
 
         // Determine sync plan (IDs for full sync, datasets for incremental)
         let (sync_mode, plan) = self
@@ -1247,6 +1261,7 @@ where
                     cancel_token.clone(),
                     portal.portal_type,
                     portal.profile(),
+                    portal.sparql_endpoint(),
                 )
                 .await
             {
