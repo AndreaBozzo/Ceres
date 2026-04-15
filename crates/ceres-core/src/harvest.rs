@@ -1189,8 +1189,30 @@ where
         store: &S,
         stats: &Arc<AtomicSyncStats>,
     ) {
-        let outcomes: Vec<SyncOutcome> = batch.iter().map(|i| i.outcome).collect();
-        let datasets: Vec<NewDataset> = batch.into_iter().map(|i| i.dataset).collect();
+        // Deduplicate within the batch by (original_id, source_portal) to avoid
+        // "ON CONFLICT DO UPDATE command cannot affect row a second time" errors.
+        // This can happen when SPARQL LIMIT/OFFSET returns the same dataset on
+        // adjacent pages (a known Virtuoso issue with non-deterministic ordering).
+        let mut seen = std::collections::HashSet::new();
+        let mut deduped = Vec::with_capacity(batch.len());
+        let mut dup_count = 0usize;
+        for item in batch {
+            let key = (
+                item.dataset.original_id.clone(),
+                item.dataset.source_portal.clone(),
+            );
+            if seen.insert(key) {
+                deduped.push(item);
+            } else {
+                dup_count += 1;
+            }
+        }
+        if dup_count > 0 {
+            tracing::debug!(dup_count, "Removed duplicate datasets within upsert batch");
+        }
+
+        let outcomes: Vec<SyncOutcome> = deduped.iter().map(|i| i.outcome).collect();
+        let datasets: Vec<NewDataset> = deduped.into_iter().map(|i| i.dataset).collect();
 
         match store.batch_upsert(&datasets).await {
             Ok(_) => {

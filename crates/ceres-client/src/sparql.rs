@@ -52,6 +52,10 @@ const MAX_PAGE_RETRIES: u32 = 3;
 /// Default number of results per SPARQL page.
 const DEFAULT_PAGE_SIZE: usize = 1000;
 
+/// Minimum page size for adaptive reduction. Below this we give up rather than
+/// issuing very small queries.
+const MIN_PAGE_SIZE: usize = 50;
+
 // =============================================================================
 // SPARQL JSON Results Format (W3C standard)
 // =============================================================================
@@ -165,6 +169,7 @@ impl SparqlDcatClient {
             let query = format!(
                 "SELECT DISTINCT ?dataset \
                  WHERE {{ ?dataset a <http://www.w3.org/ns/dcat#Dataset> }} \
+                 ORDER BY ?dataset \
                  LIMIT {} OFFSET {}",
                 self.page_size, offset
             );
@@ -247,11 +252,15 @@ impl SparqlDcatClient {
 
         struct PaginationState {
             offset: usize,
+            page_size: usize,
+            fetched: usize,
             done: bool,
         }
 
         let initial = PaginationState {
             offset: 0,
+            page_size: self.page_size,
+            fetched: 0,
             done: false,
         };
 
@@ -262,7 +271,11 @@ impl SparqlDcatClient {
                     return None;
                 }
 
-                let query = self.build_dataset_query(state.offset, filter.as_deref());
+                let query = self.build_dataset_query_with_limit(
+                    state.offset,
+                    state.page_size,
+                    filter.as_deref(),
+                );
 
                 let mut last_err = None;
 
@@ -276,22 +289,40 @@ impl SparqlDcatClient {
                             let count = bindings.len();
                             let datasets = self.bindings_to_datasets(bindings);
 
+                            state.fetched += datasets.len();
                             tracing::debug!(
                                 offset = state.offset,
+                                page_size = state.page_size,
                                 page_datasets = datasets.len(),
+                                total_fetched = state.fetched,
                                 "SPARQL page fetched"
                             );
 
-                            if count < self.page_size {
+                            if count < state.page_size {
                                 state.done = true;
                             } else {
-                                state.offset += self.page_size;
+                                state.offset += state.page_size;
                                 sleep(PAGE_DELAY).await;
                             }
 
                             return Some((Ok(datasets), state));
                         }
                         Err(e) => {
+                            // On server overload, try reducing page size first.
+                            if is_server_overload(&e) && state.page_size > MIN_PAGE_SIZE {
+                                let new_size = (state.page_size / 2).max(MIN_PAGE_SIZE);
+                                tracing::warn!(
+                                    offset = state.offset,
+                                    old_page_size = state.page_size,
+                                    new_page_size = new_size,
+                                    error = %e,
+                                    "SPARQL server overload; reducing page size and retrying"
+                                );
+                                state.page_size = new_size;
+                                sleep(PAGE_RETRY_BASE_DELAY).await;
+                                return Some((Ok(vec![]), state));
+                            }
+
                             if page_attempt < MAX_PAGE_RETRIES {
                                 let delay = PAGE_RETRY_BASE_DELAY * 2_u32.pow(page_attempt);
                                 tracing::warn!(
@@ -319,14 +350,15 @@ impl SparqlDcatClient {
                     return Some((
                         Err(e),
                         PaginationState {
-                            offset: 0,
                             done: true,
+                            ..state
                         },
                     ));
                 }
 
                 tracing::warn!(
                     offset = state.offset,
+                    fetched = state.fetched,
                     error = %e,
                     "SPARQL page fetch failed after retries; stopping stream"
                 );
@@ -340,22 +372,39 @@ impl SparqlDcatClient {
     // Internal helpers
     // =========================================================================
 
-    /// Core paginated SPARQL fetcher.
+    /// Core paginated SPARQL fetcher using cursor-based (keyset) pagination.
     async fn paginate_sparql(
         &self,
         extra_filter: Option<&str>,
     ) -> Result<Vec<DcatDataset>, AppError> {
         let mut all_datasets = Vec::new();
         let mut offset = 0usize;
+        let mut current_page_size = self.page_size;
 
         'pages: loop {
-            let query = self.build_dataset_query(offset, extra_filter);
+            let query =
+                self.build_dataset_query_with_limit(offset, current_page_size, extra_filter);
 
             let bindings = 'retry: {
                 for page_attempt in 0..=MAX_PAGE_RETRIES {
                     match self.execute_query(&query).await {
                         Ok(b) => break 'retry b,
                         Err(e) => {
+                            // Adaptive page size reduction on server overload
+                            if is_server_overload(&e) && current_page_size > MIN_PAGE_SIZE {
+                                let new_size = (current_page_size / 2).max(MIN_PAGE_SIZE);
+                                tracing::warn!(
+                                    offset,
+                                    old_page_size = current_page_size,
+                                    new_page_size = new_size,
+                                    error = %e,
+                                    "SPARQL server overload; reducing page size and retrying"
+                                );
+                                current_page_size = new_size;
+                                sleep(PAGE_RETRY_BASE_DELAY).await;
+                                continue 'pages;
+                            }
+
                             if all_datasets.is_empty() && page_attempt == MAX_PAGE_RETRIES {
                                 return Err(e);
                             }
@@ -394,16 +443,18 @@ impl SparqlDcatClient {
 
             tracing::debug!(
                 offset,
+                page_size = current_page_size,
                 page_datasets = datasets.len(),
+                total_fetched = all_datasets.len() + datasets.len(),
                 "SPARQL page fetched"
             );
 
             all_datasets.extend(datasets);
 
-            if count < self.page_size {
+            if count < current_page_size {
                 break;
             }
-            offset += self.page_size;
+            offset += current_page_size;
             sleep(PAGE_DELAY).await;
         }
 
@@ -417,7 +468,17 @@ impl SparqlDcatClient {
     /// [`bindings_to_datasets`](Self::bindings_to_datasets) via [`best_value`](Self::best_value).
     /// Filtering inside `OPTIONAL { dct:description }` causes HTTP 500 on large
     /// catalogs (e.g., data.europa.eu with ~2M datasets).
+    #[cfg(test)]
     fn build_dataset_query(&self, offset: usize, extra_filter: Option<&str>) -> String {
+        self.build_dataset_query_with_limit(offset, self.page_size, extra_filter)
+    }
+
+    fn build_dataset_query_with_limit(
+        &self,
+        offset: usize,
+        limit: usize,
+        extra_filter: Option<&str>,
+    ) -> String {
         let extra = extra_filter.unwrap_or("");
 
         let title_filter = self
@@ -442,8 +503,7 @@ impl SparqlDcatClient {
                {extra}\n\
              }}\n\
              ORDER BY ?dataset\n\
-             LIMIT {} OFFSET {}",
-            self.page_size, offset
+             LIMIT {limit} OFFSET {offset}",
         )
     }
 
@@ -668,6 +728,20 @@ impl SparqlDcatClient {
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+/// Returns `true` if the error looks like a server-side overload (HTTP 500, 502,
+/// 503, 504, or a client-side request timeout). Used to trigger adaptive page
+/// size reduction — SPARQL endpoints commonly return 500 when queries are too
+/// heavy, not just 504.
+fn is_server_overload(e: &AppError) -> bool {
+    let msg = e.to_string();
+    msg.contains("HTTP 500")
+        || msg.contains("HTTP 502")
+        || msg.contains("HTTP 503")
+        || msg.contains("HTTP 504")
+        || msg.contains("timed out")
+        || msg.contains("timeout")
+}
 
 /// Extracts the last non-empty path segment from a URI.
 fn extract_last_segment(uri: &str) -> String {
