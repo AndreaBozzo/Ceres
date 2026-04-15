@@ -169,7 +169,6 @@ impl SparqlDcatClient {
             let query = format!(
                 "SELECT DISTINCT ?dataset \
                  WHERE {{ ?dataset a <http://www.w3.org/ns/dcat#Dataset> }} \
-                 ORDER BY ?dataset \
                  LIMIT {} OFFSET {}",
                 self.page_size, offset
             );
@@ -502,7 +501,6 @@ impl SparqlDcatClient {
                OPTIONAL {{ ?dataset dct:modified ?modified }}\n\
                {extra}\n\
              }}\n\
-             ORDER BY ?dataset\n\
              LIMIT {limit} OFFSET {offset}",
         )
     }
@@ -946,7 +944,7 @@ mod tests {
         let query = client.build_dataset_query(0, None);
         assert!(query.contains("dcat:Dataset"));
         assert!(query.contains("dct:title"));
-        assert!(query.contains("ORDER BY ?dataset"));
+        assert!(!query.contains("ORDER BY"));
         assert!(query.contains("LIMIT 1000 OFFSET 0"));
         assert!(query.contains("lang(?title) = \"en\""));
         // Description filter should NOT be in the query (moved to client-side)
