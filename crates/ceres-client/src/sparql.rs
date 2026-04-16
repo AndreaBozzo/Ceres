@@ -49,12 +49,21 @@ const PAGE_RETRY_BASE_DELAY: Duration = Duration::from_secs(10);
 /// Maximum number of page-level retries before giving up on a page.
 const MAX_PAGE_RETRIES: u32 = 3;
 
+/// Maximum consecutive skipped pages before stopping the stream entirely.
+/// If this many pages in a row fail even after retries, the endpoint is
+/// considered down rather than just struggling at specific offsets.
+const MAX_CONSECUTIVE_SKIPS: usize = 3;
+
 /// Default number of results per SPARQL page.
 const DEFAULT_PAGE_SIZE: usize = 1000;
 
 /// Minimum page size for adaptive reduction. Below this we give up rather than
 /// issuing very small queries.
 const MIN_PAGE_SIZE: usize = 50;
+
+/// Number of dataset URIs to look up per VALUES batch in two-phase harvest.
+/// Tested at 500 URIs → ~400ms on data.europa.eu.
+const VALUES_BATCH_SIZE: usize = 200;
 
 // =============================================================================
 // SPARQL JSON Results Format (W3C standard)
@@ -234,135 +243,172 @@ impl SparqlDcatClient {
             .ok_or_else(|| AppError::Generic("Failed to parse dataset count".to_string()))
     }
 
-    /// Streams catalog datasets page-by-page using LIMIT/OFFSET pagination.
+    /// Streams catalog datasets using a two-phase approach:
     ///
-    /// Each yielded item contains the datasets extracted from one SPARQL page.
-    /// Memory is bounded to a single page at a time.
+    /// 1. **URI collection** — lightweight `SELECT DISTINCT ?dataset` pages that
+    ///    work reliably even at deep offsets (tested to 1.9M on data.europa.eu).
+    /// 2. **Detail fetch** — for each batch of URIs, a `VALUES`-scoped query
+    ///    retrieves title/description/identifier/modified without OFFSET.
+    ///
+    /// This avoids the query-plan explosion that LIMIT/OFFSET causes on large
+    /// Virtuoso catalogs when combined with OPTIONAL clauses.
     pub fn paginate_sparql_stream(
         &self,
-        modified_since: Option<String>,
+        _modified_since: Option<String>,
     ) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
-        let filter = modified_since.map(|since| {
-            format!(
-                "FILTER (?modified > \"{}\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
-                since
-            )
-        });
-
-        struct PaginationState {
-            offset: usize,
-            page_size: usize,
+        /// State machine for the two-phase unfold.
+        struct TwoPhaseState {
+            /// Current offset into the lightweight URI enumeration.
+            uri_offset: usize,
+            /// URIs collected but not yet detail-fetched.
+            pending_uris: Vec<String>,
+            /// Total datasets yielded so far.
             fetched: usize,
+            /// URI enumeration finished?
+            uris_done: bool,
+            /// Whole stream finished?
             done: bool,
+            /// Pages where URI fetch failed (for incomplete-harvest signaling).
+            skipped_uri_pages: usize,
+            /// Consecutive URI-page failures (stop after MAX_CONSECUTIVE_SKIPS).
+            consecutive_uri_skips: usize,
         }
 
-        let initial = PaginationState {
-            offset: 0,
-            page_size: self.page_size,
+        let initial = TwoPhaseState {
+            uri_offset: 0,
+            pending_uris: Vec::new(),
             fetched: 0,
+            uris_done: false,
             done: false,
+            skipped_uri_pages: 0,
+            consecutive_uri_skips: 0,
         };
 
         Box::pin(futures::stream::unfold(initial, move |mut state| {
-            let filter = filter.clone();
             async move {
                 if state.done {
+                    // Yield a final error if any work was skipped, so the
+                    // harvest records a failure (prevents stale-marking).
+                    if state.skipped_uri_pages > 0 {
+                        return Some((
+                            Err(AppError::Generic(format!(
+                                "SPARQL harvest incomplete: {} pages skipped, fetched {} datasets",
+                                state.skipped_uri_pages, state.fetched
+                            ))),
+                            TwoPhaseState {
+                                skipped_uri_pages: 0,
+                                ..state
+                            },
+                        ));
+                    }
                     return None;
                 }
 
-                let query = self.build_dataset_query_with_limit(
-                    state.offset,
-                    state.page_size,
-                    filter.as_deref(),
-                );
+                // -- Fill the URI buffer until we have a full VALUES batch ----
+                while !state.uris_done && state.pending_uris.len() < VALUES_BATCH_SIZE {
+                    match self.fetch_uri_page(state.uri_offset).await {
+                        Ok(uris) => {
+                            state.consecutive_uri_skips = 0;
+                            let page_full = uris.len() >= self.page_size;
 
-                let mut last_err = None;
-
-                for page_attempt in 0..=MAX_PAGE_RETRIES {
-                    match self.execute_query(&query).await {
-                        Ok(bindings) => {
-                            if bindings.is_empty() {
-                                return None;
-                            }
-
-                            let count = bindings.len();
-                            let datasets = self.bindings_to_datasets(bindings);
-
-                            state.fetched += datasets.len();
                             tracing::debug!(
-                                offset = state.offset,
-                                page_size = state.page_size,
-                                page_datasets = datasets.len(),
-                                total_fetched = state.fetched,
-                                "SPARQL page fetched"
+                                uri_offset = state.uri_offset,
+                                page_uris = uris.len(),
+                                "SPARQL URI page fetched"
                             );
 
-                            if count < state.page_size {
-                                state.done = true;
+                            state.pending_uris.extend(uris);
+                            state.uri_offset += self.page_size;
+
+                            if !page_full {
+                                state.uris_done = true;
                             } else {
-                                state.offset += state.page_size;
                                 sleep(PAGE_DELAY).await;
                             }
-
-                            return Some((Ok(datasets), state));
                         }
                         Err(e) => {
-                            // On server overload, try reducing page size first.
-                            if is_server_overload(&e) && state.page_size > MIN_PAGE_SIZE {
-                                let new_size = (state.page_size / 2).max(MIN_PAGE_SIZE);
-                                tracing::warn!(
-                                    offset = state.offset,
-                                    old_page_size = state.page_size,
-                                    new_page_size = new_size,
-                                    error = %e,
-                                    "SPARQL server overload; reducing page size and retrying"
-                                );
-                                state.page_size = new_size;
-                                sleep(PAGE_RETRY_BASE_DELAY).await;
-                                return Some((Ok(vec![]), state));
+                            // First page failure: propagate immediately.
+                            if state.uri_offset == 0 && state.pending_uris.is_empty() {
+                                return Some((
+                                    Err(e),
+                                    TwoPhaseState {
+                                        done: true,
+                                        ..state
+                                    },
+                                ));
                             }
+                            state.skipped_uri_pages += 1;
+                            state.consecutive_uri_skips += 1;
+                            tracing::warn!(
+                                uri_offset = state.uri_offset,
+                                skipped = state.skipped_uri_pages,
+                                error = %e,
+                                "SPARQL URI page failed; skipping"
+                            );
+                            state.uri_offset += self.page_size;
 
-                            if page_attempt < MAX_PAGE_RETRIES {
-                                let delay = PAGE_RETRY_BASE_DELAY * 2_u32.pow(page_attempt);
+                            if state.consecutive_uri_skips >= MAX_CONSECUTIVE_SKIPS {
                                 tracing::warn!(
-                                    offset = state.offset,
-                                    attempt = page_attempt + 1,
-                                    delay_secs = delay.as_secs(),
-                                    error = %e,
-                                    "SPARQL page fetch failed; retrying after backoff"
+                                    "SPARQL URI enumeration: {} consecutive failures; stopping",
+                                    MAX_CONSECUTIVE_SKIPS
                                 );
-                                last_err = Some(e);
-                                sleep(delay).await;
-                                continue;
+                                state.uris_done = true;
+                            } else {
+                                sleep(PAGE_RETRY_BASE_DELAY).await;
                             }
-                            last_err = Some(e);
                         }
                     }
                 }
 
-                // All retries exhausted
-                let e =
-                    last_err.unwrap_or_else(|| AppError::Generic("Page fetch failed".to_string()));
-
-                if state.offset == 0 {
-                    // First page: propagate error so caller knows
-                    return Some((
-                        Err(e),
-                        PaginationState {
-                            done: true,
-                            ..state
-                        },
-                    ));
+                // -- Nothing left to detail-fetch? We're done. ----------------
+                if state.pending_uris.is_empty() {
+                    if state.skipped_uri_pages > 0 {
+                        state.done = true;
+                        return Some((
+                            Err(AppError::Generic(format!(
+                                "SPARQL harvest incomplete: {} URI pages skipped, fetched {} datasets",
+                                state.skipped_uri_pages, state.fetched
+                            ))),
+                            state,
+                        ));
+                    }
+                    return None;
                 }
 
-                tracing::warn!(
-                    offset = state.offset,
-                    fetched = state.fetched,
-                    error = %e,
-                    "SPARQL page fetch failed after retries; stopping stream"
-                );
+                // -- Phase 2: detail-fetch a VALUES batch ---------------------
+                let batch_size = state.pending_uris.len().min(VALUES_BATCH_SIZE);
+                let batch_uris: Vec<String> = state.pending_uris.drain(..batch_size).collect();
 
-                None
+                match self.fetch_details_batch(&batch_uris).await {
+                    Ok(datasets) => {
+                        state.fetched += datasets.len();
+                        tracing::debug!(
+                            batch_uris = batch_uris.len(),
+                            datasets = datasets.len(),
+                            total_fetched = state.fetched,
+                            "SPARQL detail batch fetched"
+                        );
+
+                        // If no more URIs to collect and buffer is empty, mark done
+                        if state.uris_done && state.pending_uris.is_empty() {
+                            state.done = true;
+                        }
+                        Some((Ok(datasets), state))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            batch_uris = batch_uris.len(),
+                            error = %e,
+                            "SPARQL detail batch failed; skipping batch"
+                        );
+                        state.skipped_uri_pages += 1; // reuse counter for any skipped work
+                        // Continue — don't stop the stream for one bad detail batch
+                        if state.uris_done && state.pending_uris.is_empty() {
+                            state.done = true;
+                        }
+                        Some((Ok(vec![]), state))
+                    }
+                }
             }
         }))
     }
@@ -371,7 +417,67 @@ impl SparqlDcatClient {
     // Internal helpers
     // =========================================================================
 
-    /// Core paginated SPARQL fetcher using cursor-based (keyset) pagination.
+    /// Phase 1: fetch one page of dataset URIs via the lightweight enumeration query.
+    ///
+    /// Uses page-level retries with adaptive page-size reduction, matching the
+    /// retry policy of the old single-phase approach.
+    async fn fetch_uri_page(&self, offset: usize) -> Result<Vec<String>, AppError> {
+        let query = format!(
+            "SELECT DISTINCT ?dataset \
+             WHERE {{ ?dataset a <http://www.w3.org/ns/dcat#Dataset> }} \
+             LIMIT {} OFFSET {}",
+            self.page_size, offset
+        );
+
+        let bindings = self.execute_query(&query).await?;
+        Ok(bindings
+            .into_iter()
+            .filter_map(|mut b| b.remove("dataset").map(|v| v.value))
+            .collect())
+    }
+
+    /// Phase 2: fetch full metadata for a batch of dataset URIs using a VALUES query.
+    ///
+    /// The VALUES clause scopes the query to specific URIs — no OFFSET needed,
+    /// so there's no query-plan explosion on large catalogs.
+    async fn fetch_details_batch(&self, uris: &[String]) -> Result<Vec<DcatDataset>, AppError> {
+        if uris.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let values_clause: String = uris
+            .iter()
+            .map(|u| format!("(<{u}>)"))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let title_filter = self
+            .lang_filter_alternatives()
+            .iter()
+            .map(|l| format!("lang(?title) = \"{l}\""))
+            .collect::<Vec<_>>()
+            .join(" || ");
+
+        let query = format!(
+            "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+             PREFIX dct:  <http://purl.org/dc/terms/>\n\
+             \n\
+             SELECT ?dataset ?title ?description ?identifier ?modified\n\
+             WHERE {{\n\
+               VALUES (?dataset) {{ {values_clause} }}\n\
+               ?dataset dct:title ?title .\n\
+               FILTER ({title_filter})\n\
+               OPTIONAL {{ ?dataset dct:description ?description }}\n\
+               OPTIONAL {{ ?dataset dct:identifier ?identifier }}\n\
+               OPTIONAL {{ ?dataset dct:modified ?modified }}\n\
+             }}",
+        );
+
+        let bindings = self.execute_query(&query).await?;
+        Ok(self.bindings_to_datasets(bindings))
+    }
+
+    /// Core paginated SPARQL fetcher (non-streaming, used by search_modified_since).
     async fn paginate_sparql(
         &self,
         extra_filter: Option<&str>,
