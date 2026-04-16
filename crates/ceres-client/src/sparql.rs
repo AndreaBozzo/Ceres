@@ -383,36 +383,56 @@ impl SparqlDcatClient {
                 let batch_size = state.pending_uris.len().min(VALUES_BATCH_SIZE);
                 let batch_uris: Vec<String> = state.pending_uris.drain(..batch_size).collect();
 
-                match self.fetch_details_batch(&batch_uris).await {
-                    Ok(datasets) => {
-                        state.fetched += datasets.len();
-                        tracing::debug!(
-                            batch_uris = batch_uris.len(),
-                            datasets = datasets.len(),
-                            total_fetched = state.fetched,
-                            "SPARQL detail batch fetched"
-                        );
+                // Retry detail batch with backoff before giving up.
+                let mut last_err = None;
+                for attempt in 0..=MAX_PAGE_RETRIES {
+                    match self.fetch_details_batch(&batch_uris).await {
+                        Ok(datasets) => {
+                            state.fetched += datasets.len();
+                            tracing::debug!(
+                                batch_uris = batch_uris.len(),
+                                datasets = datasets.len(),
+                                total_fetched = state.fetched,
+                                "SPARQL detail batch fetched"
+                            );
 
-                        // If no more URIs to collect and buffer is empty, mark done
-                        if state.uris_done && state.pending_uris.is_empty() {
-                            state.done = true;
+                            if state.uris_done && state.pending_uris.is_empty() {
+                                state.done = true;
+                            }
+                            sleep(PAGE_DELAY).await;
+                            return Some((Ok(datasets), state));
                         }
-                        Some((Ok(datasets), state))
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            batch_uris = batch_uris.len(),
-                            error = %e,
-                            "SPARQL detail batch failed; skipping batch"
-                        );
-                        state.skipped_detail_batches += 1;
-                        // Continue — don't stop the stream for one bad detail batch
-                        if state.uris_done && state.pending_uris.is_empty() {
-                            state.done = true;
+                        Err(e) => {
+                            if attempt < MAX_PAGE_RETRIES {
+                                let delay = PAGE_RETRY_BASE_DELAY * 2_u32.pow(attempt);
+                                tracing::warn!(
+                                    batch_uris = batch_uris.len(),
+                                    attempt = attempt + 1,
+                                    delay_secs = delay.as_secs(),
+                                    error = %e,
+                                    "SPARQL detail batch failed; retrying after backoff"
+                                );
+                                sleep(delay).await;
+                            }
+                            last_err = Some(e);
                         }
-                        Some((Ok(vec![]), state))
                     }
                 }
+
+                // All retries exhausted for this detail batch.
+                let e = last_err.unwrap();
+                tracing::warn!(
+                    batch_uris = batch_uris.len(),
+                    error = %e,
+                    "SPARQL detail batch failed after retries; skipping batch"
+                );
+                state.skipped_detail_batches += 1;
+                if state.uris_done && state.pending_uris.is_empty() {
+                    state.done = true;
+                }
+                // Back off before continuing to next batch.
+                sleep(PAGE_RETRY_BASE_DELAY).await;
+                Some((Ok(vec![]), state))
             }
         }))
     }
