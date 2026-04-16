@@ -268,8 +268,10 @@ impl SparqlDcatClient {
             uris_done: bool,
             /// Whole stream finished?
             done: bool,
-            /// Pages where URI fetch failed (for incomplete-harvest signaling).
+            /// URI pages that failed after retries.
             skipped_uri_pages: usize,
+            /// Detail batches that failed after retries.
+            skipped_detail_batches: usize,
             /// Consecutive URI-page failures (stop after MAX_CONSECUTIVE_SKIPS).
             consecutive_uri_skips: usize,
         }
@@ -281,6 +283,7 @@ impl SparqlDcatClient {
             uris_done: false,
             done: false,
             skipped_uri_pages: 0,
+            skipped_detail_batches: 0,
             consecutive_uri_skips: 0,
         };
 
@@ -289,14 +292,18 @@ impl SparqlDcatClient {
                 if state.done {
                     // Yield a final error if any work was skipped, so the
                     // harvest records a failure (prevents stale-marking).
-                    if state.skipped_uri_pages > 0 {
+                    let total_skipped = state.skipped_uri_pages + state.skipped_detail_batches;
+                    if total_skipped > 0 {
                         return Some((
                             Err(AppError::Generic(format!(
-                                "SPARQL harvest incomplete: {} pages skipped, fetched {} datasets",
-                                state.skipped_uri_pages, state.fetched
+                                "SPARQL harvest incomplete: {} URI pages and {} detail batches skipped, fetched {} datasets",
+                                state.skipped_uri_pages,
+                                state.skipped_detail_batches,
+                                state.fetched
                             ))),
                             TwoPhaseState {
                                 skipped_uri_pages: 0,
+                                skipped_detail_batches: 0,
                                 ..state
                             },
                         ));
@@ -362,17 +369,14 @@ impl SparqlDcatClient {
 
                 // -- Nothing left to detail-fetch? We're done. ----------------
                 if state.pending_uris.is_empty() {
-                    if state.skipped_uri_pages > 0 {
-                        state.done = true;
-                        return Some((
-                            Err(AppError::Generic(format!(
-                                "SPARQL harvest incomplete: {} URI pages skipped, fetched {} datasets",
-                                state.skipped_uri_pages, state.fetched
-                            ))),
-                            state,
-                        ));
-                    }
-                    return None;
+                    state.done = true;
+                    // The done-check at the top of the next tick will emit the
+                    // incomplete-harvest error if any pages/batches were skipped.
+                    return if state.skipped_uri_pages + state.skipped_detail_batches > 0 {
+                        Some((Ok(vec![]), state))
+                    } else {
+                        None
+                    };
                 }
 
                 // -- Phase 2: detail-fetch a VALUES batch ---------------------
@@ -401,7 +405,7 @@ impl SparqlDcatClient {
                             error = %e,
                             "SPARQL detail batch failed; skipping batch"
                         );
-                        state.skipped_uri_pages += 1; // reuse counter for any skipped work
+                        state.skipped_detail_batches += 1;
                         // Continue — don't stop the stream for one bad detail batch
                         if state.uris_done && state.pending_uris.is_empty() {
                             state.done = true;
@@ -419,8 +423,8 @@ impl SparqlDcatClient {
 
     /// Phase 1: fetch one page of dataset URIs via the lightweight enumeration query.
     ///
-    /// Uses page-level retries with adaptive page-size reduction, matching the
-    /// retry policy of the old single-phase approach.
+    /// Per-request retries are handled inside `execute_query` → `request_with_retry`.
+    /// Higher-level skip/continue logic lives in the caller (`paginate_sparql_stream`).
     async fn fetch_uri_page(&self, offset: usize) -> Result<Vec<String>, AppError> {
         let query = format!(
             "SELECT DISTINCT ?dataset \
@@ -445,11 +449,25 @@ impl SparqlDcatClient {
             return Ok(vec![]);
         }
 
+        // Validate URIs before interpolating into SPARQL — reject anything that
+        // could break the `<...>` IRI syntax or inject query fragments.
         let values_clause: String = uris
             .iter()
+            .filter(|u| {
+                let ok = u.starts_with("http://") || u.starts_with("https://");
+                let safe = !u.contains('>') && !u.contains('<') && !u.contains('}');
+                if !ok || !safe {
+                    tracing::warn!(uri = u.as_str(), "Skipping invalid URI in VALUES batch");
+                }
+                ok && safe
+            })
             .map(|u| format!("(<{u}>)"))
             .collect::<Vec<_>>()
             .join(" ");
+
+        if values_clause.is_empty() {
+            return Ok(vec![]);
+        }
 
         let title_filter = self
             .lang_filter_alternatives()

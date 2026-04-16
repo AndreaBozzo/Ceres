@@ -1209,6 +1209,9 @@ where
         }
         if dup_count > 0 {
             tracing::debug!(dup_count, "Removed duplicate datasets within upsert batch");
+            for _ in 0..dup_count {
+                stats.record(SyncOutcome::Skipped);
+            }
         }
 
         let outcomes: Vec<SyncOutcome> = deduped.iter().map(|i| i.outcome).collect();
