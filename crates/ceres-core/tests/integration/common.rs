@@ -756,7 +756,7 @@ impl JobQueue for MockJobQueue {
             .filter(|j| status.is_none_or(|s| j.status == s))
             .cloned()
             .collect();
-        result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        result.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         result.truncate(limit);
         Ok(result)
     }
