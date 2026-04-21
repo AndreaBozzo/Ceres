@@ -49,11 +49,6 @@ const PAGE_RETRY_BASE_DELAY: Duration = Duration::from_secs(10);
 /// Maximum number of page-level retries before giving up on a page.
 const MAX_PAGE_RETRIES: u32 = 3;
 
-/// Maximum consecutive skipped pages before stopping the stream entirely.
-/// If this many pages in a row fail even after retries, the endpoint is
-/// considered down rather than just struggling at specific offsets.
-const MAX_CONSECUTIVE_SKIPS: usize = 3;
-
 /// Default number of results per SPARQL page.
 const DEFAULT_PAGE_SIZE: usize = 1000;
 
@@ -61,9 +56,18 @@ const DEFAULT_PAGE_SIZE: usize = 1000;
 /// issuing very small queries.
 const MIN_PAGE_SIZE: usize = 50;
 
-/// Number of dataset URIs to look up per VALUES batch in two-phase harvest.
-/// Tested at 500 URIs → ~400ms on data.europa.eu.
-const VALUES_BATCH_SIZE: usize = 200;
+/// Page size used within a publisher partition.
+///
+/// Each partition is expected to contain well under Virtuoso's `ResultSetMaxRows`
+/// cap (~10k) so OFFSET stays shallow. 500 keeps individual responses small and
+/// bounds the impact of a page failure.
+const PARTITION_PAGE_SIZE: usize = 500;
+
+/// Offset at which a partition is flagged as "likely truncated" by the server.
+/// If enumeration keeps returning full pages past this offset, the partition is
+/// too large for a single flat scan and should be sub-partitioned. We log a
+/// warning and move on — sub-partitioning is out of scope for this pass.
+const PARTITION_OVERFLOW_OFFSET: usize = 9_500;
 
 // =============================================================================
 // SPARQL JSON Results Format (W3C standard)
@@ -89,6 +93,18 @@ struct SparqlValue {
     /// Language tag for literals (e.g., `"en"`, `"nb"`).
     #[serde(rename = "xml:lang")]
     lang: Option<String>,
+}
+
+/// A harvest partition — a subset of the catalog bounded by publisher.
+enum OwnedPartition {
+    Publisher(String),
+    NoPublisher,
+}
+
+/// Borrowed form used when building SPARQL queries.
+enum PartitionRef<'a> {
+    Publisher(&'a str),
+    NoPublisher,
 }
 
 // =============================================================================
@@ -243,67 +259,73 @@ impl SparqlDcatClient {
             .ok_or_else(|| AppError::Generic("Failed to parse dataset count".to_string()))
     }
 
-    /// Streams catalog datasets using a two-phase approach:
+    /// Streams catalog datasets using publisher-based partitioning.
     ///
-    /// 1. **URI collection** — lightweight `SELECT DISTINCT ?dataset` pages that
-    ///    work reliably even at deep offsets (tested to 1.9M on data.europa.eu).
-    /// 2. **Detail fetch** — for each batch of URIs, a `VALUES`-scoped query
-    ///    retrieves title/description/identifier/modified without OFFSET.
+    /// Rationale: deep LIMIT/OFFSET over the full catalog hits Virtuoso's
+    /// `ResultSetMaxRows` cap (~10k) and becomes non-deterministic without a
+    /// stable ORDER BY. Partitioning by `dct:publisher` bounds each subquery
+    /// under the cap, keeps OFFSET shallow, and pulls title/description inline
+    /// — so blank-node datasets that can't be referenced across queries still
+    /// get harvested.
     ///
-    /// This avoids the query-plan explosion that LIMIT/OFFSET causes on large
-    /// Virtuoso catalogs when combined with OPTIONAL clauses.
+    /// Phase 0: enumerate distinct publishers (one-shot, paged).
+    /// Phase 1: for each publisher, page through its datasets with inline metadata.
+    ///
+    /// Datasets with no `dct:publisher` are harvested in a final pass via a
+    /// `FILTER NOT EXISTS` partition.
     pub fn paginate_sparql_stream(
         &self,
         _modified_since: Option<String>,
     ) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
-        /// State machine for the two-phase unfold.
-        struct TwoPhaseState {
-            /// Current offset into the lightweight URI enumeration.
-            uri_offset: usize,
-            /// URIs collected but not yet detail-fetched.
-            pending_uris: Vec<String>,
-            /// Total datasets yielded so far.
+        struct PartitionState {
+            /// Publishers still to process (in reverse order so we pop from the back).
+            remaining: Vec<String>,
+            /// Current partition being drained, if any.
+            current: Option<OwnedPartition>,
+            /// Offset within the current partition.
+            offset: usize,
+            /// Have we tried the no-publisher pass yet?
+            did_no_publisher: bool,
+            /// Has publisher enumeration been attempted?
+            enumerated: bool,
+            /// Total datasets yielded.
             fetched: usize,
-            /// URI enumeration finished?
-            uris_done: bool,
-            /// Whole stream finished?
+            /// Partitions skipped after exhausting retries.
+            skipped_partitions: usize,
+            /// Partitions that hit the overflow offset (likely truncated).
+            overflow_partitions: usize,
+            /// Stream done?
             done: bool,
-            /// URI pages that failed after retries.
-            skipped_uri_pages: usize,
-            /// Detail batches that failed after retries.
-            skipped_detail_batches: usize,
-            /// Consecutive URI-page failures (stop after MAX_CONSECUTIVE_SKIPS).
-            consecutive_uri_skips: usize,
         }
 
-        let initial = TwoPhaseState {
-            uri_offset: 0,
-            pending_uris: Vec::new(),
+        let initial = PartitionState {
+            remaining: Vec::new(),
+            current: None,
+            offset: 0,
+            did_no_publisher: false,
+            enumerated: false,
             fetched: 0,
-            uris_done: false,
+            skipped_partitions: 0,
+            overflow_partitions: 0,
             done: false,
-            skipped_uri_pages: 0,
-            skipped_detail_batches: 0,
-            consecutive_uri_skips: 0,
         };
 
         Box::pin(futures::stream::unfold(initial, move |mut state| {
             async move {
                 if state.done {
-                    // Yield a final error if any work was skipped, so the
-                    // harvest records a failure (prevents stale-marking).
-                    let total_skipped = state.skipped_uri_pages + state.skipped_detail_batches;
-                    if total_skipped > 0 {
+                    let incomplete = state.skipped_partitions + state.overflow_partitions;
+                    if incomplete > 0 {
                         return Some((
                             Err(AppError::Generic(format!(
-                                "SPARQL harvest incomplete: {} URI pages and {} detail batches skipped, fetched {} datasets",
-                                state.skipped_uri_pages,
-                                state.skipped_detail_batches,
+                                "SPARQL harvest incomplete: {} partitions skipped, {} partitions overflowed (>{} offset), fetched {} datasets",
+                                state.skipped_partitions,
+                                state.overflow_partitions,
+                                PARTITION_OVERFLOW_OFFSET,
                                 state.fetched
                             ))),
-                            TwoPhaseState {
-                                skipped_uri_pages: 0,
-                                skipped_detail_batches: 0,
+                            PartitionState {
+                                skipped_partitions: 0,
+                                overflow_partitions: 0,
                                 ..state
                             },
                         ));
@@ -311,106 +333,76 @@ impl SparqlDcatClient {
                     return None;
                 }
 
-                // -- Fill the URI buffer until we have a full VALUES batch ----
-                while !state.uris_done && state.pending_uris.len() < VALUES_BATCH_SIZE {
-                    match self.fetch_uri_page(state.uri_offset).await {
-                        Ok(uris) => {
-                            state.consecutive_uri_skips = 0;
-                            let page_full = uris.len() >= self.page_size;
-
-                            tracing::debug!(
-                                uri_offset = state.uri_offset,
-                                page_uris = uris.len(),
-                                "SPARQL URI page fetched"
+                // -- Phase 0: enumerate publishers on first tick --------------
+                if !state.enumerated {
+                    state.enumerated = true;
+                    match self.enumerate_publishers().await {
+                        Ok(mut pubs) => {
+                            tracing::info!(
+                                publishers = pubs.len(),
+                                "SPARQL partition enumeration complete"
                             );
-
-                            state.pending_uris.extend(uris);
-                            state.uri_offset += self.page_size;
-
-                            if !page_full {
-                                state.uris_done = true;
-                            } else {
-                                sleep(PAGE_DELAY).await;
-                            }
+                            // Reverse so we can pop() from the back in order.
+                            pubs.reverse();
+                            state.remaining = pubs;
                         }
                         Err(e) => {
-                            // First page failure: propagate immediately.
-                            if state.uri_offset == 0 && state.pending_uris.is_empty() {
-                                return Some((
-                                    Err(e),
-                                    TwoPhaseState {
-                                        done: true,
-                                        ..state
-                                    },
-                                ));
-                            }
-                            state.skipped_uri_pages += 1;
-                            state.consecutive_uri_skips += 1;
-                            tracing::warn!(
-                                uri_offset = state.uri_offset,
-                                skipped = state.skipped_uri_pages,
-                                error = %e,
-                                "SPARQL URI page failed; skipping"
-                            );
-                            state.uri_offset += self.page_size;
-
-                            if state.consecutive_uri_skips >= MAX_CONSECUTIVE_SKIPS {
-                                tracing::warn!(
-                                    "SPARQL URI enumeration: {} consecutive failures; stopping",
-                                    MAX_CONSECUTIVE_SKIPS
-                                );
-                                state.uris_done = true;
-                            } else {
-                                sleep(PAGE_RETRY_BASE_DELAY).await;
-                            }
+                            return Some((
+                                Err(e),
+                                PartitionState {
+                                    done: true,
+                                    ..state
+                                },
+                            ));
                         }
                     }
                 }
 
-                // -- Nothing left to detail-fetch? We're done. ----------------
-                if state.pending_uris.is_empty() {
-                    state.done = true;
-                    // The done-check at the top of the next tick will emit the
-                    // incomplete-harvest error if any pages/batches were skipped.
-                    return if state.skipped_uri_pages + state.skipped_detail_batches > 0 {
-                        Some((Ok(vec![]), state))
+                // -- Pick next partition if needed ----------------------------
+                if state.current.is_none() {
+                    if let Some(pub_uri) = state.remaining.pop() {
+                        state.current = Some(OwnedPartition::Publisher(pub_uri));
+                        state.offset = 0;
+                    } else if !state.did_no_publisher {
+                        state.did_no_publisher = true;
+                        state.current = Some(OwnedPartition::NoPublisher);
+                        state.offset = 0;
                     } else {
-                        None
-                    };
+                        state.done = true;
+                        return if state.skipped_partitions + state.overflow_partitions > 0 {
+                            Some((Ok(vec![]), state))
+                        } else {
+                            None
+                        };
+                    }
                 }
 
-                // -- Phase 2: detail-fetch a VALUES batch ---------------------
-                let batch_size = state.pending_uris.len().min(VALUES_BATCH_SIZE);
-                let batch_uris: Vec<String> = state.pending_uris.drain(..batch_size).collect();
+                let partition_ref = match state.current.as_ref().unwrap() {
+                    OwnedPartition::Publisher(p) => PartitionRef::Publisher(p.as_str()),
+                    OwnedPartition::NoPublisher => PartitionRef::NoPublisher,
+                };
 
-                // Retry detail batch with backoff before giving up.
+                // -- Fetch one page of the current partition (with retries) ---
                 let mut last_err = None;
+                let mut page_result = None;
                 for attempt in 0..=MAX_PAGE_RETRIES {
-                    match self.fetch_details_batch(&batch_uris).await {
+                    match self
+                        .fetch_partition_page(&partition_ref, state.offset, PARTITION_PAGE_SIZE)
+                        .await
+                    {
                         Ok(datasets) => {
-                            state.fetched += datasets.len();
-                            tracing::debug!(
-                                batch_uris = batch_uris.len(),
-                                datasets = datasets.len(),
-                                total_fetched = state.fetched,
-                                "SPARQL detail batch fetched"
-                            );
-
-                            if state.uris_done && state.pending_uris.is_empty() {
-                                state.done = true;
-                            }
-                            sleep(PAGE_DELAY).await;
-                            return Some((Ok(datasets), state));
+                            page_result = Some(datasets);
+                            break;
                         }
                         Err(e) => {
                             if attempt < MAX_PAGE_RETRIES {
                                 let delay = PAGE_RETRY_BASE_DELAY * 2_u32.pow(attempt);
                                 tracing::warn!(
-                                    batch_uris = batch_uris.len(),
+                                    offset = state.offset,
                                     attempt = attempt + 1,
                                     delay_secs = delay.as_secs(),
                                     error = %e,
-                                    "SPARQL detail batch failed; retrying after backoff"
+                                    "SPARQL partition page failed; retrying after backoff"
                                 );
                                 sleep(delay).await;
                             }
@@ -419,75 +411,140 @@ impl SparqlDcatClient {
                     }
                 }
 
-                // All retries exhausted for this detail batch.
-                let e = last_err.unwrap();
-                tracing::warn!(
-                    batch_uris = batch_uris.len(),
-                    error = %e,
-                    "SPARQL detail batch failed after retries; skipping batch"
+                let datasets = match page_result {
+                    Some(d) => d,
+                    None => {
+                        let e = last_err.unwrap();
+                        let label = match &partition_ref {
+                            PartitionRef::Publisher(p) => *p,
+                            PartitionRef::NoPublisher => "<no-publisher>",
+                        };
+                        tracing::warn!(
+                            partition = label,
+                            offset = state.offset,
+                            error = %e,
+                            "SPARQL partition failed after retries; skipping remainder"
+                        );
+                        state.skipped_partitions += 1;
+                        state.current = None;
+                        sleep(PAGE_RETRY_BASE_DELAY).await;
+                        return Some((Ok(vec![]), state));
+                    }
+                };
+
+                let count = datasets.len();
+                state.fetched += count;
+
+                tracing::debug!(
+                    offset = state.offset,
+                    page_datasets = count,
+                    total_fetched = state.fetched,
+                    "SPARQL partition page fetched"
                 );
-                state.skipped_detail_batches += 1;
-                if state.uris_done && state.pending_uris.is_empty() {
-                    state.done = true;
+
+                let partition_full = count >= PARTITION_PAGE_SIZE;
+                state.offset += PARTITION_PAGE_SIZE;
+
+                // Partition exhausted, or overflowing (likely server-truncated).
+                if !partition_full {
+                    state.current = None;
+                } else if state.offset >= PARTITION_OVERFLOW_OFFSET {
+                    let label = match &partition_ref {
+                        PartitionRef::Publisher(p) => *p,
+                        PartitionRef::NoPublisher => "<no-publisher>",
+                    };
+                    tracing::warn!(
+                        partition = label,
+                        offset = state.offset,
+                        "SPARQL partition exceeded overflow offset; sub-partitioning not implemented, stopping scan"
+                    );
+                    state.overflow_partitions += 1;
+                    state.current = None;
                 }
-                // Back off before continuing to next batch.
-                sleep(PAGE_RETRY_BASE_DELAY).await;
-                Some((Ok(vec![]), state))
+
+                sleep(PAGE_DELAY).await;
+                Some((Ok(datasets), state))
             }
         }))
     }
 
-    // =========================================================================
-    // Internal helpers
-    // =========================================================================
-
-    /// Phase 1: fetch one page of dataset URIs via the lightweight enumeration query.
+    /// Phase 0: enumerate all distinct `dct:publisher` IRIs across datasets.
     ///
-    /// Per-request retries are handled inside `execute_query` → `request_with_retry`.
-    /// Higher-level skip/continue logic lives in the caller (`paginate_sparql_stream`).
-    async fn fetch_uri_page(&self, offset: usize) -> Result<Vec<String>, AppError> {
-        let query = format!(
-            "SELECT DISTINCT ?dataset \
-             WHERE {{ ?dataset a <http://www.w3.org/ns/dcat#Dataset> }} \
-             LIMIT {} OFFSET {}",
-            self.page_size, offset
-        );
+    /// Paged with a small LIMIT. Expected cardinality on data.europa.eu is
+    /// in the low thousands, so this completes in a few dozen queries.
+    async fn enumerate_publishers(&self) -> Result<Vec<String>, AppError> {
+        let mut publishers = Vec::new();
+        let mut offset = 0usize;
+        let limit = self.page_size;
 
-        let bindings = self.execute_query(&query).await?;
-        Ok(bindings
-            .into_iter()
-            .filter_map(|mut b| b.remove("dataset").map(|v| v.value))
-            .collect())
+        loop {
+            let query = format!(
+                "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+                 PREFIX dct:  <http://purl.org/dc/terms/>\n\
+                 \n\
+                 SELECT DISTINCT ?pub WHERE {{\n\
+                   ?d a dcat:Dataset ; dct:publisher ?pub .\n\
+                 }}\n\
+                 LIMIT {limit} OFFSET {offset}"
+            );
+
+            let bindings = self.execute_query(&query).await?;
+            if bindings.is_empty() {
+                break;
+            }
+            let count = bindings.len();
+            for b in bindings {
+                if let Some(v) = b.get("pub") {
+                    // Only named resources can be referenced across queries.
+                    if v.value.starts_with("http://") || v.value.starts_with("https://") {
+                        publishers.push(v.value.clone());
+                    }
+                }
+            }
+            if count < limit {
+                break;
+            }
+            offset += limit;
+            sleep(PAGE_DELAY).await;
+
+            // Safety rail: if publisher cardinality is unexpectedly huge, stop
+            // so we don't spend forever enumerating before any data is yielded.
+            if offset >= 100_000 {
+                tracing::warn!(
+                    offset,
+                    publishers = publishers.len(),
+                    "Publisher enumeration exceeded 100k offset; truncating"
+                );
+                break;
+            }
+        }
+
+        Ok(publishers)
     }
 
-    /// Phase 2: fetch full metadata for a batch of dataset URIs using a VALUES query.
-    ///
-    /// The VALUES clause scopes the query to specific URIs — no OFFSET needed,
-    /// so there's no query-plan explosion on large catalogs.
-    async fn fetch_details_batch(&self, uris: &[String]) -> Result<Vec<DcatDataset>, AppError> {
-        if uris.is_empty() {
-            return Ok(vec![]);
-        }
-
-        // Validate URIs before interpolating into SPARQL — reject anything that
-        // could break the `<...>` IRI syntax or inject query fragments.
-        let values_clause: String = uris
-            .iter()
-            .filter(|u| {
-                let ok = u.starts_with("http://") || u.starts_with("https://");
-                let safe = !u.contains('>') && !u.contains('<') && !u.contains('}');
-                if !ok || !safe {
-                    tracing::warn!(uri = u.as_str(), "Skipping invalid URI in VALUES batch");
+    /// Fetches one page of datasets for a given partition, with title/description/
+    /// identifier/modified inline so blank-node datasets survive.
+    async fn fetch_partition_page(
+        &self,
+        partition: &PartitionRef<'_>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<DcatDataset>, AppError> {
+        let publisher_clause = match partition {
+            PartitionRef::Publisher(uri) => {
+                // Validate publisher IRI before interpolating.
+                if !(uri.starts_with("http://") || uri.starts_with("https://"))
+                    || uri.contains('<')
+                    || uri.contains('>')
+                {
+                    return Err(AppError::Generic(format!("Invalid publisher IRI: {uri}")));
                 }
-                ok && safe
-            })
-            .map(|u| format!("(<{u}>)"))
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        if values_clause.is_empty() {
-            return Ok(vec![]);
-        }
+                format!("?dataset dct:publisher <{uri}> .")
+            }
+            PartitionRef::NoPublisher => {
+                "FILTER NOT EXISTS {{ ?dataset dct:publisher ?anyPub }}".to_string()
+            }
+        };
 
         let title_filter = self
             .lang_filter_alternatives()
@@ -502,18 +559,24 @@ impl SparqlDcatClient {
              \n\
              SELECT ?dataset ?title ?description ?identifier ?modified\n\
              WHERE {{\n\
-               VALUES (?dataset) {{ {values_clause} }}\n\
+               ?dataset a dcat:Dataset .\n\
+               {publisher_clause}\n\
                ?dataset dct:title ?title .\n\
                FILTER ({title_filter})\n\
                OPTIONAL {{ ?dataset dct:description ?description }}\n\
                OPTIONAL {{ ?dataset dct:identifier ?identifier }}\n\
                OPTIONAL {{ ?dataset dct:modified ?modified }}\n\
-             }}",
+             }}\n\
+             LIMIT {limit} OFFSET {offset}"
         );
 
         let bindings = self.execute_query(&query).await?;
         Ok(self.bindings_to_datasets(bindings))
     }
+
+    // =========================================================================
+    // Internal helpers
+    // =========================================================================
 
     /// Core paginated SPARQL fetcher (non-streaming, used by search_modified_since).
     async fn paginate_sparql(
