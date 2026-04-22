@@ -206,6 +206,8 @@ impl PortalClientFactory for MockPortalClientFactory {
         portal_url: &str,
         _portal_type: ceres_core::config::PortalType,
         _language: &str,
+        _profile: Option<&str>,
+        _sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         Ok(MockPortalClient::new(portal_url, self.datasets.clone()))
     }
@@ -602,6 +604,8 @@ impl MockJobQueue {
             force_full_sync: false,
             url_template: None,
             language: None,
+            profile: None,
+            sparql_endpoint: None,
         };
         self.jobs.lock().unwrap().insert(id, job);
         (self, id)
@@ -653,6 +657,8 @@ impl JobQueue for MockJobQueue {
             force_full_sync: request.force_full_sync,
             url_template: request.url_template,
             language: request.language,
+            profile: request.profile,
+            sparql_endpoint: request.sparql_endpoint,
         };
         self.jobs.lock().unwrap().insert(id, job.clone());
         Ok(job)
@@ -750,7 +756,7 @@ impl JobQueue for MockJobQueue {
             .filter(|j| status.is_none_or(|s| j.status == s))
             .cloned()
             .collect();
-        result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        result.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         result.truncate(limit);
         Ok(result)
     }

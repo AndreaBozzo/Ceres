@@ -77,6 +77,7 @@ pub enum Command {
   ceres harvest                                       # Harvest all enabled portals from config
   ceres harvest https://dati.comune.milano.it         # Harvest single CKAN URL (default type)
   ceres harvest https://data.public.lu --type dcat    # Harvest DCAT portal by URL
+  ceres harvest https://data.europa.eu --type dcat --profile sparql  # Harvest SPARQL DCAT endpoint
   ceres harvest --portal milano                       # Harvest portal by name from config
   ceres harvest --config ~/custom.toml                # Use custom config file
   ceres harvest --full-sync                           # Force full sync even if incremental is available")]
@@ -93,6 +94,10 @@ pub enum Command {
             requires = "portal_url"
         )]
         r#type: PortalType,
+
+        /// DCAT profile when harvesting an ad-hoc DCAT URL (e.g., "sparql")
+        #[arg(long, value_name = "PROFILE", requires = "portal_url")]
+        profile: Option<String>,
 
         /// Harvest a specific portal by name from config file
         #[arg(short, long, value_name = "NAME", conflicts_with = "portal_url")]

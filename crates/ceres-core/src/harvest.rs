@@ -309,6 +309,8 @@ where
             "en",
             &SilentReporter,
             PortalType::default(),
+            None,
+            None,
         )
         .await
     }
@@ -323,6 +325,7 @@ where
     /// 1. If `force_full_sync` is enabled or this is the first sync: full sync
     /// 2. Otherwise, attempt incremental sync using `metadata_modified` filter
     /// 3. If incremental fails, fall back to full sync with a warning
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_portal_with_progress<R: ProgressReporter>(
         &self,
         portal_url: &str,
@@ -330,6 +333,8 @@ where
         language: &str,
         reporter: &R,
         portal_type: PortalType,
+        profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<SyncStats, AppError> {
         let result = self
             .sync_portal_with_progress_cancellable_internal(
@@ -340,6 +345,8 @@ where
                 CancellationToken::new(), // never cancelled
                 self.config.force_full_sync,
                 portal_type,
+                profile,
+                sparql_endpoint,
             )
             .await?;
         Ok(result.stats)
@@ -476,11 +483,14 @@ where
             cancel_token,
             self.config.force_full_sync,
             PortalType::default(),
+            None,
+            None,
         )
         .await
     }
 
     /// Synchronizes a single portal with progress reporting and cancellation support.
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_portal_with_progress_cancellable<R: ProgressReporter>(
         &self,
         portal_url: &str,
@@ -489,6 +499,8 @@ where
         reporter: &R,
         cancel_token: CancellationToken,
         portal_type: PortalType,
+        profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
             portal_url,
@@ -498,6 +510,8 @@ where
             cancel_token,
             self.config.force_full_sync,
             portal_type,
+            profile,
+            sparql_endpoint,
         )
         .await
     }
@@ -514,6 +528,8 @@ where
         cancel_token: CancellationToken,
         force_full_sync: bool,
         portal_type: PortalType,
+        profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         let force_full_sync = self.config.force_full_sync || force_full_sync;
         self.sync_portal_with_progress_cancellable_internal(
@@ -524,6 +540,8 @@ where
             cancel_token,
             force_full_sync,
             portal_type,
+            profile,
+            sparql_endpoint,
         )
         .await
     }
@@ -538,6 +556,8 @@ where
         cancel_token: CancellationToken,
         force_full_sync: bool,
         portal_type: PortalType,
+        profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         let sync_start = Utc::now();
 
@@ -559,9 +579,13 @@ where
             return Ok(SyncResult::cancelled(SyncStats::default()));
         }
 
-        let portal_client = self
-            .portal_factory
-            .create(portal_url, portal_type, language)?;
+        let portal_client = self.portal_factory.create(
+            portal_url,
+            portal_type,
+            language,
+            profile,
+            sparql_endpoint,
+        )?;
 
         // Determine sync plan (IDs for full sync, datasets for incremental)
         let (sync_mode, plan) = self
@@ -1165,8 +1189,33 @@ where
         store: &S,
         stats: &Arc<AtomicSyncStats>,
     ) {
-        let outcomes: Vec<SyncOutcome> = batch.iter().map(|i| i.outcome).collect();
-        let datasets: Vec<NewDataset> = batch.into_iter().map(|i| i.dataset).collect();
+        // Deduplicate within the batch by (original_id, source_portal) to avoid
+        // "ON CONFLICT DO UPDATE command cannot affect row a second time" errors.
+        // This can happen when SPARQL LIMIT/OFFSET returns the same dataset on
+        // adjacent pages (a known Virtuoso issue with non-deterministic ordering).
+        let mut seen = std::collections::HashSet::new();
+        let mut deduped = Vec::with_capacity(batch.len());
+        let mut dup_count = 0usize;
+        for item in batch {
+            let key = (
+                item.dataset.original_id.clone(),
+                item.dataset.source_portal.clone(),
+            );
+            if seen.insert(key) {
+                deduped.push(item);
+            } else {
+                dup_count += 1;
+            }
+        }
+        if dup_count > 0 {
+            tracing::debug!(dup_count, "Removed duplicate datasets within upsert batch");
+            for _ in 0..dup_count {
+                stats.record(SyncOutcome::Skipped);
+            }
+        }
+
+        let outcomes: Vec<SyncOutcome> = deduped.iter().map(|i| i.outcome).collect();
+        let datasets: Vec<NewDataset> = deduped.into_iter().map(|i| i.dataset).collect();
 
         match store.batch_upsert(&datasets).await {
             Ok(_) => {
@@ -1236,6 +1285,8 @@ where
                     reporter,
                     cancel_token.clone(),
                     portal.portal_type,
+                    portal.profile(),
+                    portal.sparql_endpoint(),
                 )
                 .await
             {

@@ -46,6 +46,8 @@ pub async fn list_portals(
             name: portal.name.clone(),
             url: portal.url.clone(),
             portal_type: portal.portal_type.to_string(),
+            profile: portal.profile.clone(),
+            sparql_endpoint: portal.sparql_endpoint.clone(),
             enabled: portal.enabled,
             description: portal.description.clone(),
             last_sync: sync_status.as_ref().and_then(|s| s.last_successful_sync),
@@ -158,6 +160,12 @@ pub async fn trigger_portal_harvest(
         job_request = job_request.with_language(lang);
     }
 
+    if let Some(ref profile) = portal.profile {
+        job_request = job_request.with_profile(profile);
+    }
+    if let Some(ref sparql_endpoint) = portal.sparql_endpoint {
+        job_request = job_request.with_sparql_endpoint(sparql_endpoint);
+    }
     if request.force_full_sync {
         job_request = job_request.with_full_sync();
     }

@@ -54,6 +54,8 @@ impl PortalClientFactory for FailingPortalClientFactory {
         _portal_url: &str,
         _portal_type: PortalType,
         _language: &str,
+        _profile: Option<&str>,
+        _sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         Err(AppError::NetworkError(
             "simulated network failure".to_string(),

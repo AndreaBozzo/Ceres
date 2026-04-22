@@ -217,18 +217,22 @@ pub trait PortalClientFactory: Send + Sync + Clone {
     /// The type of portal client this factory creates.
     type Client: PortalClient;
 
-    /// Creates a new portal client for the given URL and portal type.
+    /// Creates a new portal client for the given URL, portal type, and optional profile.
     ///
     /// # Arguments
     ///
     /// * `portal_url` - The portal API base URL
     /// * `portal_type` - The type of portal to create a client for
     /// * `language` - Preferred language for multilingual portals (e.g. "en", "fr")
+    /// * `profile` - Optional profile for sub-dispatch (e.g. `"sparql"` for DCAT portals)
+    /// * `sparql_endpoint` - Optional custom SPARQL endpoint URL (overrides `{url}/sparql`)
     fn create(
         &self,
         portal_url: &str,
         portal_type: PortalType,
         language: &str,
+        profile: Option<&str>,
+        sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError>;
 }
 

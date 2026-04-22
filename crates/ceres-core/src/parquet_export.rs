@@ -346,7 +346,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 }
             })
             .collect();
-        portal_stats.sort_by(|a, b| b.count.cmp(&a.count));
+        portal_stats.sort_by_key(|b| std::cmp::Reverse(b.count));
 
         Ok((
             total_exported,
