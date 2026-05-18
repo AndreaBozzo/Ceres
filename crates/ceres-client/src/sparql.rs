@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::time::sleep;
 
-use crate::dcat::DcatDataset;
+use crate::dcat::{DcatDataset, extract_dataset, is_dataset_node};
 
 /// Delay between paginated SPARQL requests.
 const PAGE_DELAY: Duration = Duration::from_millis(300);
@@ -69,6 +69,15 @@ const PARTITION_PAGE_SIZE: usize = 500;
 /// warning and move on — sub-partitioning is out of scope for this pass.
 const PARTITION_OVERFLOW_OFFSET: usize = 9_500;
 
+/// Page size for the data.europa.eu Registry API metadata stream.
+///
+/// Registry pages contain full JSON-LD graphs, so this is deliberately smaller
+/// than the API's maximum limit.
+const REGISTRY_PAGE_SIZE: usize = 100;
+
+/// Maximum number of Registry API pages retried before a catalogue is skipped.
+const MAX_REGISTRY_PAGE_RETRIES: u32 = 3;
+
 // =============================================================================
 // SPARQL JSON Results Format (W3C standard)
 // =============================================================================
@@ -105,6 +114,11 @@ enum OwnedPartition {
 enum PartitionRef<'a> {
     Publisher(&'a str),
     NoPublisher,
+}
+
+struct RegistryPage {
+    datasets: Vec<DcatDataset>,
+    entries: usize,
 }
 
 // =============================================================================
@@ -277,6 +291,10 @@ impl SparqlDcatClient {
         &self,
         _modified_since: Option<String>,
     ) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
+        if self.uses_data_europa_registry() {
+            return self.paginate_data_europa_registry_stream();
+        }
+
         struct PartitionState {
             /// Publishers still to process (in reverse order so we pop from the back).
             remaining: Vec<String>,
@@ -466,6 +484,280 @@ impl SparqlDcatClient {
                 Some((Ok(datasets), state))
             }
         }))
+    }
+
+    /// Returns true when this client targets data.europa.eu, whose Registry API
+    /// is a better full-harvest source than deep SPARQL pagination.
+    fn uses_data_europa_registry(&self) -> bool {
+        self.base_url
+            .host_str()
+            .map(|host| host.eq_ignore_ascii_case("data.europa.eu"))
+            .unwrap_or(false)
+    }
+
+    /// Streams data.europa.eu datasets through the Registry API.
+    ///
+    /// The SPARQL graph has over one million datasets without `dct:publisher`,
+    /// which collapses the publisher partitioning strategy into a single huge
+    /// no-publisher partition. The Registry API exposes catalogue-scoped,
+    /// paginated JSON-LD metadata, so we use it for this portal's full harvest.
+    fn paginate_data_europa_registry_stream(
+        &self,
+    ) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
+        struct RegistryState {
+            remaining_catalogues: Vec<String>,
+            current_catalogue: Option<String>,
+            offset: usize,
+            enumerated: bool,
+            fetched: usize,
+            skipped_catalogues: usize,
+            done: bool,
+        }
+
+        let initial = RegistryState {
+            remaining_catalogues: Vec::new(),
+            current_catalogue: None,
+            offset: 0,
+            enumerated: false,
+            fetched: 0,
+            skipped_catalogues: 0,
+            done: false,
+        };
+
+        Box::pin(futures::stream::unfold(
+            initial,
+            move |mut state| async move {
+                if state.done {
+                    if state.skipped_catalogues > 0 {
+                        return Some((
+                            Err(AppError::Generic(format!(
+                                "data.europa.eu Registry harvest incomplete: {} catalogues skipped, fetched {} datasets",
+                                state.skipped_catalogues, state.fetched
+                            ))),
+                            RegistryState {
+                                skipped_catalogues: 0,
+                                ..state
+                            },
+                        ));
+                    }
+                    return None;
+                }
+
+                if !state.enumerated {
+                    state.enumerated = true;
+                    match self.enumerate_registry_catalogues().await {
+                        Ok(mut catalogues) => {
+                            tracing::info!(
+                                catalogues = catalogues.len(),
+                                "data.europa.eu Registry catalogue enumeration complete"
+                            );
+                            catalogues.reverse();
+                            state.remaining_catalogues = catalogues;
+                        }
+                        Err(e) => {
+                            return Some((
+                                Err(e),
+                                RegistryState {
+                                    done: true,
+                                    ..state
+                                },
+                            ));
+                        }
+                    }
+                }
+
+                if state.current_catalogue.is_none() {
+                    if let Some(catalogue) = state.remaining_catalogues.pop() {
+                        state.current_catalogue = Some(catalogue);
+                        state.offset = 0;
+                    } else {
+                        state.done = true;
+                        return if state.skipped_catalogues > 0 {
+                            Some((Ok(vec![]), state))
+                        } else {
+                            None
+                        };
+                    }
+                }
+
+                let catalogue = state.current_catalogue.as_deref().unwrap();
+                let mut last_err = None;
+                let mut page_result = None;
+                for attempt in 0..=MAX_REGISTRY_PAGE_RETRIES {
+                    match self
+                        .fetch_registry_catalogue_page(catalogue, state.offset, REGISTRY_PAGE_SIZE)
+                        .await
+                    {
+                        Ok(page) => {
+                            page_result = Some(page);
+                            break;
+                        }
+                        Err(e) => {
+                            if attempt < MAX_REGISTRY_PAGE_RETRIES {
+                                let delay = PAGE_RETRY_BASE_DELAY * 2_u32.pow(attempt);
+                                tracing::warn!(
+                                    catalogue,
+                                    offset = state.offset,
+                                    attempt = attempt + 1,
+                                    delay_secs = delay.as_secs(),
+                                    error = %e,
+                                    "data.europa.eu Registry page failed; retrying after backoff"
+                                );
+                                sleep(delay).await;
+                            }
+                            last_err = Some(e);
+                        }
+                    }
+                }
+
+                let page = match page_result {
+                    Some(page) => page,
+                    None => {
+                        let e = last_err.unwrap();
+                        tracing::warn!(
+                            catalogue,
+                            offset = state.offset,
+                            error = %e,
+                            "data.europa.eu Registry catalogue failed after retries; skipping remainder"
+                        );
+                        state.skipped_catalogues += 1;
+                        state.current_catalogue = None;
+                        sleep(PAGE_RETRY_BASE_DELAY).await;
+                        return Some((Ok(vec![]), state));
+                    }
+                };
+
+                let count = page.datasets.len();
+                state.fetched += count;
+                tracing::debug!(
+                    catalogue,
+                    offset = state.offset,
+                    page_entries = page.entries,
+                    page_datasets = count,
+                    total_fetched = state.fetched,
+                    "data.europa.eu Registry page fetched"
+                );
+
+                if page.entries < REGISTRY_PAGE_SIZE {
+                    state.current_catalogue = None;
+                } else {
+                    state.offset += REGISTRY_PAGE_SIZE;
+                }
+
+                sleep(PAGE_DELAY).await;
+                Some((Ok(page.datasets), state))
+            },
+        ))
+    }
+
+    async fn enumerate_registry_catalogues(&self) -> Result<Vec<String>, AppError> {
+        let mut catalogues = Vec::new();
+        let mut offset = 0usize;
+        let limit = 5000usize;
+
+        loop {
+            let mut url = self.registry_url(&["catalogues"])?;
+            url.query_pairs_mut()
+                .append_pair("limit", &limit.to_string())
+                .append_pair("offset", &offset.to_string())
+                .append_pair("valueType", "identifiers");
+
+            let resp = self.request_url_with_retry(url).await?;
+            let page: Vec<String> = resp.json().await.map_err(|e| {
+                AppError::ClientError(format!(
+                    "data.europa.eu Registry returned non-JSON catalogue list: {e}"
+                ))
+            })?;
+
+            let count = page.len();
+            catalogues.extend(page.into_iter().filter(|id| !id.is_empty()));
+
+            if count < limit {
+                break;
+            }
+            offset += limit;
+            sleep(PAGE_DELAY).await;
+        }
+
+        Ok(catalogues)
+    }
+
+    async fn fetch_registry_catalogue_page(
+        &self,
+        catalogue: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<RegistryPage, AppError> {
+        let mut url = self.registry_url(&["catalogues", catalogue, "datasets"])?;
+        url.query_pairs_mut()
+            .append_pair("limit", &limit.to_string())
+            .append_pair("offset", &offset.to_string())
+            .append_pair("valueType", "metadata")
+            .append_pair("hydra", "false");
+
+        let resp = self.request_url_with_retry(url).await?;
+        let body: Value = resp.json().await.map_err(|e| {
+            AppError::ClientError(format!(
+                "data.europa.eu Registry returned non-JSON metadata page: {e}"
+            ))
+        })?;
+
+        Ok(self.extract_registry_page(body))
+    }
+
+    fn registry_url(&self, segments: &[&str]) -> Result<Url, AppError> {
+        let mut url = self.base_url.join("api/hub/repo/").map_err(|e| {
+            AppError::Generic(format!("Failed to build data.europa.eu Registry URL: {e}"))
+        })?;
+
+        {
+            let mut path = url
+                .path_segments_mut()
+                .map_err(|_| AppError::Generic("Registry URL cannot be a base URL".to_string()))?;
+            path.pop_if_empty();
+            for segment in segments {
+                path.push(segment);
+            }
+        }
+
+        Ok(url)
+    }
+
+    fn extract_registry_page(&self, body: Value) -> RegistryPage {
+        let Some(graph) = body.get("@graph").and_then(|v| v.as_array()) else {
+            return RegistryPage {
+                datasets: Vec::new(),
+                entries: 0,
+            };
+        };
+
+        let mut datasets = Vec::new();
+        let mut entries = 0usize;
+        for node in graph {
+            if is_hydra_view_node(node) {
+                continue;
+            }
+
+            if is_dataset_node(node) {
+                entries += 1;
+                if let Some(dataset) = extract_dataset(node, &self.language) {
+                    datasets.push(dataset);
+                }
+                continue;
+            }
+
+            if let Some(nested) = node.get("@graph").and_then(|v| v.as_array()) {
+                entries += 1;
+                if let Some(dataset_node) = nested.iter().find(|n| is_dataset_node(n))
+                    && let Some(mut dataset) = extract_dataset(dataset_node, &self.language)
+                {
+                    dataset.raw = node.clone();
+                    datasets.push(dataset);
+                }
+            }
+        }
+
+        RegistryPage { datasets, entries }
     }
 
     /// Phase 0: enumerate all distinct `dct:publisher` IRIs across datasets.
@@ -807,6 +1099,82 @@ impl SparqlDcatClient {
         Err(last_error)
     }
 
+    /// HTTP GET with exponential backoff retry for Registry API requests.
+    async fn request_url_with_retry(&self, url: Url) -> Result<reqwest::Response, AppError> {
+        let http_config = HttpConfig::default();
+        let max_retries = http_config.max_retries;
+        let base_delay = http_config.retry_base_delay;
+        let mut last_error = AppError::Generic("No attempts made".to_string());
+
+        for attempt in 1..=max_retries {
+            match self
+                .client
+                .get(url.clone())
+                .header("Accept", "application/ld+json, application/json")
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    let status = resp.status();
+
+                    if status.is_success() {
+                        return Ok(resp);
+                    }
+
+                    if status == StatusCode::TOO_MANY_REQUESTS {
+                        last_error = AppError::RateLimitExceeded;
+                        if attempt < max_retries {
+                            let delay = resp
+                                .headers()
+                                .get("retry-after")
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .map(Duration::from_secs)
+                                .unwrap_or_else(|| {
+                                    (base_delay * 2_u32.pow(attempt)).min(MAX_RETRY_DELAY)
+                                });
+                            sleep(delay).await;
+                            continue;
+                        }
+                        return Err(AppError::RateLimitExceeded);
+                    }
+
+                    if status.is_server_error() {
+                        last_error = AppError::ClientError(format!(
+                            "Server error: HTTP {}",
+                            status.as_u16()
+                        ));
+                        if attempt < max_retries {
+                            sleep(base_delay * attempt).await;
+                            continue;
+                        }
+                    }
+
+                    return Err(AppError::ClientError(format!(
+                        "HTTP {} from {}",
+                        status.as_u16(),
+                        url
+                    )));
+                }
+                Err(e) => {
+                    if e.is_timeout() {
+                        last_error = AppError::Timeout(REQUEST_TIMEOUT.as_secs());
+                    } else if e.is_connect() {
+                        last_error = AppError::NetworkError(format!("Connection failed: {e}"));
+                    } else {
+                        last_error = AppError::ClientError(e.to_string());
+                    }
+                    if attempt < max_retries && (e.is_timeout() || e.is_connect()) {
+                        sleep(base_delay * attempt).await;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        Err(last_error)
+    }
+
     /// Returns the SPARQL lang() filter alternatives for the preferred language.
     ///
     /// Norwegian is special: `"nb"` (Bokmål), `"nn"` (Nynorsk), and `"no"`
@@ -946,6 +1314,25 @@ fn is_server_overload(e: &AppError) -> bool {
         || msg.contains("HTTP 504")
         || msg.contains("timed out")
         || msg.contains("timeout")
+}
+
+fn is_hydra_view_node(node: &Value) -> bool {
+    let Some(type_value) = node.get("@type") else {
+        return false;
+    };
+
+    let is_view_type = |s: &str| {
+        s == "hydra:PartialCollectionView"
+            || s == "http://www.w3.org/ns/hydra/core#PartialCollectionView"
+    };
+
+    match type_value {
+        Value::String(s) => is_view_type(s),
+        Value::Array(arr) => arr
+            .iter()
+            .any(|v| v.as_str().map(is_view_type).unwrap_or(false)),
+        _ => false,
+    }
 }
 
 /// Extracts the last non-empty path segment from a URI.
@@ -1243,6 +1630,45 @@ mod tests {
         // Both URIs extract "shared-id" as identifier — only the first should survive
         assert_eq!(datasets.len(), 1);
         assert_eq!(datasets[0].identifier, "shared-id");
+    }
+
+    #[test]
+    fn registry_page_extracts_nested_dataset_graphs() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let body = json!({
+            "@graph": [
+                {
+                    "@type": "hydra:PartialCollectionView",
+                    "hydra:totalItems": {"@value": "1"}
+                },
+                {
+                    "@id": "http://data.europa.eu/88u/dataset/example",
+                    "@graph": [
+                        {
+                            "@id": "http://data.europa.eu/88u/distribution/example",
+                            "@type": "dcat:Distribution"
+                        },
+                        {
+                            "@id": "http://data.europa.eu/88u/dataset/example",
+                            "@type": "dcat:Dataset",
+                            "dct:identifier": {"@value": "example-id"},
+                            "dct:title": [
+                                {"@language": "de", "@value": "Deutscher Titel"},
+                                {"@language": "en-t-de-t0-mtec", "@value": "English Title"}
+                            ],
+                            "dct:description": {"@language": "en", "@value": "Description"}
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let page = client.extract_registry_page(body);
+        assert_eq!(page.entries, 1);
+        assert_eq!(page.datasets.len(), 1);
+        assert_eq!(page.datasets[0].identifier, "example-id");
+        assert_eq!(page.datasets[0].title, "English Title");
+        assert_eq!(page.datasets[0].description.as_deref(), Some("Description"));
     }
 
     // ---- binding_to_json ---------------------------------------------------

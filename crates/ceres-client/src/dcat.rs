@@ -456,11 +456,18 @@ pub fn resolve_jsonld_text(value: &Value, language: &str) -> String {
         }
         Value::Array(arr) => {
             // Array of language-tagged literals — pick preferred language, then "en", then first
-            let find_lang = |lang: &str| -> Option<&str> {
+            let find_lang = |lang: &str, allow_base_match: bool| -> Option<&str> {
                 arr.iter().find_map(|item| {
                     let obj = item.as_object()?;
                     let item_lang = obj.get("@language")?.as_str()?;
-                    if item_lang.eq_ignore_ascii_case(lang) {
+                    let matches = item_lang.eq_ignore_ascii_case(lang)
+                        || (allow_base_match
+                            && item_lang
+                                .split('-')
+                                .next()
+                                .map(|base| base.eq_ignore_ascii_case(lang))
+                                .unwrap_or(false));
+                    if matches {
                         obj.get("@value")?.as_str()
                     } else {
                         None
@@ -468,11 +475,11 @@ pub fn resolve_jsonld_text(value: &Value, language: &str) -> String {
                 })
             };
 
-            if let Some(s) = find_lang(language) {
+            if let Some(s) = find_lang(language, false).or_else(|| find_lang(language, true)) {
                 return s.to_string();
             }
             if language != "en"
-                && let Some(s) = find_lang("en")
+                && let Some(s) = find_lang("en", false).or_else(|| find_lang("en", true))
             {
                 return s.to_string();
             }
@@ -568,6 +575,10 @@ pub fn extract_hydra_next(graph: &[Value]) -> Option<String> {
     None
 }
 
+fn get_jsonld_property<'a>(node: &'a Value, keys: &[&str]) -> Option<&'a Value> {
+    keys.iter().find_map(|key| node.get(*key))
+}
+
 /// Parses a single `@graph` node into a `DcatDataset`.
 ///
 /// Returns `None` if the node is missing required fields (`@id` or a non-empty title).
@@ -581,32 +592,30 @@ pub fn extract_dataset(node: &Value, language: &str) -> Option<DcatDataset> {
     }
 
     // dcat:identifier, falling back to the last non-empty segment of @id
-    let identifier = node
-        .get("identifier")
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            Value::Object(o) => o.get("@value").and_then(|v| v.as_str()).map(String::from),
-            _ => None,
-        })
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            id_uri
-                .trim_end_matches('/')
-                .rsplit('/')
-                .next()
-                .unwrap_or(&id_uri)
-                .to_string()
-        });
+    let identifier =
+        get_jsonld_property(node, &["identifier", "dct:identifier", "dcat:identifier"])
+            .and_then(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                Value::Object(o) => o.get("@value").and_then(|v| v.as_str()).map(String::from),
+                _ => None,
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                id_uri
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&id_uri)
+                    .to_string()
+            });
 
     // dct:title
-    let title = node
-        .get("title")
+    let title = get_jsonld_property(node, &["title", "dct:title"])
         .map(|v| resolve_jsonld_text(v, language))
         .filter(|s| !s.is_empty())?;
 
     // dct:description (optional)
-    let description = node
-        .get("description")
+    let description = get_jsonld_property(node, &["description", "dct:description"])
         .map(|v| resolve_jsonld_text(v, language))
         .filter(|s| !s.is_empty());
 
@@ -658,6 +667,24 @@ mod tests {
             {"@language": "de", "@value": "Deutscher Titel"}
         ]);
         assert_eq!(resolve_jsonld_text(&v, "fr"), "English Title");
+    }
+
+    #[test]
+    fn resolve_array_matches_translated_language_tags() {
+        let v = json!([
+            {"@language": "de", "@value": "Deutscher Titel"},
+            {"@language": "en-t-de-t0-mtec", "@value": "English machine title"}
+        ]);
+        assert_eq!(resolve_jsonld_text(&v, "en"), "English machine title");
+    }
+
+    #[test]
+    fn resolve_array_prefers_exact_language_over_translated_tag() {
+        let v = json!([
+            {"@language": "en-t-de-t0-mtec", "@value": "English machine title"},
+            {"@language": "en", "@value": "English Title"}
+        ]);
+        assert_eq!(resolve_jsonld_text(&v, "en"), "English Title");
     }
 
     #[test]
@@ -770,6 +797,25 @@ mod tests {
         assert_eq!(dataset.identifier, "abc123");
         assert_eq!(dataset.title, "Test Dataset");
         assert_eq!(dataset.description.as_deref(), Some("A test description"));
+    }
+
+    #[test]
+    fn extract_dataset_supports_prefixed_dcat_ap_keys() {
+        let node = json!({
+            "@id": "http://data.europa.eu/88u/dataset/example",
+            "@type": "dcat:Dataset",
+            "dct:identifier": {"@value": "example-id"},
+            "dct:title": [
+                {"@language": "de", "@value": "Deutscher Titel"},
+                {"@language": "en-t-de-t0-mtec", "@value": "English Title"}
+            ],
+            "dct:description": {"@language": "en", "@value": "Description"}
+        });
+
+        let dataset = extract_dataset(&node, "en").unwrap();
+        assert_eq!(dataset.identifier, "example-id");
+        assert_eq!(dataset.title, "English Title");
+        assert_eq!(dataset.description.as_deref(), Some("Description"));
     }
 
     #[test]
