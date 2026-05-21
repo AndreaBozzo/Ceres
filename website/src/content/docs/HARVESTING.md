@@ -13,6 +13,7 @@ Today the shipping portal clients cover:
 
 - CKAN portals
 - DCAT-AP portals that expose the udata REST JSON-LD catalog
+- SPARQL-backed DCAT catalogs (via `--profile sparql`, e.g. `data.europa.eu`)
 
 ## Core pipeline
 
@@ -160,6 +161,7 @@ The exact harvest behavior depends on the portal client:
 
 - CKAN clients can use modified-since filters and adaptive page sizing
 - DCAT udata clients stream paginated JSON-LD catalog pages and resolve multilingual fields according to the configured language
+- SPARQL DCAT clients page through the catalog with `LIMIT`/`OFFSET` queries, deduplicate by dataset URI, and pick localized titles/descriptions by language preference (requested language > sibling language > English > untagged)
 
 ## Adaptive Page Size
 
@@ -182,4 +184,5 @@ This converges faster than halving and handles portals with resource-heavy datas
 - Circuit breaker: [`crates/ceres-core/src/circuit_breaker.rs`](../crates/ceres-core/src/circuit_breaker.rs)
 - CKAN client: [`crates/ceres-client/src/ckan.rs`](../crates/ceres-client/src/ckan.rs) (`search_modified_since`, adaptive page size)
 - DCAT client: [`crates/ceres-client/src/dcat.rs`](../crates/ceres-client/src/dcat.rs)
+- SPARQL DCAT client: [`crates/ceres-client/src/sparql.rs`](../crates/ceres-client/src/sparql.rs)
 - DB schema: [`migrations/`](../migrations/)
