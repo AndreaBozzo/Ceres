@@ -148,7 +148,7 @@ impl PortalClient for PortalClientEnum {
                 },
             )),
             Self::SparqlDcat(c) => Box::pin(StreamExt::map(
-                c.paginate_sparql_stream(None),
+                c.paginate_sparql_stream(),
                 |r: Result<Vec<DcatDataset>, AppError>| {
                     r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect())
                 },
