@@ -364,20 +364,57 @@ impl DatasetRepository {
     }
 
     /// Semantic search using cosine similarity. Returns results ordered by similarity.
+    ///
+    /// HNSW tuning: the query runs inside a transaction so we can apply `SET LOCAL`
+    /// session GUCs that only affect this search:
+    /// - `hnsw.ef_search` (default 40, override via `CERES_HNSW_EF_SEARCH`) trades
+    ///   recall against latency — higher means better recall, slower queries.
+    /// - `hnsw.iterative_scan = relaxed_order` lets pgvector (>= 0.8) keep scanning the
+    ///   index when the `NOT is_stale` filter discards rows post-retrieval, so we still
+    ///   return up to `limit` results instead of fewer.
     pub async fn search(
         &self,
         query_vector: Vec<f32>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
         let pg_vector = Vector::from(query_vector);
+        let ef_search: i32 = std::env::var("CERES_HNSW_EF_SEARCH")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(40);
+
         let query = format!(
             "SELECT {}, 1 - (embedding <=> $1) as similarity_score FROM datasets WHERE embedding IS NOT NULL AND NOT is_stale ORDER BY embedding <=> $1 LIMIT $2",
             DATASET_COLUMNS
         );
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        // SET LOCAL applies only for the duration of this transaction. ef_search must be
+        // set with a literal (GUCs can't be parameterized), so it is clamped to a sane
+        // range to keep the interpolation injection-safe.
+        let ef_search = ef_search.clamp(1, 1000);
+        sqlx::query(&format!("SET LOCAL hnsw.ef_search = {ef_search}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        sqlx::query("SET LOCAL hnsw.iterative_scan = relaxed_order")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
         let results = sqlx::query_as::<_, SearchResultRow>(&query)
             .bind(pg_vector)
             .bind(limit as i64)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        tx.commit()
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
@@ -520,6 +557,38 @@ impl DatasetRepository {
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(result)
+    }
+
+    /// Fetches sync status for many portals in a single query.
+    ///
+    /// Avoids the N+1 round-trips of calling [`Self::get_sync_status`] per portal
+    /// (e.g. in the `list_portals` handler). Returns a map keyed by portal URL;
+    /// portals with no recorded status are simply absent from the map.
+    pub async fn get_sync_status_batch(
+        &self,
+        portal_urls: &[&str],
+    ) -> Result<HashMap<String, PortalSyncStatus>, AppError> {
+        if portal_urls.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let urls: Vec<String> = portal_urls.iter().map(|u| u.to_string()).collect();
+        let rows = sqlx::query_as::<_, PortalSyncStatus>(
+            r#"
+            SELECT portal_url, last_successful_sync, last_sync_mode, sync_status, datasets_synced, created_at, updated_at
+            FROM portal_sync_status
+            WHERE portal_url = ANY($1)
+            "#,
+        )
+        .bind(&urls)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|s| (s.portal_url.clone(), s))
+            .collect())
     }
 
     /// Updates or inserts the sync status for a portal.

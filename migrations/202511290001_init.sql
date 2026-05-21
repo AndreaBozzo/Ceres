@@ -44,4 +44,7 @@ CREATE TABLE IF NOT EXISTS datasets (
 --   SET LOCAL hnsw.ef_search = 40;  -- or higher for better precision
 -- This should be done per-transaction in the search service
 -- to balance precision vs speed dynamically.
-CREATE INDEX ON datasets USING hnsw (embedding vector_cosine_ops);
+-- Named index with IF NOT EXISTS to prevent duplicate anonymous indexes when
+-- this migration is re-applied on dev resets (see migration 202605210001).
+CREATE INDEX IF NOT EXISTS idx_datasets_embedding_hnsw
+    ON datasets USING hnsw (embedding vector_cosine_ops);

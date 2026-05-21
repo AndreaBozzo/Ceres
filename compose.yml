@@ -9,6 +9,21 @@ services:
       POSTGRES_DB: ceres_db
     ports:
       - "5432:5432"
+    # HNSW index builds need shared memory for parallel workers; the 64MB default
+    # makes parallel builds fail with "No space left on device" at our scale.
+    # Raising shm_size lets `CREATE INDEX ... USING hnsw` use parallel maintenance
+    # workers. Without this, build the index serially
+    # (SET max_parallel_maintenance_workers = 0).
+    shm_size: "2gb"
+    # Build/query tuning for vector workloads at scale (~360k embeddings):
+    #   maintenance_work_mem: HNSW build quality/speed (≈1.3GB per index)
+    #   shared_buffers:       hot index/page cache for search latency
+    command:
+      - "postgres"
+      - "-c"
+      - "maintenance_work_mem=1GB"
+      - "-c"
+      - "shared_buffers=512MB"
     volumes:
       - ceres_pgdata:/var/lib/postgresql/data
     healthcheck:
