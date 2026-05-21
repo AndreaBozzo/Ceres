@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-21
+
+Theme: performance at scale and ecosystem consolidation.
+
+### Added
+
+- HNSW index tuning: dedup migration rebuilding a single named index with
+  `m=16, ef_construction=64`; dynamic per-search `hnsw.ef_search`
+  (env `CERES_HNSW_EF_SEARCH`, default 40) and `iterative_scan=relaxed_order`
+- `scripts/hnsw_benchmark.sql` and `compose.yml` memory/`shm_size` tuning
+- `AppError::IoError` and `AppError::ExportError` variants for export paths
+- `SyncOptions` struct and `DatasetRepository::get_sync_status_batch`
+
+### Changed
+
+- Embedding pass now waits for circuit-breaker recovery and retries deferred
+  batches (bounded) instead of stopping; affected datasets stay pending
+- `list_portals` uses a single batched sync-status query (no more N+1) and
+  propagates DB errors instead of silencing them
+
+### Fixed
+
+- SPARQL incremental sync no longer excludes datasets without `dct:modified`
+
+### Dependencies
+
+- Update yanked `unicode-segmentation` 1.13.1 → 1.13.2
+- Update `astral-tokio-tar` 0.6.1 → 0.6.2 (RUSTSEC-2026-0145)
+
 ## [0.3.5] - 2026-03-30
 
 

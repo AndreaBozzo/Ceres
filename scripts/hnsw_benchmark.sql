@@ -10,6 +10,13 @@
 --
 -- Read the "Execution Time" line under each \echo header. Higher ef_search = better
 -- recall, higher latency. The app default is 40 (CERES_HNSW_EF_SEARCH).
+--
+-- Note: the first query is cold (loads ~1.2GB of index from disk; with a small
+-- shared_buffers it can take seconds). Run a warm-up query first for steady-state
+-- numbers. Reference run on the local catalog (~362k embeddings, 768d), warm cache:
+--   ef_search=40  -> ~1.1 ms
+--   ef_search=100 -> ~2.8 ms
+--   ef_search=200 -> ~3.5 ms
 
 \set ON_ERROR_STOP on
 \timing on

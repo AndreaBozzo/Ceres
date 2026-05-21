@@ -291,7 +291,7 @@ The website lives in `website/` and documents the same harvest-first model:
 
 ## Version
 
-Current version: `0.3.5`
+Current version: `0.4.0`
 
 ## Contributing
 
