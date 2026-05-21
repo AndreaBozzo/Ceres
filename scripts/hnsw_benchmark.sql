@@ -29,8 +29,14 @@ WHERE embedding IS NOT NULL AND NOT is_stale
 ORDER BY id
 LIMIT 1;
 
+-- Each section runs inside an explicit transaction: psql is in autocommit mode,
+-- so a bare `SET LOCAL` would be committed on its own and never reach the
+-- following EXPLAIN. BEGIN/COMMIT keeps the SET LOCAL scoped to the query that
+-- uses it, which is exactly the per-search behavior the app relies on.
+
 \echo ''
 \echo '=== ef_search = 40 (default) ==='
+BEGIN;
 SET LOCAL hnsw.ef_search = 40;
 SET LOCAL hnsw.iterative_scan = relaxed_order;
 EXPLAIN (ANALYZE, BUFFERS, TIMING)
@@ -39,9 +45,11 @@ FROM datasets
 WHERE embedding IS NOT NULL AND NOT is_stale
 ORDER BY embedding <=> (SELECT v FROM _probe)
 LIMIT 10;
+COMMIT;
 
 \echo ''
 \echo '=== ef_search = 100 ==='
+BEGIN;
 SET LOCAL hnsw.ef_search = 100;
 SET LOCAL hnsw.iterative_scan = relaxed_order;
 EXPLAIN (ANALYZE, BUFFERS, TIMING)
@@ -50,9 +58,11 @@ FROM datasets
 WHERE embedding IS NOT NULL AND NOT is_stale
 ORDER BY embedding <=> (SELECT v FROM _probe)
 LIMIT 10;
+COMMIT;
 
 \echo ''
 \echo '=== ef_search = 200 ==='
+BEGIN;
 SET LOCAL hnsw.ef_search = 200;
 SET LOCAL hnsw.iterative_scan = relaxed_order;
 EXPLAIN (ANALYZE, BUFFERS, TIMING)
@@ -61,3 +71,4 @@ FROM datasets
 WHERE embedding IS NOT NULL AND NOT is_stale
 ORDER BY embedding <=> (SELECT v FROM _probe)
 LIMIT 10;
+COMMIT;

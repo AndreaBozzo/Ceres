@@ -197,7 +197,7 @@ where
 
             let embedded_before = stats.embedded;
 
-            for batch in page.chunks(effective_batch_size) {
+            'batches: for batch in page.chunks(effective_batch_size) {
                 if cancel_token.is_cancelled() {
                     tracing::info!("Embedding pass cancelled");
                     break;
@@ -235,8 +235,11 @@ where
                             tokio::select! {
                                 _ = tokio::time::sleep(retry_after) => {}
                                 _ = cancel_token.cancelled() => {
+                                    // Cancelled mid-wait: the batch never reached a
+                                    // terminal outcome, so don't count or report it —
+                                    // it stays pending. Stop the whole pass.
                                     tracing::info!("Embedding pass cancelled during circuit wait");
-                                    break;
+                                    break 'batches;
                                 }
                             }
                         }
@@ -254,10 +257,6 @@ where
                     failed: stats.failed,
                     skipped: stats.skipped,
                 });
-
-                if cancel_token.is_cancelled() {
-                    break;
-                }
             }
 
             // If no datasets were successfully embedded this page, stop to avoid
