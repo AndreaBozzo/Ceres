@@ -168,29 +168,6 @@ impl<PD: Send> SyncPlan<PD> {
     }
 }
 
-/// Service for harvesting dataset metadata from open data portals.
-///
-/// This service handles metadata fetching, delta detection, and persistence.
-/// Embedding generation is handled separately by [`EmbeddingService`](crate::embedding::EmbeddingService).
-///
-/// # Type Parameters
-///
-/// * `S` - Dataset store implementation (e.g., `DatasetRepository`)
-/// * `F` - Portal client factory implementation
-/// * `D` - Delta detector strategy (defaults to [`ContentHashDetector`])
-///
-/// # Example
-///
-/// ```ignore
-/// use ceres_core::harvest::HarvestService;
-///
-/// // Create service — no embedding provider needed
-/// let harvest_service = HarvestService::new(repo, ckan_factory);
-///
-/// // Sync a portal (metadata only, embedding = NULL)
-/// let stats = harvest_service.sync_portal("https://data.gov/api/3").await?;
-/// println!("Synced {} datasets ({} created)", stats.total(), stats.created);
-/// ```
 /// Data parameters for a single portal sync.
 ///
 /// Groups the descriptive inputs that flow together through the sync pipeline so
@@ -214,6 +191,29 @@ pub struct SyncOptions<'a> {
     pub sparql_endpoint: Option<&'a str>,
 }
 
+/// Service for harvesting dataset metadata from open data portals.
+///
+/// This service handles metadata fetching, delta detection, and persistence.
+/// Embedding generation is handled separately by [`EmbeddingService`](crate::embedding::EmbeddingService).
+///
+/// # Type Parameters
+///
+/// * `S` - Dataset store implementation (e.g., `DatasetRepository`)
+/// * `F` - Portal client factory implementation
+/// * `D` - Delta detector strategy (defaults to [`ContentHashDetector`])
+///
+/// # Example
+///
+/// ```ignore
+/// use ceres_core::harvest::HarvestService;
+///
+/// // Create service — no embedding provider needed
+/// let harvest_service = HarvestService::new(repo, ckan_factory);
+///
+/// // Sync a portal (metadata only, embedding = NULL)
+/// let stats = harvest_service.sync_portal("https://data.gov/api/3").await?;
+/// println!("Synced {} datasets ({} created)", stats.total(), stats.created);
+/// ```
 pub struct HarvestService<S, F, D = ContentHashDetector>
 where
     S: DatasetStore,
