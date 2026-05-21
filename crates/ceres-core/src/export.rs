@@ -102,13 +102,13 @@ where
                     let dataset = result?;
                     let record = create_export_record(&dataset);
                     let json = serde_json::to_string(&record)
-                        .map_err(|e| AppError::Generic(e.to_string()))?;
-                    writeln!(writer, "{}", json).map_err(|e| AppError::Generic(e.to_string()))?;
+                        .map_err(|e| AppError::ExportError(e.to_string()))?;
+                    writeln!(writer, "{}", json).map_err(|e| AppError::IoError(e.to_string()))?;
                     count += 1;
                 }
             }
             ExportFormat::Json => {
-                writeln!(writer, "[").map_err(|e| AppError::Generic(e.to_string()))?;
+                writeln!(writer, "[").map_err(|e| AppError::IoError(e.to_string()))?;
                 let mut first = true;
 
                 while let Some(result) = stream.next().await {
@@ -116,28 +116,28 @@ where
                     let record = create_export_record(&dataset);
 
                     if !first {
-                        writeln!(writer, ",").map_err(|e| AppError::Generic(e.to_string()))?;
+                        writeln!(writer, ",").map_err(|e| AppError::IoError(e.to_string()))?;
                     }
                     first = false;
 
                     let json = serde_json::to_string_pretty(&record)
-                        .map_err(|e| AppError::Generic(e.to_string()))?;
+                        .map_err(|e| AppError::ExportError(e.to_string()))?;
                     // Indent each line for proper formatting
                     for line in json.lines() {
                         writeln!(writer, "  {}", line)
-                            .map_err(|e| AppError::Generic(e.to_string()))?;
+                            .map_err(|e| AppError::IoError(e.to_string()))?;
                     }
                     count += 1;
                 }
 
-                writeln!(writer, "]").map_err(|e| AppError::Generic(e.to_string()))?;
+                writeln!(writer, "]").map_err(|e| AppError::IoError(e.to_string()))?;
             }
             ExportFormat::Csv => {
                 writeln!(
                     writer,
                     "id,original_id,source_portal,url,title,description,first_seen_at,last_updated_at"
                 )
-                .map_err(|e| AppError::Generic(e.to_string()))?;
+                .map_err(|e| AppError::IoError(e.to_string()))?;
 
                 while let Some(result) = stream.next().await {
                     let dataset = result?;
@@ -149,7 +149,7 @@ where
 
         writer
             .flush()
-            .map_err(|e| AppError::Generic(e.to_string()))?;
+            .map_err(|e| AppError::IoError(e.to_string()))?;
         Ok(count)
     }
 
@@ -184,12 +184,12 @@ where
                     let dataset = result?;
                     let record = create_export_record(&dataset);
                     let mut json = serde_json::to_string(&record)
-                        .map_err(|e| AppError::Generic(e.to_string()))?;
+                        .map_err(|e| AppError::ExportError(e.to_string()))?;
                     json.push('\n');
                     writer
                         .write_all(json.as_bytes())
                         .await
-                        .map_err(|e| AppError::Generic(e.to_string()))?;
+                        .map_err(|e| AppError::IoError(e.to_string()))?;
                     count += 1;
                 }
             }
@@ -197,7 +197,7 @@ where
                 writer
                     .write_all(b"[\n")
                     .await
-                    .map_err(|e| AppError::Generic(e.to_string()))?;
+                    .map_err(|e| AppError::IoError(e.to_string()))?;
                 let mut first = true;
 
                 while let Some(result) = stream.next().await {
@@ -208,18 +208,18 @@ where
                         writer
                             .write_all(b",\n")
                             .await
-                            .map_err(|e| AppError::Generic(e.to_string()))?;
+                            .map_err(|e| AppError::IoError(e.to_string()))?;
                     }
                     first = false;
 
                     let json = serde_json::to_string_pretty(&record)
-                        .map_err(|e| AppError::Generic(e.to_string()))?;
+                        .map_err(|e| AppError::ExportError(e.to_string()))?;
                     // Indent each line for proper formatting
                     for line in json.lines() {
                         writer
                             .write_all(format!("  {}\n", line).as_bytes())
                             .await
-                            .map_err(|e| AppError::Generic(e.to_string()))?;
+                            .map_err(|e| AppError::IoError(e.to_string()))?;
                     }
                     count += 1;
                 }
@@ -227,7 +227,7 @@ where
                 writer
                     .write_all(b"]\n")
                     .await
-                    .map_err(|e| AppError::Generic(e.to_string()))?;
+                    .map_err(|e| AppError::IoError(e.to_string()))?;
             }
             ExportFormat::Csv => {
                 writer
@@ -235,7 +235,7 @@ where
                         b"id,original_id,source_portal,url,title,description,first_seen_at,last_updated_at\n",
                     )
                     .await
-                    .map_err(|e| AppError::Generic(e.to_string()))?;
+                    .map_err(|e| AppError::IoError(e.to_string()))?;
 
                 while let Some(result) = stream.next().await {
                     let dataset = result?;
@@ -243,7 +243,7 @@ where
                     writer
                         .write_all(row.as_bytes())
                         .await
-                        .map_err(|e| AppError::Generic(e.to_string()))?;
+                        .map_err(|e| AppError::IoError(e.to_string()))?;
                     count += 1;
                 }
             }
@@ -252,7 +252,7 @@ where
         writer
             .flush()
             .await
-            .map_err(|e| AppError::Generic(e.to_string()))?;
+            .map_err(|e| AppError::IoError(e.to_string()))?;
         Ok(count)
     }
 }
@@ -289,7 +289,7 @@ fn write_csv_row<W: Write>(writer: &mut W, dataset: &Dataset) -> Result<(), AppE
     let row = format_csv_row(dataset);
     writer
         .write_all(row.as_bytes())
-        .map_err(|e| AppError::Generic(e.to_string()))?;
+        .map_err(|e| AppError::IoError(e.to_string()))?;
     Ok(())
 }
 

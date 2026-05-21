@@ -191,6 +191,29 @@ impl<PD: Send> SyncPlan<PD> {
 /// let stats = harvest_service.sync_portal("https://data.gov/api/3").await?;
 /// println!("Synced {} datasets ({} created)", stats.total(), stats.created);
 /// ```
+/// Data parameters for a single portal sync.
+///
+/// Groups the descriptive inputs that flow together through the sync pipeline so
+/// the internal sync method does not need a long positional argument list. The
+/// cross-cutting `reporter` and `cancel_token` are passed separately, not here.
+#[derive(Debug, Clone, Copy)]
+pub struct SyncOptions<'a> {
+    /// The portal API URL to synchronize.
+    pub portal_url: &'a str,
+    /// Optional URL template for building dataset page links.
+    pub url_template: Option<&'a str>,
+    /// Preferred language for localized metadata (e.g. `"en"`).
+    pub language: &'a str,
+    /// Force a full sync instead of an incremental one.
+    pub force_full_sync: bool,
+    /// The portal protocol (CKAN, DCAT, ...).
+    pub portal_type: PortalType,
+    /// Optional DCAT profile selector (e.g. `"sparql"`).
+    pub profile: Option<&'a str>,
+    /// Optional SPARQL endpoint override for SPARQL-backed DCAT portals.
+    pub sparql_endpoint: Option<&'a str>,
+}
+
 pub struct HarvestService<S, F, D = ContentHashDetector>
 where
     S: DatasetStore,
@@ -338,15 +361,17 @@ where
     ) -> Result<SyncStats, AppError> {
         let result = self
             .sync_portal_with_progress_cancellable_internal(
-                portal_url,
-                url_template,
-                language,
+                SyncOptions {
+                    portal_url,
+                    url_template,
+                    language,
+                    force_full_sync: self.config.force_full_sync,
+                    portal_type,
+                    profile,
+                    sparql_endpoint,
+                },
                 reporter,
                 CancellationToken::new(), // never cancelled
-                self.config.force_full_sync,
-                portal_type,
-                profile,
-                sparql_endpoint,
             )
             .await?;
         Ok(result.stats)
@@ -476,15 +501,17 @@ where
         cancel_token: CancellationToken,
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
-            portal_url,
-            None,
-            "en",
+            SyncOptions {
+                portal_url,
+                url_template: None,
+                language: "en",
+                force_full_sync: self.config.force_full_sync,
+                portal_type: PortalType::default(),
+                profile: None,
+                sparql_endpoint: None,
+            },
             &SilentReporter,
             cancel_token,
-            self.config.force_full_sync,
-            PortalType::default(),
-            None,
-            None,
         )
         .await
     }
@@ -503,15 +530,17 @@ where
         sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
-            portal_url,
-            url_template,
-            language,
+            SyncOptions {
+                portal_url,
+                url_template,
+                language,
+                force_full_sync: self.config.force_full_sync,
+                portal_type,
+                profile,
+                sparql_endpoint,
+            },
             reporter,
             cancel_token,
-            self.config.force_full_sync,
-            portal_type,
-            profile,
-            sparql_endpoint,
         )
         .await
     }
@@ -533,32 +562,37 @@ where
     ) -> Result<SyncResult, AppError> {
         let force_full_sync = self.config.force_full_sync || force_full_sync;
         self.sync_portal_with_progress_cancellable_internal(
-            portal_url,
-            url_template,
-            language,
+            SyncOptions {
+                portal_url,
+                url_template,
+                language,
+                force_full_sync,
+                portal_type,
+                profile,
+                sparql_endpoint,
+            },
             reporter,
             cancel_token,
-            force_full_sync,
-            portal_type,
-            profile,
-            sparql_endpoint,
         )
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn sync_portal_with_progress_cancellable_internal<R: ProgressReporter>(
         &self,
-        portal_url: &str,
-        url_template: Option<&str>,
-        language: &str,
+        options: SyncOptions<'_>,
         reporter: &R,
         cancel_token: CancellationToken,
-        force_full_sync: bool,
-        portal_type: PortalType,
-        profile: Option<&str>,
-        sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
+        let SyncOptions {
+            portal_url,
+            url_template,
+            language,
+            force_full_sync,
+            portal_type,
+            profile,
+            sparql_endpoint,
+        } = options;
+
         let sync_start = Utc::now();
 
         // Check cancellation before starting

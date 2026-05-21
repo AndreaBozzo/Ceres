@@ -159,6 +159,20 @@ pub enum AppError {
     #[error("Configuration error: {0}")]
     ConfigError(String),
 
+    /// Filesystem I/O error.
+    ///
+    /// This error wraps `std::io::Error` failures from reading or writing files,
+    /// typically in export paths (creating output directories, writing files).
+    #[error("I/O error: {0}")]
+    IoError(String),
+
+    /// Data export error.
+    ///
+    /// This error covers failures specific to the export pipeline that are not
+    /// plain I/O — e.g. Arrow/Parquet schema or serialization failures.
+    #[error("Export error: {0}")]
+    ExportError(String),
+
     /// Generic application error for cases not covered by specific variants.
     ///
     /// Use this sparingly - prefer creating specific error variants
@@ -332,6 +346,8 @@ impl AppError {
             | AppError::InvalidPortalUrl(_)
             | AppError::EmptyResponse
             | AppError::ConfigError(_)
+            | AppError::IoError(_)
+            | AppError::ExportError(_)
             | AppError::Generic(_) => false,
         }
     }
