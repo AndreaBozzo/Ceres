@@ -32,6 +32,7 @@ Thumbs.db
 .env.local
 .env.*.local
 .claude/
+.ceres-harvest-runs/
 
 # Database
 /pgdata/
