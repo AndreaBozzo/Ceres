@@ -7,33 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-05-21
 
-Theme: performance at scale and ecosystem consolidation.
 
 ### Added
 
-- HNSW index tuning: dedup migration rebuilding a single named index with
-  `m=16, ef_construction=64`; dynamic per-search `hnsw.ef_search`
-  (env `CERES_HNSW_EF_SEARCH`, default 40) and `iterative_scan=relaxed_order`
-- `scripts/hnsw_benchmark.sql` and `compose.yml` memory/`shm_size` tuning
-- `AppError::IoError` and `AppError::ExportError` variants for export paths
-- `SyncOptions` struct and `DatasetRepository::get_sync_status_batch`
+- Add SPARQL DCAT client for harvesting datasets from SPARQL-backed portals
+- **sparql**: Enhance data.europa.eu integration with registry API support
 
-### Changed
-
-- Embedding pass now waits for circuit-breaker recovery and retries deferred
-  batches (bounded) instead of stopping; affected datasets stay pending
-- `list_portals` uses a single batched sync-status query (no more N+1) and
-  propagates DB errors instead of silencing them
-
-### Fixed
-
-- SPARQL incremental sync no longer excludes datasets without `dct:modified`
 
 ### Dependencies
 
-- Update yanked `unicode-segmentation` 1.13.1 → 1.13.2
-- Update `astral-tokio-tar` 0.6.1 → 0.6.2 (RUSTSEC-2026-0145)
+- **deps**: Bump defu from 6.1.4 to 6.1.6 in /website
+- **deps**: Bump vite from 6.4.1 to 6.4.2 in /website
+- **deps**: Bump astral-tokio-tar from 0.6.0 to 0.6.1
+- **deps**: Bump astro and @astrojs/starlight in /website
+- **deps**: Bump postcss from 8.5.6 to 8.5.14 in /website
+- **deps**: Bump devalue from 5.8.0 to 5.8.1 in /website
 
+
+### Performance
+
+- HNSW tuning + ecosystem consolidation (0.4.0)
 ## [0.3.5] - 2026-03-30
 
 
