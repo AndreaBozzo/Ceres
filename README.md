@@ -48,9 +48,9 @@ Ceres addresses that by splitting the system into two stages:
 
 ## Current Scope
 
-- Harvesting: CKAN and DCAT-AP udata REST portals
+- Harvesting: CKAN, DCAT-AP udata REST, and SPARQL-backed DCAT endpoints (e.g. `data.europa.eu`)
 - Embeddings: Ollama locally, or Gemini/OpenAI if you prefer hosted providers
-- Search: semantic search over datasets that already have embeddings
+- Search: semantic search over datasets that already have embeddings, backed by a tuned HNSW index for catalogs at scale
 - Export: JSONL, JSON, CSV, and curated Parquet
 - Operations: CLI, REST API, database-backed harvest jobs, graceful shutdown, protected admin endpoints
 
@@ -73,6 +73,7 @@ Today, the shipped portal clients cover:
 
 - `ckan`
 - `dcat` for udata-flavored DCAT-AP portals such as `data.public.lu` and `data.gouv.fr`
+- `dcat` with `--profile sparql` for SPARQL-backed DCAT catalogs such as `data.europa.eu`
 
 The codebase already models additional portal types such as `socrata`, but they are not yet implemented in the current client factory.
 
@@ -190,6 +191,9 @@ ceres harvest https://dati.comune.milano.it
 # Ad-hoc DCAT harvest
 ceres harvest https://data.public.lu --type dcat
 
+# Ad-hoc SPARQL-backed DCAT harvest
+ceres harvest https://data.europa.eu --type dcat --profile sparql
+
 # Named portal from config
 ceres harvest --portal milano --config examples/portals.toml
 
@@ -287,7 +291,7 @@ The website lives in `website/` and documents the same harvest-first model:
 
 ## Version
 
-Current version: `0.3.5`
+Current version: `0.4.0`
 
 ## Contributing
 

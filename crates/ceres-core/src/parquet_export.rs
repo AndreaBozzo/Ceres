@@ -132,7 +132,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
         // Create directory structure
         let data_dir = output_dir.join("data");
         fs::create_dir_all(&data_dir).map_err(|e| {
-            AppError::Generic(format!(
+            AppError::IoError(format!(
                 "Failed to create output directory {}: {}",
                 data_dir.display(),
                 e
@@ -164,9 +164,9 @@ impl<S: DatasetStore> ParquetExportService<S> {
         // Write metadata.json
         let metadata_path = output_dir.join("metadata.json");
         let metadata_json = serde_json::to_string_pretty(&result)
-            .map_err(|e| AppError::Generic(format!("Failed to serialize metadata: {}", e)))?;
+            .map_err(|e| AppError::ExportError(format!("Failed to serialize metadata: {}", e)))?;
         fs::write(&metadata_path, metadata_json).map_err(|e| {
-            AppError::Generic(format!(
+            AppError::IoError(format!(
                 "Failed to write {}: {}",
                 metadata_path.display(),
                 e
@@ -192,11 +192,12 @@ impl<S: DatasetStore> ParquetExportService<S> {
         // Open the "all" writer
         let all_path = output_dir.join("all.parquet");
         let all_file = fs::File::create(&all_path).map_err(|e| {
-            AppError::Generic(format!("Failed to create {}: {}", all_path.display(), e))
+            AppError::IoError(format!("Failed to create {}: {}", all_path.display(), e))
         })?;
         let mut all_writer =
-            ArrowWriter::try_new(all_file, schema.clone(), Some(writer_props.clone()))
-                .map_err(|e| AppError::Generic(format!("Failed to create ArrowWriter: {}", e)))?;
+            ArrowWriter::try_new(all_file, schema.clone(), Some(writer_props.clone())).map_err(
+                |e| AppError::ExportError(format!("Failed to create ArrowWriter: {}", e)),
+            )?;
 
         // Per-portal state keyed by normalized source_portal URL (stable, unique)
         let mut portal_writers: HashMap<String, ArrowWriter<fs::File>> = HashMap::new();
@@ -268,7 +269,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 let batch = build_record_batch(&all_buffer, &schema)?;
                 all_writer
                     .write(&batch)
-                    .map_err(|e| AppError::Generic(format!("Parquet write error: {}", e)))?;
+                    .map_err(|e| AppError::ExportError(format!("Parquet write error: {}", e)))?;
                 all_buffer.clear();
             }
 
@@ -291,7 +292,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 )?;
                 writer
                     .write(&batch)
-                    .map_err(|e| AppError::Generic(format!("Parquet write error: {}", e)))?;
+                    .map_err(|e| AppError::ExportError(format!("Parquet write error: {}", e)))?;
             }
         }
 
@@ -300,7 +301,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
             let batch = build_record_batch(&all_buffer, &schema)?;
             all_writer
                 .write(&batch)
-                .map_err(|e| AppError::Generic(format!("Parquet write error: {}", e)))?;
+                .map_err(|e| AppError::ExportError(format!("Parquet write error: {}", e)))?;
         }
 
         // Flush remaining portal buffers
@@ -318,19 +319,19 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 )?;
                 writer
                     .write(&batch)
-                    .map_err(|e| AppError::Generic(format!("Parquet write error: {}", e)))?;
+                    .map_err(|e| AppError::ExportError(format!("Parquet write error: {}", e)))?;
             }
         }
 
         // Close all writers
         all_writer
             .close()
-            .map_err(|e| AppError::Generic(format!("Failed to close all.parquet: {}", e)))?;
+            .map_err(|e| AppError::ExportError(format!("Failed to close all.parquet: {}", e)))?;
 
         for (portal_key, writer) in portal_writers {
             let (_, ref fname) = portal_info[&portal_key];
             writer.close().map_err(|e| {
-                AppError::Generic(format!("Failed to close {}.parquet: {}", fname, e))
+                AppError::ExportError(format!("Failed to close {}.parquet: {}", fname, e))
             })?;
         }
 
@@ -516,7 +517,7 @@ fn build_record_batch(
             Arc::new(is_duplicate.finish()),
         ],
     )
-    .map_err(|e| AppError::Generic(format!("Failed to build RecordBatch: {}", e)))
+    .map_err(|e| AppError::ExportError(format!("Failed to build RecordBatch: {}", e)))
 }
 
 // =============================================================================
@@ -538,10 +539,10 @@ fn get_or_create_portal_writer<'a>(
     if !writers.contains_key(portal_key) {
         let path = data_dir.join(format!("{}.parquet", file_name));
         let file = fs::File::create(&path).map_err(|e| {
-            AppError::Generic(format!("Failed to create {}: {}", path.display(), e))
+            AppError::IoError(format!("Failed to create {}: {}", path.display(), e))
         })?;
         let writer = ArrowWriter::try_new(file, schema.clone(), Some(writer_props.clone()))
-            .map_err(|e| AppError::Generic(format!("Failed to create ArrowWriter: {}", e)))?;
+            .map_err(|e| AppError::ExportError(format!("Failed to create ArrowWriter: {}", e)))?;
         writers.insert(portal_key.to_string(), writer);
     }
     Ok(writers

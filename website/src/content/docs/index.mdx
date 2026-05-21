@@ -62,7 +62,7 @@ Ceres is designed around that order of work: harvest first, embed later if usefu
 <FeatureGrid>
   <div class="ceres-card animate-fade-in-up animate-delay-2">
     <h3>Harvest First</h3>
-    <p>Stream metadata from CKAN and DCAT udata portals into PostgreSQL, track sync history, detect stale datasets, and keep the catalog current even when embeddings are disabled.</p>
+    <p>Stream metadata from CKAN, DCAT udata, and SPARQL-backed DCAT portals into PostgreSQL, track sync history, detect stale datasets, and keep the catalog current even when embeddings are disabled.</p>
   </div>
   <div class="ceres-card animate-fade-in-up animate-delay-3">
     <h3>Decoupled Pipeline</h3>
@@ -110,11 +110,11 @@ Ceres is designed around that order of work: harvest first, embed later if usefu
 
 <FeatureGrid>
   <div class="ceres-card animate-fade-in-up">
-    <h3>Now (v0.3.5)</h3>
-    <p>Harvest-first sync pipeline, CKAN plus DCAT udata support, standalone embedding passes, local Ollama support, job-driven API operations, and export flows for downstream publishing.</p>
+    <h3>Now (v0.4.0)</h3>
+    <p>Performance at scale and ecosystem consolidation: tuned HNSW vector index, dynamic <code>ef_search</code>, SPARQL-backed DCAT harvesting (e.g. data.europa.eu), more resilient batch embedding under provider failures, and internal refactors for maintainability.</p>
   </div>
   <div class="ceres-card animate-fade-in-up">
-    <h3>Next (v0.4.0)</h3>
-    <p>Scale and ecosystem tuning: HNSW optimization, more portal client coverage, stronger multi-tenant operations, and better downstream dataset publishing ergonomics.</p>
+    <h3>Next (v0.5.0)</h3>
+    <p>Broader portal coverage (Socrata), multi-tenant operations, webhooks, and a Parquet export endpoint on the REST API.</p>
   </div>
 </FeatureGrid>

@@ -51,6 +51,22 @@ impl EmbeddingStats {
     }
 }
 
+/// Outcome of attempting to embed a single batch.
+///
+/// Distinguishes a *recoverable* circuit-open skip (the provider is temporarily
+/// unavailable — Ollama timeout, external rate limit — and the batch should be
+/// retried after the breaker's recovery window) from a *terminal* outcome where
+/// the batch was processed (whether it embedded, failed, or had empty text) and
+/// should not be retried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BatchOutcome {
+    /// The batch reached a terminal state (embedded, failed, or empty); move on.
+    Processed,
+    /// The circuit breaker was open; the batch is still pending and recoverable
+    /// after `retry_after`.
+    CircuitOpen { retry_after: std::time::Duration },
+}
+
 impl std::fmt::Display for EmbeddingStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -181,14 +197,54 @@ where
 
             let embedded_before = stats.embedded;
 
-            for batch in page.chunks(effective_batch_size) {
+            'batches: for batch in page.chunks(effective_batch_size) {
                 if cancel_token.is_cancelled() {
                     tracing::info!("Embedding pass cancelled");
                     break;
                 }
 
-                self.process_batch(batch, &circuit_breaker, &mut stats)
-                    .await;
+                // Retry a batch deferred by an open circuit: wait out the breaker's
+                // recovery window (cancellable) so the Open -> HalfOpen transition can
+                // re-test the provider, then retry the *same* batch. After
+                // MAX_CIRCUIT_RETRIES we give up on this batch (counted as skipped,
+                // still pending in DB) and move on — the daemon is never blocked.
+                const MAX_CIRCUIT_RETRIES: u32 = 5;
+                let mut attempt = 0;
+                loop {
+                    match self
+                        .process_batch(batch, &circuit_breaker, &mut stats)
+                        .await
+                    {
+                        BatchOutcome::Processed => break,
+                        BatchOutcome::CircuitOpen { retry_after } => {
+                            attempt += 1;
+                            if attempt > MAX_CIRCUIT_RETRIES {
+                                tracing::warn!(
+                                    batch_size = batch.len(),
+                                    attempts = attempt - 1,
+                                    "Circuit still open after retries — leaving batch pending"
+                                );
+                                stats.skipped += batch.len();
+                                break;
+                            }
+                            tracing::info!(
+                                attempt,
+                                wait_secs = retry_after.as_secs(),
+                                "Circuit open — waiting for recovery before retry"
+                            );
+                            tokio::select! {
+                                _ = tokio::time::sleep(retry_after) => {}
+                                _ = cancel_token.cancelled() => {
+                                    // Cancelled mid-wait: the batch never reached a
+                                    // terminal outcome, so don't count or report it —
+                                    // it stays pending. Stop the whole pass.
+                                    tracing::info!("Embedding pass cancelled during circuit wait");
+                                    break 'batches;
+                                }
+                            }
+                        }
+                    }
+                }
 
                 processed += batch.len();
 
@@ -229,12 +285,17 @@ where
 
     /// Processes a batch of datasets: generates embeddings via circuit breaker,
     /// then upserts them back to the database.
+    ///
+    /// Returns [`BatchOutcome::CircuitOpen`] without mutating `stats` when the
+    /// breaker is open, so the caller can wait for recovery and retry the same
+    /// batch. All terminal outcomes update `stats` and return
+    /// [`BatchOutcome::Processed`].
     async fn process_batch(
         &self,
         datasets: &[crate::Dataset],
         circuit_breaker: &CircuitBreaker,
         stats: &mut EmbeddingStats,
-    ) {
+    ) -> BatchOutcome {
         // Compute text to embed for each dataset, filtering out empty text
         let embeddable: Vec<(&crate::Dataset, String)> = datasets
             .iter()
@@ -259,7 +320,7 @@ where
         }
 
         if embeddable.is_empty() {
-            return;
+            return BatchOutcome::Processed;
         }
 
         let texts: Vec<String> = embeddable.iter().map(|(_, t)| t.clone()).collect();
@@ -277,7 +338,7 @@ where
                         "Batch embedding count mismatch, failing batch"
                     );
                     stats.failed += batch_size;
-                    return;
+                    return BatchOutcome::Processed;
                 }
 
                 // Build NewDataset items with embeddings for upsert.
@@ -326,14 +387,17 @@ where
                         stats.failed += upsert_count;
                     }
                 }
+                BatchOutcome::Processed
             }
             Err(CircuitBreakerError::Open { retry_after, .. }) => {
+                // Recoverable: the provider is temporarily down. Don't count the
+                // batch yet — the caller waits for recovery and retries it.
                 tracing::debug!(
                     batch_size,
                     retry_after_secs = retry_after.as_secs(),
-                    "Skipping batch - circuit breaker open"
+                    "Circuit breaker open - batch deferred for retry"
                 );
-                stats.skipped += batch_size;
+                BatchOutcome::CircuitOpen { retry_after }
             }
             Err(CircuitBreakerError::Inner(e)) => {
                 tracing::warn!(
@@ -342,6 +406,7 @@ where
                     "Batch embedding generation failed"
                 );
                 stats.failed += batch_size;
+                BatchOutcome::Processed
             }
         }
     }

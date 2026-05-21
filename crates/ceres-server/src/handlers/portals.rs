@@ -31,29 +31,29 @@ pub async fn list_portals(
         return Ok(Json(vec![]));
     };
 
-    let mut portals = Vec::new();
+    // Single batched query for all portals (avoids N+1 round-trips, #108).
+    // DB errors now propagate as a 500 instead of being silently flattened away.
+    let urls: Vec<&str> = config.portals.iter().map(|p| p.url.as_str()).collect();
+    let mut sync_statuses = state.dataset_repo.get_sync_status_batch(&urls).await?;
 
-    for portal in &config.portals {
-        // TODO(correctness): .ok().flatten() silences DB errors — log or propagate (#108)
-        let sync_status = state
-            .dataset_repo
-            .get_sync_status(&portal.url)
-            .await
-            .ok()
-            .flatten();
-
-        portals.push(PortalInfoResponse {
-            name: portal.name.clone(),
-            url: portal.url.clone(),
-            portal_type: portal.portal_type.to_string(),
-            profile: portal.profile.clone(),
-            sparql_endpoint: portal.sparql_endpoint.clone(),
-            enabled: portal.enabled,
-            description: portal.description.clone(),
-            last_sync: sync_status.as_ref().and_then(|s| s.last_successful_sync),
-            dataset_count: sync_status.map(|s| s.datasets_synced as i64),
-        });
-    }
+    let portals = config
+        .portals
+        .iter()
+        .map(|portal| {
+            let sync_status = sync_statuses.remove(&portal.url);
+            PortalInfoResponse {
+                name: portal.name.clone(),
+                url: portal.url.clone(),
+                portal_type: portal.portal_type.to_string(),
+                profile: portal.profile.clone(),
+                sparql_endpoint: portal.sparql_endpoint.clone(),
+                enabled: portal.enabled,
+                description: portal.description.clone(),
+                last_sync: sync_status.as_ref().and_then(|s| s.last_successful_sync),
+                dataset_count: sync_status.map(|s| s.datasets_synced as i64),
+            }
+        })
+        .collect();
 
     Ok(Json(portals))
 }

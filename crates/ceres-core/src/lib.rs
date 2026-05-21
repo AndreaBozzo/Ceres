@@ -91,7 +91,7 @@ pub use traits::{DatasetStore, EmbeddingProvider, PortalClient, PortalClientFact
 // Services (generic over trait implementations)
 pub use embedding::{EmbeddingService, EmbeddingStats};
 pub use export::{ExportFormat, ExportService};
-pub use harvest::HarvestService;
+pub use harvest::{HarvestService, SyncOptions};
 pub use parquet_export::{ParquetExportConfig, ParquetExportResult, ParquetExportService};
 pub use pipeline::HarvestPipeline;
 pub use search::SearchService;

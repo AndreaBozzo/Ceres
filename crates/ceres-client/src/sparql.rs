@@ -244,15 +244,32 @@ impl SparqlDcatClient {
     }
 
     /// Searches for datasets modified since the given timestamp.
+    ///
+    /// `dct:modified` is bound via `OPTIONAL`, so datasets that don't expose it
+    /// would be silently excluded by a plain `?modified > since` filter. Since
+    /// many DCAT catalogs omit `dct:modified` entirely, we also let through any
+    /// dataset where `?modified` is unbound (`!BOUND(?modified)`): those are
+    /// re-fetched and the downstream content-hash delta detector decides whether
+    /// they actually changed. This keeps incremental sync from missing datasets
+    /// that lack a modification timestamp.
     pub async fn search_modified_since(
         &self,
         since: DateTime<Utc>,
     ) -> Result<Vec<DcatDataset>, AppError> {
-        let filter = format!(
-            "FILTER (?modified > \"{}\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
-            since.to_rfc3339()
-        );
+        let filter = Self::modified_since_filter(since);
         self.paginate_sparql(Some(&filter)).await
+    }
+
+    /// Builds the SPARQL FILTER clause for incremental sync.
+    ///
+    /// Includes `!BOUND(?modified)` so datasets lacking a `dct:modified` value
+    /// (bound via `OPTIONAL`) are not silently dropped — see
+    /// [`search_modified_since`](Self::search_modified_since).
+    fn modified_since_filter(since: DateTime<Utc>) -> String {
+        format!(
+            "FILTER (!BOUND(?modified) || ?modified > \"{}\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)",
+            since.to_rfc3339()
+        )
     }
 
     /// Fetches all datasets from the portal using paginated SPARQL queries.
@@ -287,10 +304,12 @@ impl SparqlDcatClient {
     ///
     /// Datasets with no `dct:publisher` are harvested in a final pass via a
     /// `FILTER NOT EXISTS` partition.
-    pub fn paginate_sparql_stream(
-        &self,
-        _modified_since: Option<String>,
-    ) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
+    ///
+    /// This is a full-catalog stream used only for full syncs. Incremental sync
+    /// goes through [`search_modified_since`](Self::search_modified_since), which
+    /// applies the `dct:modified` filter; the streaming path does not filter by
+    /// modification time.
+    pub fn paginate_sparql_stream(&self) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
         if self.uses_data_europa_registry() {
             return self.paginate_data_europa_registry_stream();
         }
@@ -1512,6 +1531,117 @@ mod tests {
         assert_eq!(datasets[0].title, "Valid Title");
     }
 
+    // ---- multilingual selection robustness ----------------------------------
+
+    /// Helper: build a single-key binding with an optional language tag.
+    fn binding(
+        uri: &str,
+        key: &str,
+        value: &str,
+        lang: Option<&str>,
+    ) -> HashMap<String, SparqlValue> {
+        let mut b = HashMap::new();
+        b.insert(
+            "dataset".to_string(),
+            SparqlValue {
+                value: uri.to_string(),
+                lang: None,
+            },
+        );
+        b.insert(
+            key.to_string(),
+            SparqlValue {
+                value: value.to_string(),
+                lang: lang.map(str::to_string),
+            },
+        );
+        b
+    }
+
+    #[test]
+    fn lang_selection_is_order_independent() {
+        // The preferred-language row must win regardless of SPARQL result ordering.
+        let client = SparqlDcatClient::new("https://example.org", "it", None).unwrap();
+
+        let en_first = vec![
+            binding("https://example.org/d/1", "title", "English", Some("en")),
+            binding("https://example.org/d/1", "title", "Italiano", Some("it")),
+        ];
+        let it_first = vec![
+            binding("https://example.org/d/1", "title", "Italiano", Some("it")),
+            binding("https://example.org/d/1", "title", "English", Some("en")),
+        ];
+
+        assert_eq!(
+            client.best_value(&en_first, "title").unwrap().value,
+            "Italiano"
+        );
+        assert_eq!(
+            client.best_value(&it_first, "title").unwrap().value,
+            "Italiano"
+        );
+    }
+
+    #[test]
+    fn lang_falls_back_to_sibling_then_en_then_untagged() {
+        // Requested "nn"; only the sibling "nb", an "en", and an untagged value exist.
+        // Sibling (rank 2) must beat "en" (rank 1) and untagged (rank 0).
+        let client = SparqlDcatClient::new("https://example.org", "nn", None).unwrap();
+        let rows = vec![
+            binding("https://example.org/d/1", "title", "Untagged", None),
+            binding("https://example.org/d/1", "title", "English", Some("en")),
+            binding("https://example.org/d/1", "title", "Bokmål", Some("nb")),
+        ];
+        assert_eq!(client.best_value(&rows, "title").unwrap().value, "Bokmål");
+
+        // With only en + untagged, "en" wins.
+        let rows = vec![
+            binding("https://example.org/d/2", "title", "Untagged", None),
+            binding("https://example.org/d/2", "title", "English", Some("en")),
+        ];
+        assert_eq!(client.best_value(&rows, "title").unwrap().value, "English");
+    }
+
+    #[test]
+    fn title_and_description_selected_independently() {
+        // A dataset may carry the title in the preferred language but the
+        // description only in a fallback language; each field is chosen on its own.
+        let client = SparqlDcatClient::new("https://example.org", "fr", None).unwrap();
+        let json = r#"{
+            "results": {
+                "bindings": [
+                    {
+                        "dataset": { "type": "uri", "value": "https://example.org/d/1" },
+                        "title": { "type": "literal", "value": "Titre FR", "xml:lang": "fr" },
+                        "description": { "type": "literal", "value": "English description", "xml:lang": "en" }
+                    },
+                    {
+                        "dataset": { "type": "uri", "value": "https://example.org/d/1" },
+                        "title": { "type": "literal", "value": "English Title", "xml:lang": "en" }
+                    }
+                ]
+            }
+        }"#;
+        let resp: SparqlResponse = serde_json::from_str(json).unwrap();
+        let datasets = client.bindings_to_datasets(resp.results.bindings);
+        assert_eq!(datasets.len(), 1);
+        assert_eq!(datasets[0].title, "Titre FR");
+        assert_eq!(
+            datasets[0].description.as_deref(),
+            Some("English description")
+        );
+    }
+
+    #[test]
+    fn lang_rank_orders_preferred_sibling_en_other() {
+        let client = SparqlDcatClient::new("https://example.org", "nb", None).unwrap();
+        assert_eq!(client.lang_rank(Some("nb")), 3); // preferred
+        assert_eq!(client.lang_rank(Some("nn")), 2); // sibling
+        assert_eq!(client.lang_rank(Some("en")), 1); // english fallback
+        assert_eq!(client.lang_rank(Some("de")), 0); // unrelated
+        assert_eq!(client.lang_rank(None), 0); // untagged
+    }
+
     // ---- extract_last_segment -----------------------------------------------
 
     #[test]
@@ -1562,6 +1692,25 @@ mod tests {
         let filter = "FILTER (?modified > \"2026-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>)";
         let query = client.build_dataset_query(0, Some(filter));
         assert!(query.contains(filter));
+    }
+
+    #[test]
+    fn modified_since_filter_allows_unbound_modified() {
+        // Datasets without dct:modified (OPTIONAL, hence possibly unbound) must not
+        // be excluded from incremental sync, or catalogs that omit dct:modified
+        // would never re-sync changed datasets.
+        let since = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let filter = SparqlDcatClient::modified_since_filter(since);
+        assert!(filter.contains("!BOUND(?modified)"));
+        assert!(filter.contains("?modified > \"2026-01-01T00:00:00+00:00\""));
+
+        // The unbound clause must come first so it short-circuits before the
+        // comparison (which would error on an unbound variable in strict engines).
+        let bound_pos = filter.find("!BOUND(?modified)").unwrap();
+        let cmp_pos = filter.find("?modified >").unwrap();
+        assert!(bound_pos < cmp_pos);
     }
 
     // ---- SparqlDcatClient::new ---------------------------------------------
