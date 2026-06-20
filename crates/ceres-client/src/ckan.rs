@@ -150,6 +150,12 @@ impl CkanClient {
     /// handle any realistic dataset size while still making progress.
     const MIN_PAGE_SIZE: usize = 10;
 
+    /// Default (and maximum) page size. Pagination starts here, drops on errors,
+    /// and recovers back toward this after successful pages so a single transient
+    /// truncation doesn't pin a large portal at a tiny page size for the rest of
+    /// the harvest.
+    const DEFAULT_PAGE_SIZE: usize = 1000;
+
     /// Hard ceiling for the adaptive per-request timeout.
     ///
     /// When a page times out the harvest both shrinks the page size *and* grows
@@ -385,7 +391,7 @@ impl CkanClient {
     ///
     /// * `fq` - Optional Solr filter query (e.g., `metadata_modified:[... TO *]`)
     async fn paginated_search(&self, fq: Option<&str>) -> Result<Vec<CkanDataset>, AppError> {
-        let mut page_size: usize = 1000;
+        let mut page_size: usize = Self::DEFAULT_PAGE_SIZE;
         let mut all_datasets = Vec::new();
         let mut start: usize = 0;
         let mut page_delay = Self::PAGE_DELAY;
@@ -406,6 +412,10 @@ impl CkanClient {
                     }
 
                     start += page_size;
+                    // Recover page size toward the default after a good page.
+                    if page_size < Self::DEFAULT_PAGE_SIZE {
+                        page_size = (page_size * 2).min(Self::DEFAULT_PAGE_SIZE);
+                    }
                 }
                 Err(e) if page_size > Self::MIN_PAGE_SIZE && Self::is_page_size_reducible(&e) => {
                     // Timeout or truncated response — quarter the page size and
@@ -463,7 +473,7 @@ impl CkanClient {
 
         let initial = PaginationState {
             start: 0,
-            page_size: 1000,
+            page_size: Self::DEFAULT_PAGE_SIZE,
             page_delay: Self::PAGE_DELAY,
             page_timeout: HttpConfig::from_env().timeout,
             done: false,
@@ -497,6 +507,13 @@ impl CkanClient {
                                 state.done = true;
                             } else {
                                 state.start += state.page_size;
+                                // Recover page size toward the default after a good
+                                // page, so a transient truncation doesn't pin a large
+                                // portal at a tiny page size for the rest of the harvest.
+                                if state.page_size < Self::DEFAULT_PAGE_SIZE {
+                                    state.page_size =
+                                        (state.page_size * 2).min(Self::DEFAULT_PAGE_SIZE);
+                                }
                             }
 
                             // Sleep between pages (skipped for last page)
