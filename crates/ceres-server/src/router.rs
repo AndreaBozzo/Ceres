@@ -29,7 +29,8 @@ pub fn create_router(state: AppState, config: &ServerConfig) -> Router {
         .route("/portals", get(portals::list_portals))
         .route("/portals/:name/stats", get(portals::get_portal_stats))
         .route("/harvest/status", get(harvest::get_harvest_status))
-        .route("/datasets/:id", get(datasets::get_dataset_by_id));
+        .route("/datasets/:id", get(datasets::get_dataset_by_id))
+        .route("/datasets/:id/schema", get(datasets::get_dataset_schema));
 
     // Protected routes (require Bearer token)
     let protected_routes = Router::new()

@@ -276,3 +276,86 @@ impl From<ceres_core::Dataset> for DatasetResponse {
         }
     }
 }
+
+/// Normalized resource schema for a dataset.
+///
+/// Derived on read from the dataset's harvested `metadata` (CKAN resources or
+/// DCAT distributions); see [`ceres_core::DatasetSchema`].
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DatasetSchemaResponse {
+    /// Dataset UUID
+    pub id: Uuid,
+    /// Original ID from source portal
+    pub original_id: String,
+    /// Source portal URL
+    pub source_portal: String,
+    /// Resources/distributions that make up the dataset
+    pub resources: Vec<DatasetResourceDto>,
+}
+
+/// A single resource (CKAN) or distribution (DCAT) within a dataset.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DatasetResourceDto {
+    /// Resource name/title
+    pub name: Option<String>,
+    /// File format (e.g. "CSV", "JSON")
+    pub format: Option<String>,
+    /// MIME / media type (e.g. "text/csv")
+    pub media_type: Option<String>,
+    /// Direct access URL for the resource
+    pub url: Option<String>,
+    /// Resource description
+    pub description: Option<String>,
+    /// Column-level schema, when the portal exposed it inline
+    pub fields: Vec<ResourceFieldDto>,
+}
+
+/// A single field (column) within a resource's schema.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ResourceFieldDto {
+    /// Field/column name
+    pub name: String,
+    /// Declared data type, when available
+    pub r#type: Option<String>,
+    /// Optional field description
+    pub description: Option<String>,
+}
+
+impl From<ceres_core::Dataset> for DatasetSchemaResponse {
+    fn from(d: ceres_core::Dataset) -> Self {
+        let schema = ceres_core::DatasetSchema::from_metadata(&d.metadata);
+        Self {
+            id: d.id,
+            original_id: d.original_id,
+            source_portal: d.source_portal,
+            resources: schema
+                .resources
+                .into_iter()
+                .map(DatasetResourceDto::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<ceres_core::DatasetResource> for DatasetResourceDto {
+    fn from(r: ceres_core::DatasetResource) -> Self {
+        Self {
+            name: r.name,
+            format: r.format,
+            media_type: r.media_type,
+            url: r.url,
+            description: r.description,
+            fields: r.fields.into_iter().map(ResourceFieldDto::from).collect(),
+        }
+    }
+}
+
+impl From<ceres_core::ResourceField> for ResourceFieldDto {
+    fn from(f: ceres_core::ResourceField) -> Self {
+        Self {
+            name: f.name,
+            r#type: f.r#type,
+            description: f.description,
+        }
+    }
+}

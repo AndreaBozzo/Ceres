@@ -269,6 +269,7 @@ Available endpoints:
 - `GET /api/v1/portals/{name}/stats`
 - `GET /api/v1/harvest/status`
 - `GET /api/v1/datasets/{id}`
+- `GET /api/v1/datasets/{id}/schema`
 - `POST /api/v1/portals/{name}/harvest`
 - `POST /api/v1/harvest`
 - `GET /api/v1/export`

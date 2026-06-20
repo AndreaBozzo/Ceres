@@ -3,9 +3,10 @@
 use utoipa::OpenApi;
 
 use crate::dto::{
-    DatasetResponse, ExportQuery, HarvestJobResponse, HarvestStatusResponse, HealthResponse,
-    PortalInfoResponse, PortalStatsResponse, SearchQuery, SearchResponse, SearchResultDto,
-    ServiceStatus, StatsResponse, SyncStatsDto, TriggerHarvestRequest,
+    DatasetResourceDto, DatasetResponse, DatasetSchemaResponse, ExportQuery, HarvestJobResponse,
+    HarvestStatusResponse, HealthResponse, PortalInfoResponse, PortalStatsResponse,
+    ResourceFieldDto, SearchQuery, SearchResponse, SearchResultDto, ServiceStatus, StatsResponse,
+    SyncStatsDto, TriggerHarvestRequest,
 };
 use crate::handlers::{datasets, export, harvest, health, portals, search, stats};
 
@@ -56,6 +57,7 @@ semantic search capabilities using vector embeddings.
         harvest::get_harvest_status,
         export::export_datasets,
         datasets::get_dataset_by_id,
+        datasets::get_dataset_schema,
     ),
     components(
         schemas(
@@ -75,6 +77,9 @@ semantic search capabilities using vector embeddings.
             HarvestStatusResponse,
             SyncStatsDto,
             DatasetResponse,
+            DatasetSchemaResponse,
+            DatasetResourceDto,
+            ResourceFieldDto,
         )
     ),
     tags(
