@@ -163,8 +163,19 @@ impl CkanClient {
     /// Timeouts and body-related errors suggest the response is too large for
     /// the portal to serve reliably. Network errors during body streaming also
     /// qualify since a smaller page means less data to transfer.
+    ///
+    /// JSON decode errors (`error decoding response body`) are included because
+    /// large/flaky portals — e.g. api.gsa.gov (data.gov) — intermittently return
+    /// truncated or partial bodies on big pages; a smaller page usually succeeds.
+    /// Reduction is bounded (down to `MIN_PAGE_SIZE`, then the page is abandoned),
+    /// so a genuinely broken portal still fails in finite time rather than looping.
     fn is_page_size_reducible(err: &AppError) -> bool {
-        matches!(err, AppError::Timeout(_) | AppError::NetworkError(_))
+        match err {
+            AppError::Timeout(_) | AppError::NetworkError(_) => true,
+            // reqwest surfaces truncated/partial JSON as "error decoding response body".
+            AppError::ClientError(msg) => msg.to_ascii_lowercase().contains("decod"),
+            _ => false,
+        }
     }
 
     /// Creates a new CKAN client for the specified portal.
@@ -1052,8 +1063,17 @@ mod tests {
     }
 
     #[test]
-    fn test_is_page_size_reducible_client_error() {
+    fn test_is_page_size_reducible_decode_error() {
+        // Truncated/partial JSON bodies (e.g. api.gsa.gov on big pages) should be
+        // retried at a smaller page size, not treated as fatal.
         let err = AppError::ClientError("error decoding response body".to_string());
+        assert!(CkanClient::is_page_size_reducible(&err));
+    }
+
+    #[test]
+    fn test_is_page_size_reducible_http_status_error_not_reducible() {
+        // A real HTTP status error (e.g. 404) must NOT trigger page-size reduction.
+        let err = AppError::ClientError("HTTP 404 from https://example.org".to_string());
         assert!(!CkanClient::is_page_size_reducible(&err));
     }
 
