@@ -73,10 +73,29 @@ const PARTITION_OVERFLOW_OFFSET: usize = 9_500;
 ///
 /// Registry pages contain full JSON-LD graphs, so this is deliberately smaller
 /// than the API's maximum limit.
+// Retained (superseded by the keyset paginator for EU) for its richer full
+// JSON-LD metadata, which the keyset path does not fetch. See `paginate_sparql_stream`.
+#[allow(dead_code)]
 const REGISTRY_PAGE_SIZE: usize = 100;
 
 /// Maximum number of Registry API pages retried before a catalogue is skipped.
+#[allow(dead_code)]
 const MAX_REGISTRY_PAGE_RETRIES: u32 = 3;
+
+/// Page size for keyset (seek) enumeration of dataset URIs.
+///
+/// The enumeration query (`SELECT ?dataset … ORDER BY ?dataset LIMIT N`) is
+/// lightweight (no joins/optionals), but `ORDER BY` over a ~2M-triple graph still
+/// takes ~10s at 5k and ~14s at 10k on data.europa.eu — well under the 60s
+/// gateway timeout, with headroom for slow moments.
+const ENUM_PAGE_SIZE: usize = 5000;
+
+/// Number of dataset URIs per `VALUES` metadata batch.
+///
+/// `VALUES`-bounded metadata queries are near-instant regardless of catalog size
+/// (the join touches only the listed datasets). 256 keeps the POST body modest
+/// while amortizing round-trips.
+const VALUES_BATCH_SIZE: usize = 256;
 
 // =============================================================================
 // SPARQL JSON Results Format (W3C standard)
@@ -116,6 +135,7 @@ enum PartitionRef<'a> {
     NoPublisher,
 }
 
+#[allow(dead_code)]
 struct RegistryPage {
     datasets: Vec<DcatDataset>,
     entries: usize,
@@ -311,7 +331,10 @@ impl SparqlDcatClient {
     /// modification time.
     pub fn paginate_sparql_stream(&self) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
         if self.uses_data_europa_registry() {
-            return self.paginate_data_europa_registry_stream();
+            // data.europa.eu (~2M datasets) can't be fully paged by OFFSET (Virtuoso
+            // ~10k cap) or the Registry API (per-catalogue OFFSET + 503s), and its
+            // Search-API scroll is WAF-blocked. Use a keyset/seek cursor instead.
+            return self.paginate_sparql_keyset_stream();
         }
 
         struct PartitionState {
@@ -520,6 +543,7 @@ impl SparqlDcatClient {
     /// which collapses the publisher partitioning strategy into a single huge
     /// no-publisher partition. The Registry API exposes catalogue-scoped,
     /// paginated JSON-LD metadata, so we use it for this portal's full harvest.
+    #[allow(dead_code)] // superseded by the keyset paginator; kept for richer JSON-LD metadata
     fn paginate_data_europa_registry_stream(
         &self,
     ) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
@@ -669,6 +693,184 @@ impl SparqlDcatClient {
         ))
     }
 
+    /// Streams the full catalog using a keyset (seek) cursor over dataset URIs,
+    /// then fetches metadata for each batch via `VALUES`.
+    ///
+    /// Phase 1 enumerates dataset URIs ordered by IRI, seeking strictly past the
+    /// last URI of the previous page (`FILTER(STR(?dataset) > "<cursor>")`) — this
+    /// avoids OFFSET entirely (no Virtuoso ~10k cap) and is independent of
+    /// `dct:publisher`, so it covers the whole graph. Phase 2 fetches
+    /// title/description/identifier/modified for each batch of URIs via a bounded
+    /// `VALUES` query (near-instant; the full-metadata keyset query times out).
+    ///
+    /// Note: this does not retrieve the full JSON-LD `@graph` (distributions etc.).
+    fn paginate_sparql_keyset_stream(&self) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
+        struct KeysetState {
+            /// Last dataset URI seen (the seek cursor); empty before the first page.
+            cursor: String,
+            /// Enumerated URIs awaiting a metadata fetch.
+            pending: Vec<String>,
+            /// True once enumeration returned a short page (no more URIs).
+            enum_done: bool,
+            done: bool,
+            fetched: usize,
+        }
+
+        let initial = KeysetState {
+            cursor: String::new(),
+            pending: Vec::new(),
+            enum_done: false,
+            done: false,
+            fetched: 0,
+        };
+
+        Box::pin(futures::stream::unfold(
+            initial,
+            move |mut state| async move {
+                if state.done {
+                    return None;
+                }
+
+                // Refill the URI buffer via the keyset cursor when empty.
+                if state.pending.is_empty() {
+                    if state.enum_done {
+                        return None;
+                    }
+                    match self.fetch_keyset_page(&state.cursor).await {
+                        Ok(uris) => {
+                            if uris.len() < ENUM_PAGE_SIZE {
+                                state.enum_done = true;
+                            }
+                            let last = match uris.last() {
+                                Some(last) => last.clone(),
+                                None => return None,
+                            };
+                            state.cursor = last;
+                            tracing::info!(
+                                enumerated = uris.len(),
+                                total_fetched = state.fetched,
+                                "data.europa.eu keyset: enumerated next URI page"
+                            );
+                            state.pending = uris;
+                        }
+                        Err(e) => {
+                            state.done = true;
+                            return Some((Err(e), state));
+                        }
+                    }
+                }
+
+                // Fetch metadata for the next VALUES batch.
+                let take = state.pending.len().min(VALUES_BATCH_SIZE);
+                let batch: Vec<String> = state.pending.drain(..take).collect();
+                match self.fetch_values_metadata(&batch).await {
+                    Ok(datasets) => {
+                        state.fetched += datasets.len();
+                        sleep(PAGE_DELAY).await;
+                        Some((Ok(datasets), state))
+                    }
+                    Err(e) => {
+                        state.done = true;
+                        Some((Err(e), state))
+                    }
+                }
+            },
+        ))
+    }
+
+    /// Fetches one keyset page of dataset URIs ordered after `cursor`.
+    async fn fetch_keyset_page(&self, cursor: &str) -> Result<Vec<String>, AppError> {
+        let query = self.build_keyset_enum_query(cursor);
+        let bindings = self.execute_query_with_retry(&query).await?;
+        Ok(bindings
+            .into_iter()
+            .filter_map(|b| b.get("dataset").map(|v| v.value.clone()))
+            .collect())
+    }
+
+    /// Fetches metadata for a bounded set of dataset URIs via a `VALUES` query.
+    async fn fetch_values_metadata(&self, uris: &[String]) -> Result<Vec<DcatDataset>, AppError> {
+        if uris.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query = self.build_values_metadata_query(uris);
+        let bindings = self.execute_query_with_retry(&query).await?;
+        Ok(self.bindings_to_datasets(bindings))
+    }
+
+    /// [`execute_query`](Self::execute_query) with bounded retry + exponential
+    /// backoff on transient server overload (500/502/503/504/timeout).
+    async fn execute_query_with_retry(
+        &self,
+        query: &str,
+    ) -> Result<Vec<HashMap<String, SparqlValue>>, AppError> {
+        let mut last_err = AppError::Generic("no attempts made".to_string());
+        for attempt in 0..=MAX_PAGE_RETRIES {
+            match self.execute_query(query).await {
+                Ok(b) => return Ok(b),
+                Err(e) => {
+                    last_err = e;
+                    if attempt < MAX_PAGE_RETRIES {
+                        let delay = PAGE_RETRY_BASE_DELAY * 2_u32.pow(attempt);
+                        tracing::warn!(
+                            attempt = attempt + 1,
+                            delay_secs = delay.as_secs(),
+                            error = %last_err,
+                            "SPARQL keyset query failed; retrying after backoff"
+                        );
+                        sleep(delay).await;
+                    }
+                }
+            }
+        }
+        Err(last_err)
+    }
+
+    /// Builds the keyset URI-enumeration query (seek strictly past `cursor`).
+    fn build_keyset_enum_query(&self, cursor: &str) -> String {
+        let cursor_esc = sparql_escape_literal(cursor);
+        format!(
+            "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+             SELECT ?dataset WHERE {{\n\
+               ?dataset a dcat:Dataset .\n\
+               FILTER(STR(?dataset) > \"{cursor_esc}\")\n\
+             }}\n\
+             ORDER BY ?dataset\n\
+             LIMIT {ENUM_PAGE_SIZE}"
+        )
+    }
+
+    /// Builds the bounded `VALUES` metadata query for a set of dataset URIs.
+    fn build_values_metadata_query(&self, uris: &[String]) -> String {
+        let title_filter = self
+            .lang_filter_alternatives()
+            .iter()
+            .map(|l| format!("lang(?title) = \"{l}\""))
+            .collect::<Vec<_>>()
+            .join(" || ");
+        let values = uris
+            .iter()
+            .filter(|u| is_safe_iri(u))
+            .map(|u| format!("<{u}>"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!(
+            "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+             PREFIX dct:  <http://purl.org/dc/terms/>\n\
+             \n\
+             SELECT ?dataset ?title ?description ?identifier ?modified\n\
+             WHERE {{\n\
+               VALUES ?dataset {{ {values} }}\n\
+               ?dataset dct:title ?title .\n\
+               FILTER ({title_filter})\n\
+               OPTIONAL {{ ?dataset dct:description ?description }}\n\
+               OPTIONAL {{ ?dataset dct:identifier ?identifier }}\n\
+               OPTIONAL {{ ?dataset dct:modified ?modified }}\n\
+             }}"
+        )
+    }
+
+    #[allow(dead_code)]
     async fn enumerate_registry_catalogues(&self) -> Result<Vec<String>, AppError> {
         let mut catalogues = Vec::new();
         let mut offset = 0usize;
@@ -701,6 +903,7 @@ impl SparqlDcatClient {
         Ok(catalogues)
     }
 
+    #[allow(dead_code)]
     async fn fetch_registry_catalogue_page(
         &self,
         catalogue: &str,
@@ -724,6 +927,7 @@ impl SparqlDcatClient {
         Ok(self.extract_registry_page(body))
     }
 
+    #[allow(dead_code)]
     fn registry_url(&self, segments: &[&str]) -> Result<Url, AppError> {
         let mut url = self.base_url.join("api/hub/repo/").map_err(|e| {
             AppError::Generic(format!("Failed to build data.europa.eu Registry URL: {e}"))
@@ -742,6 +946,7 @@ impl SparqlDcatClient {
         Ok(url)
     }
 
+    #[allow(dead_code)]
     fn extract_registry_page(&self, body: Value) -> RegistryPage {
         let Some(graph) = body.get("@graph").and_then(|v| v.as_array()) else {
             return RegistryPage {
@@ -1119,6 +1324,7 @@ impl SparqlDcatClient {
     }
 
     /// HTTP GET with exponential backoff retry for Registry API requests.
+    #[allow(dead_code)]
     async fn request_url_with_retry(&self, url: Url) -> Result<reqwest::Response, AppError> {
         let http_config = HttpConfig::from_env();
         let max_retries = http_config.max_retries;
@@ -1335,6 +1541,7 @@ fn is_server_overload(e: &AppError) -> bool {
         || msg.contains("timeout")
 }
 
+#[allow(dead_code)]
 fn is_hydra_view_node(node: &Value) -> bool {
     let Some(type_value) = node.get("@type") else {
         return false;
@@ -1352,6 +1559,26 @@ fn is_hydra_view_node(node: &Value) -> bool {
             .any(|v| v.as_str().map(is_view_type).unwrap_or(false)),
         _ => false,
     }
+}
+
+/// Escapes a string for safe inclusion inside a SPARQL double-quoted literal
+/// (used for the keyset cursor in `FILTER(STR(?dataset) > "…")`).
+fn sparql_escape_literal(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+/// Returns `true` if `iri` is safe to embed inside `<…>` in a SPARQL query —
+/// an http(s) IRI with no delimiter/whitespace characters that could break the
+/// IRI ref or allow injection. Unsafe (malformed) IRIs are dropped from `VALUES`.
+fn is_safe_iri(iri: &str) -> bool {
+    (iri.starts_with("http://") || iri.starts_with("https://"))
+        && !iri.bytes().any(|b| {
+            matches!(b, b'<' | b'>' | b'"' | b'{' | b'}' | b'|' | b'^' | b'`' | b'\\')
+                || b.is_ascii_whitespace()
+        })
 }
 
 /// Extracts the last non-empty path segment from a URI.
@@ -1427,6 +1654,79 @@ mod tests {
             "https://data.europa.eu/dataset/5678"
         );
         assert!(second.get("description").is_none());
+    }
+
+    // ---- keyset cursor -----------------------------------------------------
+
+    #[test]
+    fn keyset_enum_query_uses_seek_not_offset() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let q = client.build_keyset_enum_query("http://example.org/d/1");
+        assert!(q.contains("ORDER BY ?dataset"));
+        assert!(q.contains(r#"FILTER(STR(?dataset) > "http://example.org/d/1")"#));
+        assert!(q.contains(&format!("LIMIT {ENUM_PAGE_SIZE}")));
+        assert!(!q.contains("OFFSET"), "keyset must not use OFFSET");
+    }
+
+    #[test]
+    fn keyset_enum_query_first_page_seeks_from_empty() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let q = client.build_keyset_enum_query("");
+        assert!(q.contains(r#"FILTER(STR(?dataset) > "")"#));
+    }
+
+    #[test]
+    fn keyset_cursor_is_escaped() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        // A pathological cursor with a quote/backslash must not break the literal.
+        let q = client.build_keyset_enum_query("http://x/\"a\\b");
+        assert!(q.contains(r#"> "http://x/\"a\\b""#));
+    }
+
+    #[test]
+    fn values_metadata_query_lists_uris_and_fields() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let uris = vec![
+            "http://example.org/d/1".to_string(),
+            "https://example.org/d/2".to_string(),
+        ];
+        let q = client.build_values_metadata_query(&uris);
+        assert!(q.contains("VALUES ?dataset {"));
+        assert!(q.contains("<http://example.org/d/1>"));
+        assert!(q.contains("<https://example.org/d/2>"));
+        assert!(q.contains("dct:title ?title"));
+        assert!(q.contains(r#"lang(?title) = "en""#));
+        assert!(q.contains("OPTIONAL { ?dataset dct:description ?description }"));
+        assert!(!q.contains("OFFSET") && !q.contains("ORDER BY"));
+    }
+
+    #[test]
+    fn values_metadata_query_drops_unsafe_iris() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let uris = vec![
+            "http://ok.example/d/1".to_string(),
+            "http://bad.example/d 2".to_string(), // space -> unsafe
+            "ftp://nope.example/d/3".to_string(), // non-http -> unsafe
+        ];
+        let q = client.build_values_metadata_query(&uris);
+        assert!(q.contains("<http://ok.example/d/1>"));
+        assert!(!q.contains("d 2"));
+        assert!(!q.contains("ftp://"));
+    }
+
+    #[test]
+    fn is_safe_iri_rules() {
+        assert!(is_safe_iri("https://data.europa.eu/dataset/abc"));
+        assert!(is_safe_iri("http://example.org/x"));
+        assert!(!is_safe_iri("http://x/with space"));
+        assert!(!is_safe_iri("http://x/with\"quote"));
+        assert!(!is_safe_iri("urn:uuid:1234"));
+        assert!(!is_safe_iri(""));
+    }
+
+    #[test]
+    fn sparql_escape_literal_escapes_specials() {
+        assert_eq!(sparql_escape_literal(r#"a"b\c"#), r#"a\"b\\c"#);
     }
 
     // ---- bindings_to_datasets ----------------------------------------------
