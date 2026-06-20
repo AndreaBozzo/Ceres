@@ -186,9 +186,41 @@ pub struct HttpConfig {
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(30),
+            // 60s base. Some healthy-but-slow portals (e.g. govdata.de) take well
+            // over 30s to serve a full `package_search` page; the harvest clients
+            // additionally scale this up adaptively when a page times out.
+            timeout: Duration::from_secs(60),
             max_retries: 3,
             retry_base_delay: Duration::from_millis(500),
+        }
+    }
+}
+
+impl HttpConfig {
+    /// Builds an [`HttpConfig`] from environment variables, falling back to the
+    /// defaults for any var that is unset or unparseable.
+    ///
+    /// Recognized variables (all optional):
+    /// - `CERES_HTTP_TIMEOUT_SECS` — per-request timeout in seconds
+    /// - `CERES_HTTP_MAX_RETRIES` — transient-error retry attempts
+    /// - `CERES_HTTP_RETRY_BASE_MS` — base backoff delay in milliseconds
+    ///
+    /// This is the knob for harvesting slow portals at scale without code
+    /// changes (e.g. `CERES_HTTP_TIMEOUT_SECS=120` for very slow catalogs).
+    pub fn from_env() -> Self {
+        fn env_parse<T: FromStr>(key: &str) -> Option<T> {
+            std::env::var(key).ok()?.trim().parse().ok()
+        }
+
+        let default = Self::default();
+        Self {
+            timeout: env_parse::<u64>("CERES_HTTP_TIMEOUT_SECS")
+                .map(Duration::from_secs)
+                .unwrap_or(default.timeout),
+            max_retries: env_parse::<u32>("CERES_HTTP_MAX_RETRIES").unwrap_or(default.max_retries),
+            retry_base_delay: env_parse::<u64>("CERES_HTTP_RETRY_BASE_MS")
+                .map(Duration::from_millis)
+                .unwrap_or(default.retry_base_delay),
         }
     }
 }
@@ -668,7 +700,7 @@ mod tests {
     #[test]
     fn test_http_config_defaults() {
         let config = HttpConfig::default();
-        assert_eq!(config.timeout, Duration::from_secs(30));
+        assert_eq!(config.timeout, Duration::from_secs(60));
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_base_delay, Duration::from_millis(500));
     }

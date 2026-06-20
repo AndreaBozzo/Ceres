@@ -43,6 +43,15 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 /// Maximum backoff delay for rate-limited retries.
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
+/// Cooldown when a catalog page is rate-limited after exhausting the low-level
+/// per-request retries. The pagination loop waits this long (scaled by attempt)
+/// before retrying the *same* page, instead of abandoning the harvest with only
+/// partial results. Mirrors the CKAN client's page-level rate-limit handling.
+const PAGE_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(60);
+
+/// Maximum number of page-level retries when a catalog page is rate-limited.
+const PAGE_RATE_LIMIT_RETRIES: u32 = 3;
+
 /// Portal-specific dataset data parsed from a DCAT-AP JSON-LD `@graph` node.
 #[derive(Debug, Clone)]
 pub struct DcatDataset {
@@ -195,7 +204,7 @@ impl DcatClient {
         while let Some(url) = next_url {
             page += 1;
 
-            let graph = match self.fetch_graph(&url).await {
+            let graph = match self.fetch_graph_with_cooldown(&url).await {
                 Ok(g) => g,
                 Err(e) => {
                     // If we already collected datasets, return partial results
@@ -269,7 +278,7 @@ impl DcatClient {
                 let url = state.next_url.take()?;
                 state.page += 1;
 
-                let graph = match self.fetch_graph(&url).await {
+                let graph = match self.fetch_graph_with_cooldown(&url).await {
                     Ok(g) => g,
                     Err(e) => {
                         if state.page == 1 {
@@ -359,9 +368,33 @@ impl DcatClient {
         }
     }
 
+    /// Like [`fetch_graph`](Self::fetch_graph) but, on a persistent rate-limit
+    /// (`429`) after the low-level retries are exhausted, waits an escalating
+    /// cooldown and retries the *same* page up to [`PAGE_RATE_LIMIT_RETRIES`]
+    /// times. This keeps large udata catalogs (e.g. dados.gov.pt) from bailing
+    /// out with only partial results the moment the portal throttles us.
+    async fn fetch_graph_with_cooldown(&self, url: &Url) -> Result<Vec<Value>, AppError> {
+        for attempt in 0..=PAGE_RATE_LIMIT_RETRIES {
+            match self.fetch_graph(url).await {
+                Err(AppError::RateLimitExceeded) if attempt < PAGE_RATE_LIMIT_RETRIES => {
+                    let cooldown = PAGE_RATE_LIMIT_COOLDOWN * (attempt + 1);
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        cooldown_secs = cooldown.as_secs(),
+                        url = %url,
+                        "DCAT page rate-limited; cooling down before retrying same page"
+                    );
+                    sleep(cooldown).await;
+                }
+                other => return other,
+            }
+        }
+        Err(AppError::RateLimitExceeded)
+    }
+
     /// HTTP GET with exponential backoff retry on transient errors and rate limits.
     async fn request_with_retry(&self, url: &Url) -> Result<reqwest::Response, AppError> {
-        let http_config = HttpConfig::default();
+        let http_config = HttpConfig::from_env();
         let max_retries = http_config.max_retries;
         let base_delay = http_config.retry_base_delay;
         let mut last_error = AppError::Generic("No attempts made".to_string());

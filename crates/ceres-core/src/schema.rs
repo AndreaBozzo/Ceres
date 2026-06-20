@@ -108,14 +108,15 @@ fn first_str(obj: &Value, keys: &[&str]) -> Option<String> {
 /// Normalizes a single resource/distribution node, returning `None` if it is not
 /// a JSON object.
 fn extract_resource(node: &Value) -> Option<DatasetResource> {
-    let obj = node.as_object()?;
-    let node = Value::Object(obj.clone());
+    if !node.is_object() {
+        return None;
+    }
 
     Some(DatasetResource {
-        name: first_str(&node, &["name", "title", "dct:title"]),
-        format: first_str(&node, &["format", "dct:format"]),
+        name: first_str(node, &["name", "title", "dct:title"]),
+        format: first_str(node, &["format", "dct:format"]),
         media_type: first_str(
-            &node,
+            node,
             &[
                 "mimetype",
                 "mediaType",
@@ -125,7 +126,7 @@ fn extract_resource(node: &Value) -> Option<DatasetResource> {
             ],
         ),
         url: first_str(
-            &node,
+            node,
             &[
                 "url",
                 "downloadURL",
@@ -134,8 +135,8 @@ fn extract_resource(node: &Value) -> Option<DatasetResource> {
                 "dcat:accessURL",
             ],
         ),
-        description: first_str(&node, &["description", "dct:description"]),
-        fields: extract_fields(&node),
+        description: first_str(node, &["description", "dct:description"]),
+        fields: extract_fields(node),
     })
 }
 

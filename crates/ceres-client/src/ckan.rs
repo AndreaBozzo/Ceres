@@ -141,6 +141,14 @@ impl CkanClient {
     /// handle any realistic dataset size while still making progress.
     const MIN_PAGE_SIZE: usize = 10;
 
+    /// Hard ceiling for the adaptive per-request timeout.
+    ///
+    /// When a page times out the harvest both shrinks the page size *and* grows
+    /// the per-request timeout (slow-but-healthy portals like govdata.de can take
+    /// well over a minute to serve a single page). The growth is capped here so a
+    /// genuinely dead portal still fails in bounded time.
+    const MAX_PAGE_TIMEOUT: Duration = Duration::from_secs(300);
+
     /// Errors worth retrying with a smaller page size.
     ///
     /// Timeouts and body-related errors suggest the response is too large for
@@ -171,11 +179,12 @@ impl CkanClient {
         let base_url = Url::parse(base_url_str)
             .map_err(|_| AppError::InvalidPortalUrl(base_url_str.to_string()))?;
 
-        let http_config = HttpConfig::default();
         let client = Client::builder()
             // TODO(config): Make User-Agent configurable or use version from Cargo.toml
             .user_agent("Ceres/0.1 (semantic-search-bot)")
-            .timeout(http_config.timeout)
+            // Client-level timeout is the hard ceiling; each request sets its own
+            // (adaptive) timeout via `.timeout()`, which overrides this per-request.
+            .timeout(Self::MAX_PAGE_TIMEOUT)
             .build()
             .map_err(|e| AppError::ClientError(e.to_string()))?;
 
@@ -208,7 +217,9 @@ impl CkanClient {
             .join("api/3/action/package_list")
             .map_err(|e| AppError::Generic(e.to_string()))?;
 
-        let resp = self.request_with_retry(&url).await?;
+        let resp = self
+            .request_with_retry(&url, HttpConfig::from_env().timeout)
+            .await?;
 
         let ckan_resp: CkanResponse<Vec<String>> = resp
             .json()
@@ -244,7 +255,9 @@ impl CkanClient {
 
         url.query_pairs_mut().append_pair("id", id);
 
-        let resp = self.request_with_retry(&url).await?;
+        let resp = self
+            .request_with_retry(&url, HttpConfig::from_env().timeout)
+            .await?;
 
         let ckan_resp: CkanResponse<CkanDataset> = resp
             .json()
@@ -315,10 +328,11 @@ impl CkanClient {
         let mut all_datasets = Vec::new();
         let mut start: usize = 0;
         let mut page_delay = Self::PAGE_DELAY;
+        let mut page_timeout = HttpConfig::from_env().timeout;
 
         loop {
             match self
-                .fetch_search_page(fq, start, page_size, &mut page_delay)
+                .fetch_search_page(fq, start, page_size, &mut page_delay, page_timeout)
                 .await
             {
                 Ok((datasets, total_count)) => {
@@ -336,12 +350,16 @@ impl CkanClient {
                     // Timeout or truncated response — quarter the page size and
                     // retry the same offset. Quartering converges faster than
                     // halving (1000→250→62→15→10 vs 1000→500→250→125→62→31→15→10).
+                    // Also grow the per-request timeout: a slow-but-healthy portal
+                    // needs more time per page, not just fewer rows.
                     page_size = (page_size / 4).max(Self::MIN_PAGE_SIZE);
+                    page_timeout = (page_timeout * 2).min(Self::MAX_PAGE_TIMEOUT);
                     tracing::warn!(
                         new_page_size = page_size,
+                        new_timeout_secs = page_timeout.as_secs(),
                         offset = start,
                         error = %e,
-                        "Page failed, reducing page size and retrying"
+                        "Page failed, reducing page size and growing timeout, retrying"
                     );
                     continue;
                 }
@@ -377,6 +395,7 @@ impl CkanClient {
             start: usize,
             page_size: usize,
             page_delay: Duration,
+            page_timeout: Duration,
             done: bool,
             fq: Option<String>,
         }
@@ -385,6 +404,7 @@ impl CkanClient {
             start: 0,
             page_size: 1000,
             page_delay: Self::PAGE_DELAY,
+            page_timeout: HttpConfig::from_env().timeout,
             done: false,
             fq,
         };
@@ -403,6 +423,7 @@ impl CkanClient {
                             state.start,
                             state.page_size,
                             &mut state.page_delay,
+                            state.page_timeout,
                         )
                         .await
                     {
@@ -429,11 +450,14 @@ impl CkanClient {
                                 && Self::is_page_size_reducible(&e) =>
                         {
                             state.page_size = (state.page_size / 4).max(Self::MIN_PAGE_SIZE);
+                            state.page_timeout =
+                                (state.page_timeout * 2).min(Self::MAX_PAGE_TIMEOUT);
                             tracing::warn!(
                                 new_page_size = state.page_size,
+                                new_timeout_secs = state.page_timeout.as_secs(),
                                 offset = state.start,
                                 error = %e,
-                                "Page failed, reducing page size and retrying"
+                                "Page failed, reducing page size and growing timeout, retrying"
                             );
                             continue; // retry same offset with smaller page
                         }
@@ -460,7 +484,10 @@ impl CkanClient {
     /// Returns the total dataset count from a lightweight `rows=0` query.
     pub async fn dataset_count(&self) -> Result<usize, AppError> {
         let mut page_delay = Self::PAGE_DELAY;
-        let (_, total) = self.fetch_search_page(None, 0, 0, &mut page_delay).await?;
+        let timeout = HttpConfig::from_env().timeout;
+        let (_, total) = self
+            .fetch_search_page(None, 0, 0, &mut page_delay, timeout)
+            .await?;
         Ok(total)
     }
 
@@ -468,12 +495,16 @@ impl CkanClient {
     ///
     /// Returns `(datasets, total_count)` where `total_count` is the total number
     /// of matching datasets reported by CKAN (for pagination control).
+    ///
+    /// `request_timeout` is the per-request timeout; callers grow it adaptively
+    /// alongside shrinking the page size when a portal is slow.
     async fn fetch_search_page(
         &self,
         fq: Option<&str>,
         start: usize,
         page_size: usize,
         page_delay: &mut Duration,
+        request_timeout: Duration,
     ) -> Result<(Vec<CkanDataset>, usize), AppError> {
         let mut url = self
             .base_url
@@ -495,7 +526,7 @@ impl CkanClient {
         // low-level retries, wait a longer cooldown and try the page again.
         let mut page_result = None;
         for page_attempt in 0..=Self::PAGE_RATE_LIMIT_RETRIES {
-            match self.request_with_retry(&url).await {
+            match self.request_with_retry(&url, request_timeout).await {
                 Ok(resp) => {
                     page_result = Some(Ok(resp));
                     break;
@@ -542,8 +573,12 @@ impl CkanClient {
     // TODO(observability): Add detailed retry logging
     // Should log: (1) Attempt number and delay, (2) Reason for retry,
     // (3) Final error if all retries exhausted. Use tracing crate.
-    async fn request_with_retry(&self, url: &Url) -> Result<reqwest::Response, AppError> {
-        let http_config = HttpConfig::default();
+    async fn request_with_retry(
+        &self,
+        url: &Url,
+        request_timeout: Duration,
+    ) -> Result<reqwest::Response, AppError> {
+        let http_config = HttpConfig::from_env();
         let max_retries = http_config.max_retries;
         let base_delay = http_config.retry_base_delay;
         let mut last_error = AppError::Generic("No attempts made".to_string());
@@ -551,7 +586,13 @@ impl CkanClient {
         let effective_max = Self::RATE_LIMIT_MAX_RETRIES.max(max_retries);
 
         for attempt in 1..=effective_max {
-            match self.client.get(url.clone()).send().await {
+            match self
+                .client
+                .get(url.clone())
+                .timeout(request_timeout)
+                .send()
+                .await
+            {
                 Ok(resp) => {
                     let status = resp.status();
 

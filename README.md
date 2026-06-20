@@ -177,6 +177,20 @@ enabled = false
 
 See `examples/portals.toml` for a larger configuration set.
 
+### Harvest resilience / HTTP tuning
+
+Harvesting is hardened for slow or rate-limiting portals: the CKAN client grows
+its per-request timeout (and shrinks the page size) when a page times out, and
+the DCAT client waits out `429` rate limits with an escalating per-page cooldown
+instead of stopping with partial results. You can tune the HTTP behavior with
+environment variables (defaults shown):
+
+```bash
+CERES_HTTP_TIMEOUT_SECS=60     # base per-request timeout (raise for very slow portals)
+CERES_HTTP_MAX_RETRIES=3       # transient-error retry attempts
+CERES_HTTP_RETRY_BASE_MS=500   # base backoff delay
+```
+
 ## Usage
 
 ### Harvest
