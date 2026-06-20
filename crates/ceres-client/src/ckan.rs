@@ -118,7 +118,16 @@ pub struct CkanDataset {
 #[derive(Clone)]
 pub struct CkanClient {
     client: Client,
+    /// Portal identity / landing-page base (e.g. `https://catalog.data.gov`).
+    /// Used for `base_url()` and constructing dataset landing URLs.
     base_url: Url,
+    /// Base URL under which the CKAN action endpoints live, ending in `.../action/`
+    /// (e.g. `https://example.org/api/3/action/`). Usually derived from `base_url`,
+    /// but can differ when the action API is hosted elsewhere (e.g. data.gov's API
+    /// moved to `https://api.gsa.gov/technology/datagov/v3/action/`).
+    action_base: Url,
+    /// Optional API key appended to every action request (e.g. data.gov via api.gsa.gov).
+    api_key: Option<String>,
 }
 
 impl CkanClient {
@@ -179,6 +188,35 @@ impl CkanClient {
         let base_url = Url::parse(base_url_str)
             .map_err(|_| AppError::InvalidPortalUrl(base_url_str.to_string()))?;
 
+        let action_base = base_url
+            .join("api/3/action/")
+            .map_err(|e| AppError::Generic(e.to_string()))?;
+        Self::build(base_url, action_base, None)
+    }
+
+    /// Creates a CKAN client whose action API lives at a different base URL and
+    /// requires an API key, while still presenting `landing_base` as the portal
+    /// identity (source portal / landing URLs).
+    ///
+    /// This is how US data.gov is harvested: its CKAN action API relocated to
+    /// `https://api.gsa.gov/technology/datagov/v3/action/` and now requires an
+    /// `api_key`, but datasets should still be attributed to `catalog.data.gov`.
+    ///
+    /// `action_base_str` must end in `/` so action names join correctly.
+    pub fn new_with_api_base(
+        landing_base_str: &str,
+        action_base_str: &str,
+        api_key: Option<String>,
+    ) -> Result<Self, AppError> {
+        let base_url = Url::parse(landing_base_str)
+            .map_err(|_| AppError::InvalidPortalUrl(landing_base_str.to_string()))?;
+        let action_base = Url::parse(action_base_str)
+            .map_err(|_| AppError::InvalidPortalUrl(action_base_str.to_string()))?;
+        Self::build(base_url, action_base, api_key)
+    }
+
+    /// Shared constructor: builds the HTTP client and assembles the struct.
+    fn build(base_url: Url, action_base: Url, api_key: Option<String>) -> Result<Self, AppError> {
         let client = Client::builder()
             // TODO(config): Make User-Agent configurable or use version from Cargo.toml
             .user_agent("Ceres/0.1 (semantic-search-bot)")
@@ -188,7 +226,25 @@ impl CkanClient {
             .build()
             .map_err(|e| AppError::ClientError(e.to_string()))?;
 
-        Ok(Self { client, base_url })
+        Ok(Self {
+            client,
+            base_url,
+            action_base,
+            api_key,
+        })
+    }
+
+    /// Builds the URL for a CKAN action endpoint (e.g. `package_search`),
+    /// appending the API key when configured.
+    fn action_endpoint(&self, action: &str) -> Result<Url, AppError> {
+        let mut url = self
+            .action_base
+            .join(action)
+            .map_err(|e| AppError::Generic(e.to_string()))?;
+        if let Some(key) = &self.api_key {
+            url.query_pairs_mut().append_pair("api_key", key);
+        }
+        Ok(url)
     }
 
     /// Fetches the complete list of dataset IDs from the CKAN portal.
@@ -212,10 +268,7 @@ impl CkanClient {
     /// Consider: `list_package_ids_paginated(limit: usize, offset: usize)`
     /// Or streaming: `list_package_ids_stream() -> impl Stream<Item = ...>`
     pub async fn list_package_ids(&self) -> Result<Vec<String>, AppError> {
-        let url = self
-            .base_url
-            .join("api/3/action/package_list")
-            .map_err(|e| AppError::Generic(e.to_string()))?;
+        let url = self.action_endpoint("package_list")?;
 
         let resp = self
             .request_with_retry(&url, HttpConfig::from_env().timeout)
@@ -248,10 +301,7 @@ impl CkanClient {
     ///
     /// A `CkanDataset` containing the dataset's metadata.
     pub async fn show_package(&self, id: &str) -> Result<CkanDataset, AppError> {
-        let mut url = self
-            .base_url
-            .join("api/3/action/package_show")
-            .map_err(|e| AppError::Generic(e.to_string()))?;
+        let mut url = self.action_endpoint("package_show")?;
 
         url.query_pairs_mut().append_pair("id", id);
 
@@ -506,10 +556,7 @@ impl CkanClient {
         page_delay: &mut Duration,
         request_timeout: Duration,
     ) -> Result<(Vec<CkanDataset>, usize), AppError> {
-        let mut url = self
-            .base_url
-            .join("api/3/action/package_search")
-            .map_err(|e| AppError::Generic(e.to_string()))?;
+        let mut url = self.action_endpoint("package_search")?;
 
         {
             let mut pairs = url.query_pairs_mut();
@@ -779,6 +826,36 @@ mod tests {
         } else {
             panic!("Expected AppError::InvalidPortalUrl");
         }
+    }
+
+    #[test]
+    fn test_default_action_endpoint() {
+        let client = CkanClient::new("https://dati.gov.it").unwrap();
+        let url = client.action_endpoint("package_list").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://dati.gov.it/api/3/action/package_list"
+        );
+        // No API key by default
+        assert!(url.query().is_none());
+    }
+
+    #[test]
+    fn test_data_gov_action_endpoint_uses_api_base_and_key() {
+        let client = CkanClient::new_with_api_base(
+            "https://catalog.data.gov",
+            "https://api.gsa.gov/technology/datagov/v3/action/",
+            Some("SECRET".to_string()),
+        )
+        .unwrap();
+
+        // Portal identity stays catalog.data.gov (for source_portal / landing URLs)
+        assert_eq!(client.base_url.as_str(), "https://catalog.data.gov/");
+
+        let url = client.action_endpoint("package_search").unwrap();
+        assert_eq!(url.host_str(), Some("api.gsa.gov"));
+        assert_eq!(url.path(), "/technology/datagov/v3/action/package_search");
+        assert_eq!(url.query(), Some("api_key=SECRET"));
     }
 
     #[test]
