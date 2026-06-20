@@ -1039,7 +1039,7 @@ impl SparqlDcatClient {
 
     /// HTTP POST with exponential backoff retry on transient errors and rate limits.
     async fn request_with_retry(&self, query: &str) -> Result<reqwest::Response, AppError> {
-        let http_config = HttpConfig::default();
+        let http_config = HttpConfig::from_env();
         let max_retries = http_config.max_retries;
         let base_delay = http_config.retry_base_delay;
         let mut last_error = AppError::Generic("No attempts made".to_string());
@@ -1120,7 +1120,7 @@ impl SparqlDcatClient {
 
     /// HTTP GET with exponential backoff retry for Registry API requests.
     async fn request_url_with_retry(&self, url: Url) -> Result<reqwest::Response, AppError> {
-        let http_config = HttpConfig::default();
+        let http_config = HttpConfig::from_env();
         let max_retries = http_config.max_retries;
         let base_delay = http_config.retry_base_delay;
         let mut last_error = AppError::Generic("No attempts made".to_string());
