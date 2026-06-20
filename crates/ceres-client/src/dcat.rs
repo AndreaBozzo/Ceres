@@ -374,12 +374,13 @@ impl DcatClient {
     /// times. This keeps large udata catalogs (e.g. dados.gov.pt) from bailing
     /// out with only partial results the moment the portal throttles us.
     async fn fetch_graph_with_cooldown(&self, url: &Url) -> Result<Vec<Value>, AppError> {
-        for attempt in 0..=PAGE_RATE_LIMIT_RETRIES {
+        // Up to PAGE_RATE_LIMIT_RETRIES cooldown waits on a 429, then one final attempt.
+        for attempt in 1..=PAGE_RATE_LIMIT_RETRIES {
             match self.fetch_graph(url).await {
-                Err(AppError::RateLimitExceeded) if attempt < PAGE_RATE_LIMIT_RETRIES => {
-                    let cooldown = PAGE_RATE_LIMIT_COOLDOWN * (attempt + 1);
+                Err(AppError::RateLimitExceeded) => {
+                    let cooldown = PAGE_RATE_LIMIT_COOLDOWN * attempt;
                     tracing::warn!(
-                        attempt = attempt + 1,
+                        attempt,
                         cooldown_secs = cooldown.as_secs(),
                         url = %url,
                         "DCAT page rate-limited; cooling down before retrying same page"
@@ -389,7 +390,7 @@ impl DcatClient {
                 other => return other,
             }
         }
-        Err(AppError::RateLimitExceeded)
+        self.fetch_graph(url).await
     }
 
     /// HTTP GET with exponential backoff retry on transient errors and rate limits.

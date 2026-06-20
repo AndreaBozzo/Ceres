@@ -191,6 +191,20 @@ CERES_HTTP_MAX_RETRIES=3       # transient-error retry attempts
 CERES_HTTP_RETRY_BASE_MS=500   # base backoff delay
 ```
 
+### US data.gov
+
+`catalog.data.gov` no longer serves the `/api/3/action` CKAN API; it relocated to
+`api.gsa.gov` and requires an API key. To harvest it, set `DATA_GOV_API_KEY`
+(get a free key at <https://api.data.gov/signup/>):
+
+```bash
+DATA_GOV_API_KEY=your-api-data-gov-key
+ceres harvest https://catalog.data.gov --type ckan --metadata-only
+```
+
+Datasets are still attributed to `catalog.data.gov`. Without the key, data.gov
+requests return `403`.
+
 ## Usage
 
 ### Harvest

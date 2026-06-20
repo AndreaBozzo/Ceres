@@ -227,8 +227,16 @@ impl CkanClient {
     ) -> Result<Self, AppError> {
         let base_url = Url::parse(landing_base_str)
             .map_err(|_| AppError::InvalidPortalUrl(landing_base_str.to_string()))?;
-        let action_base = Url::parse(action_base_str)
-            .map_err(|_| AppError::InvalidPortalUrl(action_base_str.to_string()))?;
+        // `Url::join` drops the last path segment unless the base ends in '/', so
+        // normalize a missing trailing slash rather than silently building the
+        // wrong endpoint (e.g. ".../action" + "package_search" -> ".../package_search").
+        let action_base_str = if action_base_str.ends_with('/') {
+            action_base_str.to_string()
+        } else {
+            format!("{action_base_str}/")
+        };
+        let action_base = Url::parse(&action_base_str)
+            .map_err(|_| AppError::InvalidPortalUrl(action_base_str.clone()))?;
         Self::build(base_url, action_base, api_key)
     }
 
@@ -262,6 +270,37 @@ impl CkanClient {
             url.query_pairs_mut().append_pair("api_key", key);
         }
         Ok(url)
+    }
+
+    /// Returns `url` as a string with any `api_key` query value redacted, so the
+    /// data.gov API key never leaks into error messages, logs, or telemetry.
+    fn redacted_url(url: &Url) -> String {
+        if !url.query_pairs().any(|(k, _)| k == "api_key") {
+            return url.to_string();
+        }
+        let mut out = url.clone();
+        out.set_query(None);
+        {
+            let mut qp = out.query_pairs_mut();
+            for (k, v) in url.query_pairs() {
+                if k == "api_key" {
+                    qp.append_pair("api_key", "REDACTED");
+                } else {
+                    qp.append_pair(k.as_ref(), v.as_ref());
+                }
+            }
+        }
+        out.to_string()
+    }
+
+    /// Removes the configured API key from an arbitrary error string. reqwest's
+    /// error `Display` can embed the request URL (including `?api_key=...`), so
+    /// any error text derived from it must be scrubbed before logging.
+    fn scrub(&self, s: String) -> String {
+        match &self.api_key {
+            Some(key) if !key.is_empty() => s.replace(key.as_str(), "REDACTED"),
+            _ => s,
+        }
     }
 
     /// Fetches the complete list of dataset IDs from the CKAN portal.
@@ -710,16 +749,17 @@ impl CkanClient {
                     return Err(AppError::ClientError(format!(
                         "HTTP {} from {}",
                         status.as_u16(),
-                        url
+                        Self::redacted_url(url)
                     )));
                 }
                 Err(e) => {
                     if e.is_timeout() {
-                        last_error = AppError::Timeout(http_config.timeout.as_secs());
+                        last_error = AppError::Timeout(request_timeout.as_secs());
                     } else if e.is_connect() {
-                        last_error = AppError::NetworkError(format!("Connection failed: {}", e));
+                        last_error =
+                            AppError::NetworkError(self.scrub(format!("Connection failed: {}", e)));
                     } else {
-                        last_error = AppError::ClientError(e.to_string());
+                        last_error = AppError::ClientError(self.scrub(e.to_string()));
                     }
 
                     if attempt < max_retries && (e.is_timeout() || e.is_connect()) {
@@ -866,6 +906,50 @@ mod tests {
         );
         // No API key by default
         assert!(url.query().is_none());
+    }
+
+    #[test]
+    fn test_redacted_url_hides_api_key() {
+        let url = Url::parse(
+            "https://api.gsa.gov/technology/datagov/v3/action/package_search?rows=1000&api_key=SECRET123&start=0",
+        )
+        .unwrap();
+        let red = CkanClient::redacted_url(&url);
+        assert!(!red.contains("SECRET123"), "api key leaked: {red}");
+        assert!(red.contains("api_key=REDACTED"));
+        assert!(red.contains("rows=1000") && red.contains("start=0"));
+        // A URL with no api_key is returned unchanged.
+        let plain = Url::parse("https://dati.gov.it/api/3/action/package_search?rows=10").unwrap();
+        assert_eq!(CkanClient::redacted_url(&plain), plain.to_string());
+    }
+
+    #[test]
+    fn test_scrub_removes_api_key_from_error_text() {
+        let client = CkanClient::new_with_api_base(
+            "https://catalog.data.gov",
+            "https://api.gsa.gov/technology/datagov/v3/action/",
+            Some("TOPSECRET".to_string()),
+        )
+        .unwrap();
+        let msg = client.scrub(
+            "error sending request for url (https://api.gsa.gov/...?api_key=TOPSECRET): timed out"
+                .to_string(),
+        );
+        assert!(!msg.contains("TOPSECRET"), "scrub failed: {msg}");
+        assert!(msg.contains("REDACTED"));
+    }
+
+    #[test]
+    fn test_new_with_api_base_normalizes_missing_trailing_slash() {
+        // Action base WITHOUT trailing slash must still build correct endpoints.
+        let client = CkanClient::new_with_api_base(
+            "https://catalog.data.gov",
+            "https://api.gsa.gov/technology/datagov/v3/action",
+            None,
+        )
+        .unwrap();
+        let url = client.action_endpoint("package_search").unwrap();
+        assert_eq!(url.path(), "/technology/datagov/v3/action/package_search");
     }
 
     #[test]
