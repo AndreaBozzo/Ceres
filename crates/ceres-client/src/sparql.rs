@@ -148,6 +148,9 @@ struct KeysetMetadataBatch {
     /// model can materialize; enumerated datasets without a title are reported
     /// separately instead of being mistaken for a truncated query response.
     titled: usize,
+    /// Unique logical dataset identifiers after collapsing portal URI variants
+    /// that intentionally share a `dct:identifier`.
+    unique_identifiers: usize,
 }
 
 // =============================================================================
@@ -727,6 +730,7 @@ impl SparqlDcatClient {
             done: bool,
             enumerated: usize,
             titled: usize,
+            unique_identifiers: usize,
             fetched: usize,
         }
 
@@ -737,6 +741,7 @@ impl SparqlDcatClient {
             done: false,
             enumerated: 0,
             titled: 0,
+            unique_identifiers: 0,
             fetched: 0,
         };
 
@@ -751,6 +756,7 @@ impl SparqlDcatClient {
                     tracing::info!(
                         enumerated = state.enumerated,
                         titled = state.titled,
+                        unique_identifiers = state.unique_identifiers,
                         fetched = state.fetched,
                         untitled = state.enumerated.saturating_sub(state.titled),
                         "data.europa.eu keyset harvest complete"
@@ -774,6 +780,7 @@ impl SparqlDcatClient {
                                     tracing::info!(
                                         enumerated = state.enumerated,
                                         titled = state.titled,
+                                        unique_identifiers = state.unique_identifiers,
                                         fetched = state.fetched,
                                         untitled = state.enumerated.saturating_sub(state.titled),
                                         "data.europa.eu keyset harvest complete"
@@ -803,6 +810,7 @@ impl SparqlDcatClient {
                 match self.fetch_values_metadata(&batch).await {
                     Ok(metadata) => {
                         state.titled += metadata.titled;
+                        state.unique_identifiers += metadata.unique_identifiers;
                         state.fetched += metadata.datasets.len();
                         sleep(PAGE_DELAY).await;
                         Some((Ok(metadata.datasets), state))
@@ -842,6 +850,7 @@ impl SparqlDcatClient {
             return Ok(KeysetMetadataBatch {
                 datasets: Vec::new(),
                 titled: 0,
+                unique_identifiers: 0,
             });
         }
 
@@ -871,12 +880,14 @@ impl SparqlDcatClient {
         let distribution_query = self.build_values_distribution_query(uris);
         let distribution_bindings = self.execute_query_with_retry(&distribution_query).await?;
 
+        let expected_identifiers = expected_identifiers(&bindings, &titled_uris);
         let mut datasets = self.bindings_to_datasets(bindings);
         self.attach_distributions(&mut datasets, distribution_bindings);
-        verify_keyset_coverage(&titled_uris, &datasets)?;
+        verify_keyset_coverage(&titled_uris, &expected_identifiers, &datasets)?;
 
         Ok(KeysetMetadataBatch {
             titled: titled_uris.len(),
+            unique_identifiers: expected_identifiers.len(),
             datasets,
         })
     }
@@ -1799,28 +1810,70 @@ fn language_matches(candidate: &str, preferred: &str) -> bool {
             && candidate.as_bytes()[preferred.len()] == b'-')
 }
 
-/// Ensures a keyset batch did not silently lose a titled dataset after its
+/// Finds the identifiers that are expected to be represented in a keyset batch.
+///
+/// data.europa.eu sometimes publishes URI variants (for example a `~~1`
+/// suffix) for the same logical dataset. Ceres stores datasets by
+/// `(source_portal, original_id)`, so these variants intentionally collapse to
+/// one materialized record when they share a non-empty `dct:identifier`.
+fn expected_identifiers(
+    bindings: &[HashMap<String, SparqlValue>],
+    titled_uris: &HashSet<String>,
+) -> HashSet<String> {
+    let mut identifiers_by_uri = HashMap::new();
+    for binding in bindings {
+        let Some(dataset_uri) = binding.get("dataset").map(|value| &value.value) else {
+            continue;
+        };
+        if !titled_uris.contains(dataset_uri) {
+            continue;
+        }
+        if let Some(identifier) = binding
+            .get("identifier")
+            .map(|value| value.value.as_str())
+            .filter(|value| !value.is_empty())
+        {
+            identifiers_by_uri
+                .entry(dataset_uri.clone())
+                .or_insert_with(|| identifier.to_string());
+        }
+    }
+
+    titled_uris
+        .iter()
+        .map(|uri| {
+            identifiers_by_uri
+                .remove(uri)
+                .unwrap_or_else(|| extract_last_segment(uri))
+        })
+        .collect()
+}
+
+/// Ensures a keyset batch did not silently lose a logical dataset after its
 /// metadata was fetched. Untitled entries are intentionally excluded because
-/// [`DcatDataset`] requires a non-empty title.
+/// [`DcatDataset`] requires a non-empty title, and URI variants that share an
+/// identifier intentionally collapse to a single database record.
 fn verify_keyset_coverage(
     titled_uris: &HashSet<String>,
+    expected_identifiers: &HashSet<String>,
     datasets: &[DcatDataset],
 ) -> Result<(), AppError> {
-    let materialized_uris: HashSet<&str> = datasets
+    let materialized_identifiers: HashSet<&str> = datasets
         .iter()
-        .map(|dataset| dataset.id_uri.as_str())
+        .map(|dataset| dataset.identifier.as_str())
         .collect();
-    let missing: Vec<&str> = titled_uris
+    let missing: Vec<&str> = expected_identifiers
         .iter()
         .map(String::as_str)
-        .filter(|uri| !materialized_uris.contains(uri))
+        .filter(|identifier| !materialized_identifiers.contains(identifier))
         .take(5)
         .collect();
-    if !missing.is_empty() || materialized_uris.len() != titled_uris.len() {
+    if !missing.is_empty() || materialized_identifiers.len() != expected_identifiers.len() {
         return Err(AppError::Generic(format!(
-            "SPARQL keyset coverage check failed: {} titled dataset IRIs, {} materialized; sample missing IRIs: {}",
+            "SPARQL keyset coverage check failed: {} titled dataset IRIs, {} unique identifiers, {} materialized; sample missing identifiers: {}",
             titled_uris.len(),
-            materialized_uris.len(),
+            expected_identifiers.len(),
+            materialized_identifiers.len(),
             missing.join(", ")
         )));
     }
@@ -2009,6 +2062,7 @@ mod tests {
             "https://example.org/d/1".to_string(),
             "https://example.org/d/2".to_string(),
         ]);
+        let expected_identifiers = HashSet::from(["1".to_string(), "2".to_string()]);
         let datasets = vec![DcatDataset {
             id_uri: "https://example.org/d/1".to_string(),
             identifier: "1".to_string(),
@@ -2017,12 +2071,31 @@ mod tests {
             raw: Value::Null,
         }];
 
-        let error = verify_keyset_coverage(&titled_uris, &datasets).unwrap_err();
+        let error =
+            verify_keyset_coverage(&titled_uris, &expected_identifiers, &datasets).unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("2 titled dataset IRIs, 1 materialized")
+                .contains("2 titled dataset IRIs, 2 unique identifiers, 1 materialized")
         );
+    }
+
+    #[test]
+    fn coverage_gate_allows_uri_variants_with_the_same_identifier() {
+        let titled_uris = HashSet::from([
+            "https://example.org/d/1".to_string(),
+            "https://example.org/d/1~~1".to_string(),
+        ]);
+        let expected_identifiers = HashSet::from(["same-dataset".to_string()]);
+        let datasets = vec![DcatDataset {
+            id_uri: "https://example.org/d/1".to_string(),
+            identifier: "same-dataset".to_string(),
+            title: "Dataset".to_string(),
+            description: None,
+            raw: Value::Null,
+        }];
+
+        verify_keyset_coverage(&titled_uris, &expected_identifiers, &datasets).unwrap();
     }
 
     #[test]
