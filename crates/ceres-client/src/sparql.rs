@@ -1576,8 +1576,10 @@ fn sparql_escape_literal(s: &str) -> String {
 fn is_safe_iri(iri: &str) -> bool {
     (iri.starts_with("http://") || iri.starts_with("https://"))
         && !iri.bytes().any(|b| {
-            matches!(b, b'<' | b'>' | b'"' | b'{' | b'}' | b'|' | b'^' | b'`' | b'\\')
-                || b.is_ascii_whitespace()
+            matches!(
+                b,
+                b'<' | b'>' | b'"' | b'{' | b'}' | b'|' | b'^' | b'`' | b'\\'
+            ) || b.is_ascii_whitespace()
         })
 }
 
