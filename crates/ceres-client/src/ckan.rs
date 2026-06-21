@@ -204,6 +204,7 @@ impl CkanClient {
     pub fn new(base_url_str: &str) -> Result<Self, AppError> {
         let base_url = Url::parse(base_url_str)
             .map_err(|_| AppError::InvalidPortalUrl(base_url_str.to_string()))?;
+        let base_url = ensure_trailing_slash(base_url);
 
         let action_base = base_url
             .join("api/3/action/")
@@ -227,6 +228,7 @@ impl CkanClient {
     ) -> Result<Self, AppError> {
         let base_url = Url::parse(landing_base_str)
             .map_err(|_| AppError::InvalidPortalUrl(landing_base_str.to_string()))?;
+        let base_url = ensure_trailing_slash(base_url);
         // `Url::join` drops the last path segment unless the base ends in '/', so
         // normalize a missing trailing slash rather than silently building the
         // wrong endpoint (e.g. ".../action" + "package_search" -> ".../package_search").
@@ -872,6 +874,16 @@ impl CkanClient {
     }
 }
 
+/// Adds a trailing slash to a URL path before it is used as a `Url::join` base.
+/// Without it, `Url::join` treats the final path segment as a file and drops it
+/// (for example, `/ckan` would incorrectly become `/api/3/action/`).
+fn ensure_trailing_slash(mut url: Url) -> Url {
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -906,6 +918,14 @@ mod tests {
         );
         // No API key by default
         assert!(url.query().is_none());
+    }
+
+    #[test]
+    fn test_default_action_endpoint_preserves_portal_path() {
+        let client = CkanClient::new("https://opendata.aragon.es/ckan").unwrap();
+        let url = client.action_endpoint("package_search").unwrap();
+        assert_eq!(client.base_url.as_str(), "https://opendata.aragon.es/ckan/");
+        assert_eq!(url.path(), "/ckan/api/3/action/package_search");
     }
 
     #[test]
