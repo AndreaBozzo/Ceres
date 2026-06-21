@@ -14,7 +14,7 @@
 //!
 //! Pagination uses `LIMIT`/`OFFSET` in the SPARQL query.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use ceres_core::HttpConfig;
@@ -700,10 +700,13 @@ impl SparqlDcatClient {
     /// last URI of the previous page (`FILTER(STR(?dataset) > "<cursor>")`) — this
     /// avoids OFFSET entirely (no Virtuoso ~10k cap) and is independent of
     /// `dct:publisher`, so it covers the whole graph. Phase 2 fetches
-    /// title/description/identifier/modified for each batch of URIs via a bounded
-    /// `VALUES` query (near-instant; the full-metadata keyset query times out).
+    /// title/description/identifier/modified and distribution metadata for each
+    /// batch of URIs via bounded `VALUES` queries (the full-metadata keyset query
+    /// times out).
     ///
-    /// Note: this does not retrieve the full JSON-LD `@graph` (distributions etc.).
+    /// All title languages are fetched. `language` is a display preference applied
+    /// client-side, never an eligibility filter, so datasets with no English title
+    /// remain part of an English-configured full harvest.
     fn paginate_sparql_keyset_stream(&self) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
         struct KeysetState {
             /// Last dataset URI seen (the seek cursor); empty before the first page.
@@ -713,6 +716,7 @@ impl SparqlDcatClient {
             /// True once enumeration returned a short page (no more URIs).
             enum_done: bool,
             done: bool,
+            enumerated: usize,
             fetched: usize,
         }
 
@@ -721,6 +725,7 @@ impl SparqlDcatClient {
             pending: Vec::new(),
             enum_done: false,
             done: false,
+            enumerated: 0,
             fetched: 0,
         };
 
@@ -728,6 +733,16 @@ impl SparqlDcatClient {
             initial,
             move |mut state| async move {
                 if state.done {
+                    return None;
+                }
+
+                if state.pending.is_empty() && state.enum_done {
+                    tracing::info!(
+                        enumerated = state.enumerated,
+                        fetched = state.fetched,
+                        missing = state.enumerated.saturating_sub(state.fetched),
+                        "data.europa.eu keyset harvest complete"
+                    );
                     return None;
                 }
 
@@ -743,9 +758,18 @@ impl SparqlDcatClient {
                             }
                             let last = match uris.last() {
                                 Some(last) => last.clone(),
-                                None => return None,
+                                None => {
+                                    tracing::info!(
+                                        enumerated = state.enumerated,
+                                        fetched = state.fetched,
+                                        missing = state.enumerated.saturating_sub(state.fetched),
+                                        "data.europa.eu keyset harvest complete"
+                                    );
+                                    return None;
+                                }
                             };
                             state.cursor = last;
+                            state.enumerated += uris.len();
                             tracing::info!(
                                 enumerated = uris.len(),
                                 total_fetched = state.fetched,
@@ -765,6 +789,14 @@ impl SparqlDcatClient {
                 let batch: Vec<String> = state.pending.drain(..take).collect();
                 match self.fetch_values_metadata(&batch).await {
                     Ok(datasets) => {
+                        if datasets.len() != batch.len() {
+                            tracing::warn!(
+                                requested = batch.len(),
+                                fetched = datasets.len(),
+                                missing = batch.len().saturating_sub(datasets.len()),
+                                "SPARQL keyset metadata batch did not yield every enumerated dataset"
+                            );
+                        }
                         state.fetched += datasets.len();
                         sleep(PAGE_DELAY).await;
                         Some((Ok(datasets), state))
@@ -795,7 +827,12 @@ impl SparqlDcatClient {
         }
         let query = self.build_values_metadata_query(uris);
         let bindings = self.execute_query_with_retry(&query).await?;
-        Ok(self.bindings_to_datasets(bindings))
+        let distribution_query = self.build_values_distribution_query(uris);
+        let distribution_bindings = self.execute_query_with_retry(&distribution_query).await?;
+
+        let mut datasets = self.bindings_to_datasets(bindings);
+        self.attach_distributions(&mut datasets, distribution_bindings);
+        Ok(datasets)
     }
 
     /// [`execute_query`](Self::execute_query) with bounded retry + exponential
@@ -842,12 +879,6 @@ impl SparqlDcatClient {
 
     /// Builds the bounded `VALUES` metadata query for a set of dataset URIs.
     fn build_values_metadata_query(&self, uris: &[String]) -> String {
-        let title_filter = self
-            .lang_filter_alternatives()
-            .iter()
-            .map(|l| format!("lang(?title) = \"{l}\""))
-            .collect::<Vec<_>>()
-            .join(" || ");
         let values = uris
             .iter()
             .filter(|u| is_safe_iri(u))
@@ -862,10 +893,39 @@ impl SparqlDcatClient {
              WHERE {{\n\
                VALUES ?dataset {{ {values} }}\n\
                ?dataset dct:title ?title .\n\
-               FILTER ({title_filter})\n\
                OPTIONAL {{ ?dataset dct:description ?description }}\n\
                OPTIONAL {{ ?dataset dct:identifier ?identifier }}\n\
                OPTIONAL {{ ?dataset dct:modified ?modified }}\n\
+             }}"
+        )
+    }
+
+    /// Builds a bounded query for the DCAT distributions associated with a set
+    /// of datasets. Distribution records are kept separately from the dataset
+    /// query so a dataset's multilingual title/description rows do not multiply
+    /// its distribution rows.
+    fn build_values_distribution_query(&self, uris: &[String]) -> String {
+        let values = uris
+            .iter()
+            .filter(|u| is_safe_iri(u))
+            .map(|u| format!("<{u}>"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!(
+            "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+             PREFIX dct:  <http://purl.org/dc/terms/>\n\
+             \n\
+             SELECT ?dataset ?distribution ?distributionTitle ?distributionDescription\n\
+                    ?distributionFormat ?distributionMediaType ?downloadUrl ?accessUrl\n\
+             WHERE {{\n\
+               VALUES ?dataset {{ {values} }}\n\
+               ?dataset dcat:distribution ?distribution .\n\
+               OPTIONAL {{ ?distribution dct:title ?distributionTitle }}\n\
+               OPTIONAL {{ ?distribution dct:description ?distributionDescription }}\n\
+               OPTIONAL {{ ?distribution dct:format ?distributionFormat }}\n\
+               OPTIONAL {{ ?distribution dcat:mediaType ?distributionMediaType }}\n\
+               OPTIONAL {{ ?distribution dcat:downloadURL ?downloadUrl }}\n\
+               OPTIONAL {{ ?distribution dcat:accessURL ?accessUrl }}\n\
              }}"
         )
     }
@@ -1425,17 +1485,25 @@ impl SparqlDcatClient {
 
     /// Checks whether two language tags are siblings (same macro-language).
     fn are_sibling_languages(a: &str, b: &str) -> bool {
-        matches!((a, b), ("nb" | "nn" | "no", "nb" | "nn" | "no"))
+        ["nb", "nn", "no"]
+            .iter()
+            .any(|language| language_matches(a, language))
+            && ["nb", "nn", "no"]
+                .iter()
+                .any(|language| language_matches(b, language))
     }
 
     /// Returns a language-preference rank for selecting the best value.
-    /// Higher rank = better match: preferred language > sibling > "en" > untagged/other.
+    /// Higher rank = better match: preferred language > sibling > English >
+    /// untagged > another language. Other languages remain eligible so a full
+    /// harvest never drops a dataset merely because it lacks a translation.
     fn lang_rank(&self, lang: Option<&str>) -> u8 {
         match lang {
-            Some(l) if l == self.language => 3,
-            Some(l) if Self::are_sibling_languages(l, &self.language) => 2,
-            Some("en") => 1,
-            _ => 0,
+            Some(l) if language_matches(l, &self.language) => 4,
+            Some(l) if Self::are_sibling_languages(l, &self.language) => 3,
+            Some(l) if language_matches(l, "en") => 2,
+            None | Some("") => 1,
+            Some(_) => 0,
         }
     }
 
@@ -1449,9 +1517,12 @@ impl SparqlDcatClient {
             .iter()
             .filter_map(|b| b.get(key))
             .filter(|v| !v.value.is_empty())
-            .max_by(|a, b| {
-                self.lang_rank(a.lang.as_deref())
-                    .cmp(&self.lang_rank(b.lang.as_deref()))
+            .max_by_key(|v| {
+                (
+                    self.lang_rank(v.lang.as_deref()),
+                    std::cmp::Reverse(v.lang.as_deref().unwrap_or("")),
+                    std::cmp::Reverse(v.value.as_str()),
+                )
             })
     }
 
@@ -1521,6 +1592,66 @@ impl SparqlDcatClient {
 
         datasets
     }
+
+    /// Adds normalized DCAT distributions to each dataset's raw metadata.
+    ///
+    /// The schema endpoint reads these conventional DCAT keys directly, while
+    /// callers that need the original SPARQL fields can still use the remaining
+    /// binding-derived metadata on the dataset object.
+    fn attach_distributions(
+        &self,
+        datasets: &mut [DcatDataset],
+        bindings: Vec<HashMap<String, SparqlValue>>,
+    ) {
+        let mut grouped: BTreeMap<(String, String), Vec<HashMap<String, SparqlValue>>> =
+            BTreeMap::new();
+
+        for binding in bindings {
+            let Some(dataset) = binding.get("dataset").map(|v| v.value.clone()) else {
+                continue;
+            };
+            let Some(distribution) = binding.get("distribution").map(|v| v.value.clone()) else {
+                continue;
+            };
+            grouped
+                .entry((dataset, distribution))
+                .or_default()
+                .push(binding);
+        }
+
+        let mut by_dataset: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        for ((dataset, distribution), rows) in grouped {
+            let mut metadata = serde_json::Map::new();
+            metadata.insert("@id".to_string(), Value::String(distribution));
+
+            for (binding_key, metadata_key) in [
+                ("distributionTitle", "dct:title"),
+                ("distributionDescription", "dct:description"),
+                ("distributionFormat", "dct:format"),
+                ("distributionMediaType", "dcat:mediaType"),
+                ("downloadUrl", "dcat:downloadURL"),
+                ("accessUrl", "dcat:accessURL"),
+            ] {
+                if let Some(value) = self.best_value(&rows, binding_key) {
+                    metadata.insert(metadata_key.to_string(), Value::String(value.value.clone()));
+                }
+            }
+
+            by_dataset
+                .entry(dataset)
+                .or_default()
+                .push(Value::Object(metadata));
+        }
+
+        for dataset in datasets {
+            let Some(distributions) = by_dataset.remove(&dataset.id_uri) else {
+                continue;
+            };
+            if let Some(metadata) = dataset.raw.as_object_mut() {
+                metadata.insert("distribution".to_string(), Value::Array(distributions));
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -1576,9 +1707,23 @@ fn sparql_escape_literal(s: &str) -> String {
 fn is_safe_iri(iri: &str) -> bool {
     (iri.starts_with("http://") || iri.starts_with("https://"))
         && !iri.bytes().any(|b| {
-            matches!(b, b'<' | b'>' | b'"' | b'{' | b'}' | b'|' | b'^' | b'`' | b'\\')
-                || b.is_ascii_whitespace()
+            matches!(
+                b,
+                b'<' | b'>' | b'"' | b'{' | b'}' | b'|' | b'^' | b'`' | b'\\'
+            ) || b.is_ascii_whitespace()
         })
+}
+
+/// Returns true when `candidate` is `preferred` or one of its BCP 47 subtags.
+/// BCP 47 matching is case-insensitive, so `fr-CA` is a valid fallback for
+/// a preference of `fr`.
+fn language_matches(candidate: &str, preferred: &str) -> bool {
+    candidate.eq_ignore_ascii_case(preferred)
+        || (candidate.len() > preferred.len()
+            && candidate
+                .get(..preferred.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(preferred))
+            && candidate.as_bytes()[preferred.len()] == b'-')
 }
 
 /// Extracts the last non-empty path segment from a URI.
@@ -1695,9 +1840,23 @@ mod tests {
         assert!(q.contains("<http://example.org/d/1>"));
         assert!(q.contains("<https://example.org/d/2>"));
         assert!(q.contains("dct:title ?title"));
-        assert!(q.contains(r#"lang(?title) = "en""#));
         assert!(q.contains("OPTIONAL { ?dataset dct:description ?description }"));
+        assert!(
+            !q.contains("lang(?title)"),
+            "a full keyset harvest must not filter title languages"
+        );
         assert!(!q.contains("OFFSET") && !q.contains("ORDER BY"));
+    }
+
+    #[test]
+    fn values_distribution_query_includes_schema_metadata() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let q = client.build_values_distribution_query(&["https://example.org/d/1".to_string()]);
+        assert!(q.contains("?dataset dcat:distribution ?distribution"));
+        assert!(q.contains("?distribution dct:format ?distributionFormat"));
+        assert!(q.contains("?distribution dcat:mediaType ?distributionMediaType"));
+        assert!(q.contains("?distribution dcat:downloadURL ?downloadUrl"));
+        assert!(q.contains("?distribution dcat:accessURL ?accessUrl"));
     }
 
     #[test]
@@ -1903,6 +2062,86 @@ mod tests {
     }
 
     #[test]
+    fn language_selection_accepts_bcp47_variants_and_other_language_fallbacks() {
+        let client = SparqlDcatClient::new("https://example.org", "fr", None).unwrap();
+        let rows = vec![
+            binding("https://example.org/d/1", "title", "Deutsch", Some("de")),
+            binding(
+                "https://example.org/d/1",
+                "title",
+                "Français",
+                Some("fr-CA"),
+            ),
+        ];
+        assert_eq!(client.best_value(&rows, "title").unwrap().value, "Français");
+
+        // A language with no preferred/English/untagged alternative is still a
+        // valid dataset title and must not make the dataset disappear.
+        let rows = vec![binding(
+            "https://example.org/d/2",
+            "title",
+            "Italiano",
+            Some("it"),
+        )];
+        assert_eq!(client.best_value(&rows, "title").unwrap().value, "Italiano");
+    }
+
+    #[test]
+    fn distributions_are_preserved_in_dataset_metadata() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let dataset_bindings = vec![binding(
+            "https://example.org/d/1",
+            "title",
+            "Dataset",
+            Some("en"),
+        )];
+        let mut datasets = client.bindings_to_datasets(dataset_bindings);
+
+        let mut distribution = HashMap::new();
+        distribution.insert(
+            "dataset".to_string(),
+            SparqlValue {
+                value: "https://example.org/d/1".to_string(),
+                lang: None,
+            },
+        );
+        distribution.insert(
+            "distribution".to_string(),
+            SparqlValue {
+                value: "https://example.org/distribution/1".to_string(),
+                lang: None,
+            },
+        );
+        for (key, value) in [
+            ("distributionTitle", "CSV export"),
+            ("distributionFormat", "CSV"),
+            ("distributionMediaType", "text/csv"),
+            ("downloadUrl", "https://example.org/data.csv"),
+        ] {
+            distribution.insert(
+                key.to_string(),
+                SparqlValue {
+                    value: value.to_string(),
+                    lang: None,
+                },
+            );
+        }
+
+        client.attach_distributions(&mut datasets, vec![distribution]);
+        let distributions = datasets[0].raw["distribution"].as_array().unwrap();
+        assert_eq!(distributions.len(), 1);
+        assert_eq!(distributions[0]["dct:format"], "CSV");
+        assert_eq!(
+            distributions[0]["dcat:downloadURL"],
+            "https://example.org/data.csv"
+        );
+
+        let schema = ceres_core::DatasetSchema::from_metadata(&datasets[0].raw);
+        assert_eq!(schema.resources.len(), 1);
+        assert_eq!(schema.resources[0].format.as_deref(), Some("CSV"));
+    }
+
+    #[test]
     fn title_and_description_selected_independently() {
         // A dataset may carry the title in the preferred language but the
         // description only in a fallback language; each field is chosen on its own.
@@ -1935,11 +2174,12 @@ mod tests {
     #[test]
     fn lang_rank_orders_preferred_sibling_en_other() {
         let client = SparqlDcatClient::new("https://example.org", "nb", None).unwrap();
-        assert_eq!(client.lang_rank(Some("nb")), 3); // preferred
-        assert_eq!(client.lang_rank(Some("nn")), 2); // sibling
-        assert_eq!(client.lang_rank(Some("en")), 1); // english fallback
+        assert_eq!(client.lang_rank(Some("nb")), 4); // preferred
+        assert_eq!(client.lang_rank(Some("nb-NO")), 4); // preferred BCP 47 variant
+        assert_eq!(client.lang_rank(Some("nn")), 3); // sibling
+        assert_eq!(client.lang_rank(Some("en")), 2); // English fallback
+        assert_eq!(client.lang_rank(None), 1); // untagged fallback
         assert_eq!(client.lang_rank(Some("de")), 0); // unrelated
-        assert_eq!(client.lang_rank(None), 0); // untagged
     }
 
     // ---- extract_last_segment -----------------------------------------------
