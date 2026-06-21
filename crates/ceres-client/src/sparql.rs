@@ -14,7 +14,7 @@
 //!
 //! Pagination uses `LIMIT`/`OFFSET` in the SPARQL query.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use ceres_core::HttpConfig;
@@ -139,18 +139,6 @@ enum PartitionRef<'a> {
 struct RegistryPage {
     datasets: Vec<DcatDataset>,
     entries: usize,
-}
-
-/// A fully checked metadata batch from the keyset harvest.
-struct KeysetMetadataBatch {
-    datasets: Vec<DcatDataset>,
-    /// Dataset IRIs with a non-empty title. These are the records the internal
-    /// model can materialize; enumerated datasets without a title are reported
-    /// separately instead of being mistaken for a truncated query response.
-    titled: usize,
-    /// Unique logical dataset identifiers after collapsing portal URI variants
-    /// that intentionally share a `dct:identifier`.
-    unique_identifiers: usize,
 }
 
 // =============================================================================
@@ -712,13 +700,10 @@ impl SparqlDcatClient {
     /// last URI of the previous page (`FILTER(STR(?dataset) > "<cursor>")`) — this
     /// avoids OFFSET entirely (no Virtuoso ~10k cap) and is independent of
     /// `dct:publisher`, so it covers the whole graph. Phase 2 fetches
-    /// title/description/identifier/modified and distribution metadata for each
-    /// batch of URIs via bounded `VALUES` queries (the full-metadata keyset query
-    /// times out).
+    /// title/description/identifier/modified for each batch of URIs via a bounded
+    /// `VALUES` query (near-instant; the full-metadata keyset query times out).
     ///
-    /// All title languages are fetched. `language` is a display preference applied
-    /// client-side, never an eligibility filter, so datasets with no English title
-    /// remain part of an English-configured full harvest.
+    /// Note: this does not retrieve the full JSON-LD `@graph` (distributions etc.).
     fn paginate_sparql_keyset_stream(&self) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
         struct KeysetState {
             /// Last dataset URI seen (the seek cursor); empty before the first page.
@@ -728,9 +713,6 @@ impl SparqlDcatClient {
             /// True once enumeration returned a short page (no more URIs).
             enum_done: bool,
             done: bool,
-            enumerated: usize,
-            titled: usize,
-            unique_identifiers: usize,
             fetched: usize,
         }
 
@@ -739,9 +721,6 @@ impl SparqlDcatClient {
             pending: Vec::new(),
             enum_done: false,
             done: false,
-            enumerated: 0,
-            titled: 0,
-            unique_identifiers: 0,
             fetched: 0,
         };
 
@@ -749,18 +728,6 @@ impl SparqlDcatClient {
             initial,
             move |mut state| async move {
                 if state.done {
-                    return None;
-                }
-
-                if state.pending.is_empty() && state.enum_done {
-                    tracing::info!(
-                        enumerated = state.enumerated,
-                        titled = state.titled,
-                        unique_identifiers = state.unique_identifiers,
-                        fetched = state.fetched,
-                        untitled = state.enumerated.saturating_sub(state.titled),
-                        "data.europa.eu keyset harvest complete"
-                    );
                     return None;
                 }
 
@@ -776,20 +743,9 @@ impl SparqlDcatClient {
                             }
                             let last = match uris.last() {
                                 Some(last) => last.clone(),
-                                None => {
-                                    tracing::info!(
-                                        enumerated = state.enumerated,
-                                        titled = state.titled,
-                                        unique_identifiers = state.unique_identifiers,
-                                        fetched = state.fetched,
-                                        untitled = state.enumerated.saturating_sub(state.titled),
-                                        "data.europa.eu keyset harvest complete"
-                                    );
-                                    return None;
-                                }
+                                None => return None,
                             };
                             state.cursor = last;
-                            state.enumerated += uris.len();
                             tracing::info!(
                                 enumerated = uris.len(),
                                 total_fetched = state.fetched,
@@ -808,12 +764,10 @@ impl SparqlDcatClient {
                 let take = state.pending.len().min(VALUES_BATCH_SIZE);
                 let batch: Vec<String> = state.pending.drain(..take).collect();
                 match self.fetch_values_metadata(&batch).await {
-                    Ok(metadata) => {
-                        state.titled += metadata.titled;
-                        state.unique_identifiers += metadata.unique_identifiers;
-                        state.fetched += metadata.datasets.len();
+                    Ok(datasets) => {
+                        state.fetched += datasets.len();
                         sleep(PAGE_DELAY).await;
-                        Some((Ok(metadata.datasets), state))
+                        Some((Ok(datasets), state))
                     }
                     Err(e) => {
                         state.done = true;
@@ -834,62 +788,14 @@ impl SparqlDcatClient {
             .collect())
     }
 
-    /// Fetches metadata for a bounded set of dataset URIs via independent
-    /// `VALUES` queries.
-    ///
-    /// A single query that joins multilingual title, description, identifier,
-    /// and modified fields creates a Cartesian product. data.europa.eu truncates
-    /// that otherwise-successful response at 50k rows, silently losing datasets.
-    /// Fetching one property at a time keeps each result bounded and lets us
-    /// enforce a per-batch coverage invariant before data reaches the database.
-    async fn fetch_values_metadata(
-        &self,
-        uris: &[String],
-    ) -> Result<KeysetMetadataBatch, AppError> {
+    /// Fetches metadata for a bounded set of dataset URIs via a `VALUES` query.
+    async fn fetch_values_metadata(&self, uris: &[String]) -> Result<Vec<DcatDataset>, AppError> {
         if uris.is_empty() {
-            return Ok(KeysetMetadataBatch {
-                datasets: Vec::new(),
-                titled: 0,
-                unique_identifiers: 0,
-            });
+            return Ok(Vec::new());
         }
-
-        let title_bindings = self
-            .execute_query_with_retry(&self.build_values_title_query(uris))
-            .await?;
-        let titled_uris: HashSet<String> = title_bindings
-            .iter()
-            .filter_map(|binding| {
-                binding
-                    .get("title")
-                    .filter(|title| !title.value.is_empty())
-                    .and_then(|_| binding.get("dataset"))
-                    .map(|dataset| dataset.value.clone())
-            })
-            .collect();
-
-        let mut bindings = title_bindings;
-        for query in [
-            self.build_values_description_query(uris),
-            self.build_values_identifier_query(uris),
-            self.build_values_modified_query(uris),
-        ] {
-            bindings.extend(self.execute_query_with_retry(&query).await?);
-        }
-
-        let distribution_query = self.build_values_distribution_query(uris);
-        let distribution_bindings = self.execute_query_with_retry(&distribution_query).await?;
-
-        let expected_identifiers = expected_identifiers(&bindings, &titled_uris);
-        let mut datasets = self.bindings_to_datasets(bindings);
-        self.attach_distributions(&mut datasets, distribution_bindings);
-        verify_keyset_coverage(&titled_uris, &expected_identifiers, &datasets)?;
-
-        Ok(KeysetMetadataBatch {
-            titled: titled_uris.len(),
-            unique_identifiers: expected_identifiers.len(),
-            datasets,
-        })
+        let query = self.build_values_metadata_query(uris);
+        let bindings = self.execute_query_with_retry(&query).await?;
+        Ok(self.bindings_to_datasets(bindings))
     }
 
     /// [`execute_query`](Self::execute_query) with bounded retry + exponential
@@ -934,32 +840,14 @@ impl SparqlDcatClient {
         )
     }
 
-    /// Builds the title query for a keyset metadata batch. Titles are fetched
-    /// without a language filter; language selection happens client-side.
-    fn build_values_title_query(&self, uris: &[String]) -> String {
-        self.build_values_property_query(uris, "title", "dct:title")
-    }
-
-    fn build_values_description_query(&self, uris: &[String]) -> String {
-        self.build_values_property_query(uris, "description", "dct:description")
-    }
-
-    fn build_values_identifier_query(&self, uris: &[String]) -> String {
-        self.build_values_property_query(uris, "identifier", "dct:identifier")
-    }
-
-    fn build_values_modified_query(&self, uris: &[String]) -> String {
-        self.build_values_property_query(uris, "modified", "dct:modified")
-    }
-
-    /// Builds a bounded query for one multi-valued dataset property. Keeping
-    /// properties separate prevents multilingual fields from multiplying rows.
-    fn build_values_property_query(
-        &self,
-        uris: &[String],
-        variable: &str,
-        predicate: &str,
-    ) -> String {
+    /// Builds the bounded `VALUES` metadata query for a set of dataset URIs.
+    fn build_values_metadata_query(&self, uris: &[String]) -> String {
+        let title_filter = self
+            .lang_filter_alternatives()
+            .iter()
+            .map(|l| format!("lang(?title) = \"{l}\""))
+            .collect::<Vec<_>>()
+            .join(" || ");
         let values = uris
             .iter()
             .filter(|u| is_safe_iri(u))
@@ -970,47 +858,15 @@ impl SparqlDcatClient {
             "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
              PREFIX dct:  <http://purl.org/dc/terms/>\n\
              \n\
-             SELECT ?dataset ?{variable}\n\
+             SELECT ?dataset ?title ?description ?identifier ?modified\n\
              WHERE {{\n\
                VALUES ?dataset {{ {values} }}\n\
-               ?dataset {predicate} ?{variable} .\n\
+               ?dataset dct:title ?title .\n\
+               FILTER ({title_filter})\n\
+               OPTIONAL {{ ?dataset dct:description ?description }}\n\
+               OPTIONAL {{ ?dataset dct:identifier ?identifier }}\n\
+               OPTIONAL {{ ?dataset dct:modified ?modified }}\n\
              }}"
-        )
-    }
-
-    /// Builds a bounded query for the DCAT distributions associated with a set
-    /// of datasets. Distribution records are kept separately from the dataset
-    /// query so a dataset's multilingual title/description rows do not multiply
-    /// its distribution rows.
-    fn build_values_distribution_query(&self, uris: &[String]) -> String {
-        let values = uris
-            .iter()
-            .filter(|u| is_safe_iri(u))
-            .map(|u| format!("<{u}>"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        format!(
-            "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
-             PREFIX dct:  <http://purl.org/dc/terms/>\n\
-             \n\
-             SELECT ?dataset ?distribution\n\
-                    (SAMPLE(?distributionTitle) AS ?distributionTitle)\n\
-                    (SAMPLE(?distributionDescription) AS ?distributionDescription)\n\
-                    (SAMPLE(?distributionFormat) AS ?distributionFormat)\n\
-                    (SAMPLE(?distributionMediaType) AS ?distributionMediaType)\n\
-                    (SAMPLE(?downloadUrl) AS ?downloadUrl)\n\
-                    (SAMPLE(?accessUrl) AS ?accessUrl)\n\
-             WHERE {{\n\
-               VALUES ?dataset {{ {values} }}\n\
-               ?dataset dcat:distribution ?distribution .\n\
-               OPTIONAL {{ ?distribution dct:title ?distributionTitle }}\n\
-               OPTIONAL {{ ?distribution dct:description ?distributionDescription }}\n\
-               OPTIONAL {{ ?distribution dct:format ?distributionFormat }}\n\
-               OPTIONAL {{ ?distribution dcat:mediaType ?distributionMediaType }}\n\
-               OPTIONAL {{ ?distribution dcat:downloadURL ?downloadUrl }}\n\
-               OPTIONAL {{ ?distribution dcat:accessURL ?accessUrl }}\n\
-             }}\n\
-             GROUP BY ?dataset ?distribution"
         )
     }
 
@@ -1569,25 +1425,17 @@ impl SparqlDcatClient {
 
     /// Checks whether two language tags are siblings (same macro-language).
     fn are_sibling_languages(a: &str, b: &str) -> bool {
-        ["nb", "nn", "no"]
-            .iter()
-            .any(|language| language_matches(a, language))
-            && ["nb", "nn", "no"]
-                .iter()
-                .any(|language| language_matches(b, language))
+        matches!((a, b), ("nb" | "nn" | "no", "nb" | "nn" | "no"))
     }
 
     /// Returns a language-preference rank for selecting the best value.
-    /// Higher rank = better match: preferred language > sibling > English >
-    /// untagged > another language. Other languages remain eligible so a full
-    /// harvest never drops a dataset merely because it lacks a translation.
+    /// Higher rank = better match: preferred language > sibling > "en" > untagged/other.
     fn lang_rank(&self, lang: Option<&str>) -> u8 {
         match lang {
-            Some(l) if language_matches(l, &self.language) => 4,
-            Some(l) if Self::are_sibling_languages(l, &self.language) => 3,
-            Some(l) if language_matches(l, "en") => 2,
-            None | Some("") => 1,
-            Some(_) => 0,
+            Some(l) if l == self.language => 3,
+            Some(l) if Self::are_sibling_languages(l, &self.language) => 2,
+            Some("en") => 1,
+            _ => 0,
         }
     }
 
@@ -1601,12 +1449,9 @@ impl SparqlDcatClient {
             .iter()
             .filter_map(|b| b.get(key))
             .filter(|v| !v.value.is_empty())
-            .max_by_key(|v| {
-                (
-                    self.lang_rank(v.lang.as_deref()),
-                    std::cmp::Reverse(v.lang.as_deref().unwrap_or("")),
-                    std::cmp::Reverse(v.value.as_str()),
-                )
+            .max_by(|a, b| {
+                self.lang_rank(a.lang.as_deref())
+                    .cmp(&self.lang_rank(b.lang.as_deref()))
             })
     }
 
@@ -1676,66 +1521,6 @@ impl SparqlDcatClient {
 
         datasets
     }
-
-    /// Adds normalized DCAT distributions to each dataset's raw metadata.
-    ///
-    /// The schema endpoint reads these conventional DCAT keys directly, while
-    /// callers that need the original SPARQL fields can still use the remaining
-    /// binding-derived metadata on the dataset object.
-    fn attach_distributions(
-        &self,
-        datasets: &mut [DcatDataset],
-        bindings: Vec<HashMap<String, SparqlValue>>,
-    ) {
-        let mut grouped: BTreeMap<(String, String), Vec<HashMap<String, SparqlValue>>> =
-            BTreeMap::new();
-
-        for binding in bindings {
-            let Some(dataset) = binding.get("dataset").map(|v| v.value.clone()) else {
-                continue;
-            };
-            let Some(distribution) = binding.get("distribution").map(|v| v.value.clone()) else {
-                continue;
-            };
-            grouped
-                .entry((dataset, distribution))
-                .or_default()
-                .push(binding);
-        }
-
-        let mut by_dataset: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        for ((dataset, distribution), rows) in grouped {
-            let mut metadata = serde_json::Map::new();
-            metadata.insert("@id".to_string(), Value::String(distribution));
-
-            for (binding_key, metadata_key) in [
-                ("distributionTitle", "dct:title"),
-                ("distributionDescription", "dct:description"),
-                ("distributionFormat", "dct:format"),
-                ("distributionMediaType", "dcat:mediaType"),
-                ("downloadUrl", "dcat:downloadURL"),
-                ("accessUrl", "dcat:accessURL"),
-            ] {
-                if let Some(value) = self.best_value(&rows, binding_key) {
-                    metadata.insert(metadata_key.to_string(), Value::String(value.value.clone()));
-                }
-            }
-
-            by_dataset
-                .entry(dataset)
-                .or_default()
-                .push(Value::Object(metadata));
-        }
-
-        for dataset in datasets {
-            let Some(distributions) = by_dataset.remove(&dataset.id_uri) else {
-                continue;
-            };
-            if let Some(metadata) = dataset.raw.as_object_mut() {
-                metadata.insert("distribution".to_string(), Value::Array(distributions));
-            }
-        }
-    }
 }
 
 // =============================================================================
@@ -1791,93 +1576,9 @@ fn sparql_escape_literal(s: &str) -> String {
 fn is_safe_iri(iri: &str) -> bool {
     (iri.starts_with("http://") || iri.starts_with("https://"))
         && !iri.bytes().any(|b| {
-            matches!(
-                b,
-                b'<' | b'>' | b'"' | b'{' | b'}' | b'|' | b'^' | b'`' | b'\\'
-            ) || b.is_ascii_whitespace()
+            matches!(b, b'<' | b'>' | b'"' | b'{' | b'}' | b'|' | b'^' | b'`' | b'\\')
+                || b.is_ascii_whitespace()
         })
-}
-
-/// Returns true when `candidate` is `preferred` or one of its BCP 47 subtags.
-/// BCP 47 matching is case-insensitive, so `fr-CA` is a valid fallback for
-/// a preference of `fr`.
-fn language_matches(candidate: &str, preferred: &str) -> bool {
-    candidate.eq_ignore_ascii_case(preferred)
-        || (candidate.len() > preferred.len()
-            && candidate
-                .get(..preferred.len())
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(preferred))
-            && candidate.as_bytes()[preferred.len()] == b'-')
-}
-
-/// Finds the identifiers that are expected to be represented in a keyset batch.
-///
-/// data.europa.eu sometimes publishes URI variants (for example a `~~1`
-/// suffix) for the same logical dataset. Ceres stores datasets by
-/// `(source_portal, original_id)`, so these variants intentionally collapse to
-/// one materialized record when they share a non-empty `dct:identifier`.
-fn expected_identifiers(
-    bindings: &[HashMap<String, SparqlValue>],
-    titled_uris: &HashSet<String>,
-) -> HashSet<String> {
-    let mut identifiers_by_uri = HashMap::new();
-    for binding in bindings {
-        let Some(dataset_uri) = binding.get("dataset").map(|value| &value.value) else {
-            continue;
-        };
-        if !titled_uris.contains(dataset_uri) {
-            continue;
-        }
-        if let Some(identifier) = binding
-            .get("identifier")
-            .map(|value| value.value.as_str())
-            .filter(|value| !value.is_empty())
-        {
-            identifiers_by_uri
-                .entry(dataset_uri.clone())
-                .or_insert_with(|| identifier.to_string());
-        }
-    }
-
-    titled_uris
-        .iter()
-        .map(|uri| {
-            identifiers_by_uri
-                .remove(uri)
-                .unwrap_or_else(|| extract_last_segment(uri))
-        })
-        .collect()
-}
-
-/// Ensures a keyset batch did not silently lose a logical dataset after its
-/// metadata was fetched. Untitled entries are intentionally excluded because
-/// [`DcatDataset`] requires a non-empty title, and URI variants that share an
-/// identifier intentionally collapse to a single database record.
-fn verify_keyset_coverage(
-    titled_uris: &HashSet<String>,
-    expected_identifiers: &HashSet<String>,
-    datasets: &[DcatDataset],
-) -> Result<(), AppError> {
-    let materialized_identifiers: HashSet<&str> = datasets
-        .iter()
-        .map(|dataset| dataset.identifier.as_str())
-        .collect();
-    let missing: Vec<&str> = expected_identifiers
-        .iter()
-        .map(String::as_str)
-        .filter(|identifier| !materialized_identifiers.contains(identifier))
-        .take(5)
-        .collect();
-    if !missing.is_empty() || materialized_identifiers.len() != expected_identifiers.len() {
-        return Err(AppError::Generic(format!(
-            "SPARQL keyset coverage check failed: {} titled dataset IRIs, {} unique identifiers, {} materialized; sample missing identifiers: {}",
-            titled_uris.len(),
-            expected_identifiers.len(),
-            materialized_identifiers.len(),
-            missing.join(", ")
-        )));
-    }
-    Ok(())
 }
 
 /// Extracts the last non-empty path segment from a URI.
@@ -1983,119 +1684,34 @@ mod tests {
     }
 
     #[test]
-    fn values_title_query_lists_uris_without_joining_other_properties() {
+    fn values_metadata_query_lists_uris_and_fields() {
         let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         let uris = vec![
             "http://example.org/d/1".to_string(),
             "https://example.org/d/2".to_string(),
         ];
-        let q = client.build_values_title_query(&uris);
+        let q = client.build_values_metadata_query(&uris);
         assert!(q.contains("VALUES ?dataset {"));
         assert!(q.contains("<http://example.org/d/1>"));
         assert!(q.contains("<https://example.org/d/2>"));
         assert!(q.contains("dct:title ?title"));
-        assert!(
-            !q.contains("lang(?title)"),
-            "a full keyset harvest must not filter title languages"
-        );
-        assert!(!q.contains("OPTIONAL"));
+        assert!(q.contains(r#"lang(?title) = "en""#));
+        assert!(q.contains("OPTIONAL { ?dataset dct:description ?description }"));
         assert!(!q.contains("OFFSET") && !q.contains("ORDER BY"));
     }
 
     #[test]
-    fn values_property_queries_keep_multivalued_fields_separate() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
-        let uris = ["https://example.org/d/1".to_string()];
-        for (query, predicate, variable) in [
-            (
-                client.build_values_description_query(&uris),
-                "dct:description",
-                "?description",
-            ),
-            (
-                client.build_values_identifier_query(&uris),
-                "dct:identifier",
-                "?identifier",
-            ),
-            (
-                client.build_values_modified_query(&uris),
-                "dct:modified",
-                "?modified",
-            ),
-        ] {
-            assert!(query.contains(predicate));
-            assert!(query.contains(variable));
-            assert!(!query.contains("OPTIONAL"));
-        }
-    }
-
-    #[test]
-    fn values_distribution_query_includes_schema_metadata() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
-        let q = client.build_values_distribution_query(&["https://example.org/d/1".to_string()]);
-        assert!(q.contains("?dataset dcat:distribution ?distribution"));
-        assert!(q.contains("?distribution dct:format ?distributionFormat"));
-        assert!(q.contains("?distribution dcat:mediaType ?distributionMediaType"));
-        assert!(q.contains("?distribution dcat:downloadURL ?downloadUrl"));
-        assert!(q.contains("?distribution dcat:accessURL ?accessUrl"));
-        assert!(q.contains("SAMPLE(?distributionTitle)"));
-        assert!(q.contains("GROUP BY ?dataset ?distribution"));
-    }
-
-    #[test]
-    fn values_title_query_drops_unsafe_iris() {
+    fn values_metadata_query_drops_unsafe_iris() {
         let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         let uris = vec![
             "http://ok.example/d/1".to_string(),
             "http://bad.example/d 2".to_string(), // space -> unsafe
             "ftp://nope.example/d/3".to_string(), // non-http -> unsafe
         ];
-        let q = client.build_values_title_query(&uris);
+        let q = client.build_values_metadata_query(&uris);
         assert!(q.contains("<http://ok.example/d/1>"));
         assert!(!q.contains("d 2"));
         assert!(!q.contains("ftp://"));
-    }
-
-    #[test]
-    fn coverage_gate_rejects_a_missing_titled_dataset() {
-        let titled_uris = HashSet::from([
-            "https://example.org/d/1".to_string(),
-            "https://example.org/d/2".to_string(),
-        ]);
-        let expected_identifiers = HashSet::from(["1".to_string(), "2".to_string()]);
-        let datasets = vec![DcatDataset {
-            id_uri: "https://example.org/d/1".to_string(),
-            identifier: "1".to_string(),
-            title: "Dataset 1".to_string(),
-            description: None,
-            raw: Value::Null,
-        }];
-
-        let error =
-            verify_keyset_coverage(&titled_uris, &expected_identifiers, &datasets).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("2 titled dataset IRIs, 2 unique identifiers, 1 materialized")
-        );
-    }
-
-    #[test]
-    fn coverage_gate_allows_uri_variants_with_the_same_identifier() {
-        let titled_uris = HashSet::from([
-            "https://example.org/d/1".to_string(),
-            "https://example.org/d/1~~1".to_string(),
-        ]);
-        let expected_identifiers = HashSet::from(["same-dataset".to_string()]);
-        let datasets = vec![DcatDataset {
-            id_uri: "https://example.org/d/1".to_string(),
-            identifier: "same-dataset".to_string(),
-            title: "Dataset".to_string(),
-            description: None,
-            raw: Value::Null,
-        }];
-
-        verify_keyset_coverage(&titled_uris, &expected_identifiers, &datasets).unwrap();
     }
 
     #[test]
@@ -2287,86 +1903,6 @@ mod tests {
     }
 
     #[test]
-    fn language_selection_accepts_bcp47_variants_and_other_language_fallbacks() {
-        let client = SparqlDcatClient::new("https://example.org", "fr", None).unwrap();
-        let rows = vec![
-            binding("https://example.org/d/1", "title", "Deutsch", Some("de")),
-            binding(
-                "https://example.org/d/1",
-                "title",
-                "Français",
-                Some("fr-CA"),
-            ),
-        ];
-        assert_eq!(client.best_value(&rows, "title").unwrap().value, "Français");
-
-        // A language with no preferred/English/untagged alternative is still a
-        // valid dataset title and must not make the dataset disappear.
-        let rows = vec![binding(
-            "https://example.org/d/2",
-            "title",
-            "Italiano",
-            Some("it"),
-        )];
-        assert_eq!(client.best_value(&rows, "title").unwrap().value, "Italiano");
-    }
-
-    #[test]
-    fn distributions_are_preserved_in_dataset_metadata() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
-        let dataset_bindings = vec![binding(
-            "https://example.org/d/1",
-            "title",
-            "Dataset",
-            Some("en"),
-        )];
-        let mut datasets = client.bindings_to_datasets(dataset_bindings);
-
-        let mut distribution = HashMap::new();
-        distribution.insert(
-            "dataset".to_string(),
-            SparqlValue {
-                value: "https://example.org/d/1".to_string(),
-                lang: None,
-            },
-        );
-        distribution.insert(
-            "distribution".to_string(),
-            SparqlValue {
-                value: "https://example.org/distribution/1".to_string(),
-                lang: None,
-            },
-        );
-        for (key, value) in [
-            ("distributionTitle", "CSV export"),
-            ("distributionFormat", "CSV"),
-            ("distributionMediaType", "text/csv"),
-            ("downloadUrl", "https://example.org/data.csv"),
-        ] {
-            distribution.insert(
-                key.to_string(),
-                SparqlValue {
-                    value: value.to_string(),
-                    lang: None,
-                },
-            );
-        }
-
-        client.attach_distributions(&mut datasets, vec![distribution]);
-        let distributions = datasets[0].raw["distribution"].as_array().unwrap();
-        assert_eq!(distributions.len(), 1);
-        assert_eq!(distributions[0]["dct:format"], "CSV");
-        assert_eq!(
-            distributions[0]["dcat:downloadURL"],
-            "https://example.org/data.csv"
-        );
-
-        let schema = ceres_core::DatasetSchema::from_metadata(&datasets[0].raw);
-        assert_eq!(schema.resources.len(), 1);
-        assert_eq!(schema.resources[0].format.as_deref(), Some("CSV"));
-    }
-
-    #[test]
     fn title_and_description_selected_independently() {
         // A dataset may carry the title in the preferred language but the
         // description only in a fallback language; each field is chosen on its own.
@@ -2399,12 +1935,11 @@ mod tests {
     #[test]
     fn lang_rank_orders_preferred_sibling_en_other() {
         let client = SparqlDcatClient::new("https://example.org", "nb", None).unwrap();
-        assert_eq!(client.lang_rank(Some("nb")), 4); // preferred
-        assert_eq!(client.lang_rank(Some("nb-NO")), 4); // preferred BCP 47 variant
-        assert_eq!(client.lang_rank(Some("nn")), 3); // sibling
-        assert_eq!(client.lang_rank(Some("en")), 2); // English fallback
-        assert_eq!(client.lang_rank(None), 1); // untagged fallback
+        assert_eq!(client.lang_rank(Some("nb")), 3); // preferred
+        assert_eq!(client.lang_rank(Some("nn")), 2); // sibling
+        assert_eq!(client.lang_rank(Some("en")), 1); // english fallback
         assert_eq!(client.lang_rank(Some("de")), 0); // unrelated
+        assert_eq!(client.lang_rank(None), 0); // untagged
     }
 
     // ---- extract_last_segment -----------------------------------------------

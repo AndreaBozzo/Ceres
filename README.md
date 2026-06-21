@@ -232,13 +232,6 @@ ceres harvest --portal milano --full-sync
 ceres harvest --portal milano --dry-run --metadata-only
 ```
 
-For the EU Open Data Portal, `language` chooses the preferred title and
-description stored for display; it does not filter the harvest. Datasets whose
-metadata is available only in another language are retained, with a stable
-fallback title. The SPARQL keyset path also stores DCAT distribution metadata
-used by `GET /api/v1/datasets/{id}/schema`. Re-harvest existing EU datasets to
-populate that metadata.
-
 ### Embed
 
 ```bash
