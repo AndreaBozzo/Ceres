@@ -181,6 +181,41 @@ impl PortalClientFactoryEnum {
     }
 }
 
+/// Action API base for US data.gov, whose CKAN action endpoints relocated off
+/// `catalog.data.gov` and now require an API key.
+const DATA_GOV_ACTION_BASE: &str = "https://api.gsa.gov/technology/datagov/v3/action/";
+
+/// Creates a CKAN client for `portal_url`, special-casing US data.gov.
+///
+/// `catalog.data.gov` no longer serves `/api/3/action/*` (it 404s); the action
+/// API moved to `api.gsa.gov` and requires an API key, read from the
+/// `DATA_GOV_API_KEY` environment variable. Datasets stay attributed to
+/// `catalog.data.gov`. All other portals use the standard CKAN client.
+fn ckan_client_for(portal_url: &str) -> Result<CkanClient, AppError> {
+    let is_data_gov = reqwest::Url::parse(portal_url)
+        .ok()
+        .and_then(|u| {
+            u.host_str()
+                .map(|h| h.eq_ignore_ascii_case("catalog.data.gov"))
+        })
+        .unwrap_or(false);
+
+    if is_data_gov {
+        let api_key = std::env::var("DATA_GOV_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty());
+        if api_key.is_none() {
+            tracing::warn!(
+                "Harvesting catalog.data.gov without DATA_GOV_API_KEY set; \
+                 api.gsa.gov requires a key and requests will likely fail."
+            );
+        }
+        CkanClient::new_with_api_base(portal_url, DATA_GOV_ACTION_BASE, api_key)
+    } else {
+        CkanClient::new(portal_url)
+    }
+}
+
 impl PortalClientFactory for PortalClientFactoryEnum {
     type Client = PortalClientEnum;
 
@@ -193,7 +228,7 @@ impl PortalClientFactory for PortalClientFactoryEnum {
         sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         match portal_type {
-            PortalType::Ckan => Ok(PortalClientEnum::Ckan(CkanClient::new(portal_url)?)),
+            PortalType::Ckan => Ok(PortalClientEnum::Ckan(ckan_client_for(portal_url)?)),
             PortalType::Dcat => match profile {
                 Some("sparql") => Ok(PortalClientEnum::SparqlDcat(SparqlDcatClient::new(
                     portal_url,

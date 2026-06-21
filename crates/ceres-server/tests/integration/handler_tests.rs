@@ -152,3 +152,97 @@ async fn test_protected_endpoint_disabled_returns_403() {
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
+
+// =============================================================================
+// Dataset schema endpoint
+// =============================================================================
+
+#[tokio::test]
+async fn test_dataset_schema_returns_normalized_resources() {
+    let app = TestApp::new().await;
+
+    // Seed a dataset whose metadata carries CKAN-style resources with an
+    // inline Frictionless field schema.
+    let metadata = serde_json::json!({
+        "resources": [{
+            "name": "Air quality 2024",
+            "format": "CSV",
+            "mimetype": "text/csv",
+            "url": "https://example.org/aq.csv",
+            "schema": {
+                "fields": [
+                    {"name": "station", "type": "string", "description": "Station id"},
+                    {"name": "pm10", "type": "number"}
+                ]
+            }
+        }]
+    });
+
+    let id: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO datasets (original_id, source_portal, url, title, description, metadata, content_hash) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+    )
+    .bind("ds-schema-1")
+    .bind("https://example.org")
+    .bind("https://example.org/dataset/ds-schema-1")
+    .bind("Air quality dataset")
+    .bind(Some("desc"))
+    .bind(metadata)
+    .bind("hash-1")
+    .fetch_one(&app.pool)
+    .await
+    .expect("failed to seed dataset");
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/datasets/{}/schema", id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let json = body_json(response.into_body()).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", json);
+
+    assert_eq!(json["id"], id.to_string());
+    assert_eq!(json["source_portal"], "https://example.org");
+    let resources = json["resources"].as_array().expect("resources array");
+    assert_eq!(resources.len(), 1);
+    let r = &resources[0];
+    assert_eq!(r["name"], "Air quality 2024");
+    assert_eq!(r["format"], "CSV");
+    assert_eq!(r["media_type"], "text/csv");
+    assert_eq!(r["url"], "https://example.org/aq.csv");
+
+    let fields = r["fields"].as_array().expect("fields array");
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0]["name"], "station");
+    assert_eq!(fields[0]["type"], "string");
+    assert_eq!(fields[0]["description"], "Station id");
+    assert_eq!(fields[1]["name"], "pm10");
+}
+
+#[tokio::test]
+async fn test_dataset_schema_not_found_returns_404() {
+    let app = TestApp::new().await;
+
+    let missing = uuid::Uuid::new_v4();
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/datasets/{}/schema", missing))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}

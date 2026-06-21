@@ -50,6 +50,7 @@ pub mod models;
 pub mod parquet_export;
 pub mod pipeline;
 pub mod progress;
+pub mod schema;
 pub mod search;
 pub mod sync;
 pub mod traits;
@@ -74,6 +75,7 @@ pub use i18n::LocalizedField;
 
 // Domain models
 pub use models::{DatabaseStats, Dataset, NewDataset, SearchResult};
+pub use schema::{DatasetResource, DatasetSchema, ResourceField};
 
 // Sync types and business logic
 pub use sync::{

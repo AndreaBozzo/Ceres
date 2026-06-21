@@ -177,6 +177,34 @@ enabled = false
 
 See `examples/portals.toml` for a larger configuration set.
 
+### Harvest resilience / HTTP tuning
+
+Harvesting is hardened for slow or rate-limiting portals: the CKAN client grows
+its per-request timeout (and shrinks the page size) when a page times out, and
+the DCAT client waits out `429` rate limits with an escalating per-page cooldown
+instead of stopping with partial results. You can tune the HTTP behavior with
+environment variables (defaults shown):
+
+```bash
+CERES_HTTP_TIMEOUT_SECS=60     # base per-request timeout (raise for very slow portals)
+CERES_HTTP_MAX_RETRIES=3       # transient-error retry attempts
+CERES_HTTP_RETRY_BASE_MS=500   # base backoff delay
+```
+
+### US data.gov
+
+`catalog.data.gov` no longer serves the `/api/3/action` CKAN API; it relocated to
+`api.gsa.gov` and requires an API key. To harvest it, set `DATA_GOV_API_KEY`
+(get a free key at <https://api.data.gov/signup/>):
+
+```bash
+DATA_GOV_API_KEY=your-api-data-gov-key
+ceres harvest https://catalog.data.gov --type ckan --metadata-only
+```
+
+Datasets are still attributed to `catalog.data.gov`. Without the key, data.gov
+requests return `403`.
+
 ## Usage
 
 ### Harvest
@@ -269,6 +297,7 @@ Available endpoints:
 - `GET /api/v1/portals/{name}/stats`
 - `GET /api/v1/harvest/status`
 - `GET /api/v1/datasets/{id}`
+- `GET /api/v1/datasets/{id}/schema`
 - `POST /api/v1/portals/{name}/harvest`
 - `POST /api/v1/harvest`
 - `GET /api/v1/export`
