@@ -256,6 +256,21 @@ ceres export --format csv > datasets.csv
 ceres export --format parquet --output ./ceres-export
 ```
 
+### Published snapshot contract
+
+A Parquet export produces one portable snapshot directory:
+
+- `all.parquet` is the **canonical complete index**.
+- `data/<portal>.parquet` files are convenience subsets and intentionally repeat
+  rows from `all.parquet`; do not add their row counts to the canonical total.
+- `metadata.json` is a versioned manifest with the snapshot ID, UTC generation
+  time, Ceres version and commit, portal-config checksum, curation counts,
+  per-portal inclusion status, and SHA-256 checksums for every Parquet file.
+
+Verify the checksums in `metadata.json` before consuming a copied or mirrored
+snapshot. A library caller that does not supply build metadata records the Git
+commit as `unknown`; the `ceres` CLI populates it automatically.
+
 ### Stats
 
 ```bash
