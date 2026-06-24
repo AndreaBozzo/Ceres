@@ -6,7 +6,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,7 +18,6 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use tracing::info;
 
 use crate::config::PortalsConfig;
@@ -27,10 +25,7 @@ use crate::error::AppError;
 use crate::models::Dataset;
 use crate::traits::DatasetStore;
 
-/// Schema version for the snapshot manifest written beside every Parquet export.
-pub const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "1.0.0";
-
-/// Configuration for Parquet export curation and provenance.
+/// Configuration for Parquet export curation.
 pub struct ParquetExportConfig {
     /// Minimum title length — titles shorter are filtered as noise.
     pub min_title_length: usize,
@@ -38,9 +33,6 @@ pub struct ParquetExportConfig {
     pub noise_patterns: Vec<String>,
     /// Number of rows per Arrow RecordBatch / row group.
     pub batch_size: usize,
-    /// Git commit that produced the exporting binary. `unknown` is retained for
-    /// library callers that do not provide build metadata.
-    pub git_commit: String,
 }
 
 impl Default for ParquetExportConfig {
@@ -49,18 +41,7 @@ impl Default for ParquetExportConfig {
             min_title_length: 5,
             noise_patterns: vec!["test".into(), "prova".into(), "esempio".into()],
             batch_size: 10_000,
-            git_commit: option_env!("VERGEN_GIT_SHA")
-                .unwrap_or("unknown")
-                .to_string(),
         }
-    }
-}
-
-impl ParquetExportConfig {
-    /// Records the commit that produced the binary writing a snapshot manifest.
-    pub fn with_git_commit(mut self, git_commit: impl Into<String>) -> Self {
-        self.git_commit = git_commit.into();
-        self
     }
 }
 
@@ -72,9 +53,6 @@ pub struct ParquetExportResult {
     pub total_duplicates: u64,
     pub portals: Vec<PortalExportStats>,
     pub snapshot_date: String,
-    pub snapshot_id: String,
-    pub generated_at: String,
-    pub manifest_schema_version: String,
     pub output_dir: PathBuf,
 }
 
@@ -84,72 +62,6 @@ pub struct PortalExportStats {
     pub name: String,
     pub url: String,
     pub count: u64,
-    pub portal_type: String,
-    pub profile: Option<String>,
-}
-
-/// A versioned, portable description of a published index snapshot.
-///
-/// This is written as `metadata.json`. It deliberately excludes the local
-/// output directory so the file is portable and suitable for publication.
-#[derive(Debug, Serialize)]
-pub struct SnapshotManifest {
-    pub schema_version: String,
-    pub snapshot_id: String,
-    pub generated_at: String,
-    pub snapshot_date: String,
-    pub ceres: CeresBuildInfo,
-    pub portal_config: PortalConfigProvenance,
-    pub row_counts: SnapshotRowCounts,
-    pub canonical_file: String,
-    pub files: Vec<SnapshotFile>,
-    pub portals: Vec<SnapshotPortal>,
-    pub warnings: Vec<String>,
-}
-
-/// Ceres build metadata embedded in a snapshot manifest.
-#[derive(Debug, Serialize)]
-pub struct CeresBuildInfo {
-    pub version: String,
-    pub git_commit: String,
-}
-
-/// Provenance for the portal configuration used while exporting a snapshot.
-#[derive(Debug, Serialize)]
-pub struct PortalConfigProvenance {
-    /// SHA-256 of the serialized portal configuration, when one was supplied.
-    pub sha256: Option<String>,
-}
-
-/// Counts showing how curation changed the database rows considered for export.
-#[derive(Debug, Serialize)]
-pub struct SnapshotRowCounts {
-    pub raw: u64,
-    pub exported: u64,
-    pub filtered: u64,
-    pub duplicate_flagged: u64,
-}
-
-/// Integrity metadata for a published data file.
-#[derive(Debug, Serialize)]
-pub struct SnapshotFile {
-    pub path: String,
-    pub kind: String,
-    pub row_count: u64,
-    pub size_bytes: u64,
-    pub sha256: String,
-}
-
-/// Per-portal inclusion status for a snapshot.
-#[derive(Debug, Serialize)]
-pub struct SnapshotPortal {
-    pub name: String,
-    pub source_url: String,
-    pub portal_type: String,
-    pub profile: Option<String>,
-    pub status: String,
-    pub row_count: u64,
-    pub file: String,
 }
 
 /// Intermediate flattened record between Database `Dataset` and Arrow `RecordBatch`.
@@ -176,9 +88,6 @@ pub struct ParquetExportService<S: DatasetStore> {
     config: ParquetExportConfig,
     portal_names: HashMap<String, String>,
     portal_languages: HashMap<String, String>,
-    portal_types: HashMap<String, String>,
-    portal_profiles: HashMap<String, Option<String>>,
-    portal_config_sha256: Option<String>,
 }
 
 impl<S: DatasetStore> ParquetExportService<S> {
@@ -193,18 +102,12 @@ impl<S: DatasetStore> ParquetExportService<S> {
     ) -> Self {
         let mut portal_names = HashMap::new();
         let mut portal_languages = HashMap::new();
-        let mut portal_types = HashMap::new();
-        let mut portal_profiles = HashMap::new();
-        let portal_config_sha256 = portals_config.as_ref().map(hash_portals_config);
 
         if let Some(pc) = &portals_config {
             for entry in &pc.portals {
                 let url = normalize_portal_url(&entry.url);
                 portal_names.insert(url.clone(), entry.name.clone());
                 portal_languages.insert(url, entry.language().to_string());
-                let url = normalize_portal_url(&entry.url);
-                portal_types.insert(url.clone(), entry.portal_type.to_string());
-                portal_profiles.insert(url, entry.profile().map(str::to_string));
             }
         }
 
@@ -213,9 +116,6 @@ impl<S: DatasetStore> ParquetExportService<S> {
             config,
             portal_names,
             portal_languages,
-            portal_types,
-            portal_profiles,
-            portal_config_sha256,
         }
     }
 
@@ -224,7 +124,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
     /// Creates:
     /// - `all.parquet` — complete curated dataset
     /// - `data/<portal-name>.parquet` — per-portal subsets
-    /// - `metadata.json` — versioned snapshot manifest and integrity metadata
+    /// - `metadata.json` — snapshot metadata with counts
     pub async fn export_to_directory(
         &self,
         output_dir: &Path,
@@ -250,28 +150,20 @@ impl<S: DatasetStore> ParquetExportService<S> {
         let (exported, filtered, duplicates, portal_stats) =
             self.stream_and_write(output_dir, &duplicate_titles).await?;
 
-        let generated_at = Utc::now();
-        let snapshot_date = generated_at.format("%Y-%m-%d").to_string();
-        let generated_at = generated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let snapshot_date = Utc::now().format("%Y-%m-%d").to_string();
 
-        let mut result = ParquetExportResult {
+        let result = ParquetExportResult {
             total_exported: exported,
             total_filtered: filtered,
             total_duplicates: duplicates,
             portals: portal_stats,
-            snapshot_date,
-            snapshot_id: String::new(),
-            generated_at,
-            manifest_schema_version: SNAPSHOT_MANIFEST_SCHEMA_VERSION.to_string(),
+            snapshot_date: snapshot_date.clone(),
             output_dir: output_dir.to_path_buf(),
         };
 
-        let manifest = self.build_manifest(output_dir, &result)?;
-        result.snapshot_id = manifest.snapshot_id.clone();
-
-        // Write the portable snapshot manifest, never the local output path.
+        // Write metadata.json
         let metadata_path = output_dir.join("metadata.json");
-        let metadata_json = serde_json::to_string_pretty(&manifest)
+        let metadata_json = serde_json::to_string_pretty(&result)
             .map_err(|e| AppError::ExportError(format!("Failed to serialize metadata: {}", e)))?;
         fs::write(&metadata_path, metadata_json).map_err(|e| {
             AppError::IoError(format!(
@@ -282,78 +174,6 @@ impl<S: DatasetStore> ParquetExportService<S> {
         })?;
 
         Ok(result)
-    }
-
-    fn build_manifest(
-        &self,
-        output_dir: &Path,
-        result: &ParquetExportResult,
-    ) -> Result<SnapshotManifest, AppError> {
-        let canonical_path = output_dir.join("all.parquet");
-        let canonical_checksum = sha256_file(&canonical_path)?;
-        let mut files = vec![snapshot_file(
-            &canonical_path,
-            "all.parquet",
-            "canonical",
-            result.total_exported,
-        )?];
-
-        let mut portals = Vec::with_capacity(result.portals.len());
-        for portal in &result.portals {
-            let relative_path = format!("data/{}.parquet", portal_file_name(&portal.name));
-            let file_path = output_dir.join(&relative_path);
-            files.push(snapshot_file(
-                &file_path,
-                &relative_path,
-                "portal_subset",
-                portal.count,
-            )?);
-            portals.push(SnapshotPortal {
-                name: portal.name.clone(),
-                source_url: portal.url.clone(),
-                portal_type: portal.portal_type.clone(),
-                profile: portal.profile.clone(),
-                status: "included".to_string(),
-                row_count: portal.count,
-                file: relative_path,
-            });
-        }
-
-        let mut warnings = Vec::new();
-        if self.portal_config_sha256.is_none() {
-            warnings.push(
-                "No portals configuration was supplied; portal type/profile provenance may be unknown."
-                    .to_string(),
-            );
-        }
-
-        Ok(SnapshotManifest {
-            schema_version: SNAPSHOT_MANIFEST_SCHEMA_VERSION.to_string(),
-            snapshot_id: format!(
-                "ceres-{}-{}",
-                result.snapshot_date.replace('-', ""),
-                &canonical_checksum[..12]
-            ),
-            generated_at: result.generated_at.clone(),
-            snapshot_date: result.snapshot_date.clone(),
-            ceres: CeresBuildInfo {
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                git_commit: self.config.git_commit.clone(),
-            },
-            portal_config: PortalConfigProvenance {
-                sha256: self.portal_config_sha256.clone(),
-            },
-            row_counts: SnapshotRowCounts {
-                raw: result.total_exported + result.total_filtered,
-                exported: result.total_exported,
-                filtered: result.total_filtered,
-                duplicate_flagged: result.total_duplicates,
-            },
-            canonical_file: "all.parquet".to_string(),
-            files,
-            portals,
-            warnings,
-        })
     }
 
     /// Streams all datasets, applies curation, and writes Parquet files.
@@ -520,18 +340,10 @@ impl<S: DatasetStore> ParquetExportService<S> {
             .into_iter()
             .map(|(portal_key, count)| {
                 let (ref name, _) = portal_info[&portal_key];
-                let portal_type = self
-                    .portal_types
-                    .get(&portal_key)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string());
-                let profile = self.portal_profiles.get(&portal_key).cloned().flatten();
                 PortalExportStats {
                     name: name.clone(),
                     url: portal_key,
                     count,
-                    portal_type,
-                    profile,
                 }
             })
             .collect();
@@ -736,70 +548,6 @@ fn get_or_create_portal_writer<'a>(
     Ok(writers
         .get_mut(portal_key)
         .expect("writer just inserted above"))
-}
-
-// =============================================================================
-// Snapshot Manifest Helpers
-// =============================================================================
-
-/// Hashes the logical portal configuration used to resolve export provenance.
-///
-/// The serialized representation is deterministic for these struct fields and
-/// avoids leaking a local configuration path into a published manifest.
-fn hash_portals_config(config: &PortalsConfig) -> String {
-    let serialized =
-        serde_json::to_vec(config).expect("PortalsConfig contains only serializable values");
-    sha256_bytes(&serialized)
-}
-
-/// Builds integrity metadata after a Parquet writer has been closed.
-fn snapshot_file(
-    path: &Path,
-    relative_path: &str,
-    kind: &str,
-    row_count: u64,
-) -> Result<SnapshotFile, AppError> {
-    let size_bytes = fs::metadata(path)
-        .map_err(|e| {
-            AppError::IoError(format!("Failed to read {} metadata: {}", path.display(), e))
-        })?
-        .len();
-
-    Ok(SnapshotFile {
-        path: relative_path.to_string(),
-        kind: kind.to_string(),
-        row_count,
-        size_bytes,
-        sha256: sha256_file(path)?,
-    })
-}
-
-/// Returns the SHA-256 digest of a file without loading it into memory.
-fn sha256_file(path: &Path) -> Result<String, AppError> {
-    let mut file = fs::File::open(path)
-        .map_err(|e| AppError::IoError(format!("Failed to open {}: {}", path.display(), e)))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-
-    loop {
-        let read = file.read(&mut buffer).map_err(|e| {
-            AppError::IoError(format!(
-                "Failed to read {} for checksum: {}",
-                path.display(),
-                e
-            ))
-        })?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-fn sha256_bytes(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 // =============================================================================

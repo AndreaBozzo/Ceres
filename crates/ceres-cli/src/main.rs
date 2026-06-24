@@ -147,8 +147,7 @@ async fn main() -> anyhow::Result<()> {
                 let parquet_service = ParquetExportService::new(
                     repo.clone(),
                     portals_config,
-                    ParquetExportConfig::default()
-                        .with_git_commit(option_env!("VERGEN_GIT_SHA").unwrap_or("unknown")),
+                    ParquetExportConfig::default(),
                 );
                 let result = parquet_service.export_to_directory(&output_dir).await?;
                 print_parquet_export_summary(&result);
@@ -441,8 +440,6 @@ fn print_parquet_export_summary(result: &ParquetExportResult) {
     eprintln!("  PARQUET EXPORT COMPLETE");
     eprintln!("═══════════════════════════════════════════════════════");
     eprintln!("  Output:              {}", result.output_dir.display());
-    eprintln!("  Snapshot ID:         {}", result.snapshot_id);
-    eprintln!("  Generated at:        {}", result.generated_at);
     eprintln!("  Snapshot date:       {}", result.snapshot_date);
     eprintln!("  Total exported:      {}", result.total_exported);
     eprintln!("  Filtered (noise):    {}", result.total_filtered);
