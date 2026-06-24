@@ -280,9 +280,10 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
         .find(|file| file["path"] == "all.parquet")
         .unwrap();
     let canonical_bytes = std::fs::read(output.path().join("all.parquet")).unwrap();
+    let expected_checksum = format!("{:x}", Sha256::digest(canonical_bytes));
     assert_eq!(
-        canonical["sha256"],
-        format!("{:x}", Sha256::digest(canonical_bytes))
+        canonical["sha256"].as_str(),
+        Some(expected_checksum.as_str())
     );
 
     let portal = &manifest["portals"][0];

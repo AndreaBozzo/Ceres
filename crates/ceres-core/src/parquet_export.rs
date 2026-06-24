@@ -296,6 +296,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
             "all.parquet",
             "canonical",
             result.total_exported,
+            Some(&canonical_checksum),
         )?];
 
         let mut portals = Vec::with_capacity(result.portals.len());
@@ -307,6 +308,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 &relative_path,
                 "portal_subset",
                 portal.count,
+                None,
             )?);
             portals.push(SnapshotPortal {
                 name: portal.name.clone(),
@@ -758,6 +760,7 @@ fn snapshot_file(
     relative_path: &str,
     kind: &str,
     row_count: u64,
+    checksum: Option<&str>,
 ) -> Result<SnapshotFile, AppError> {
     let size_bytes = fs::metadata(path)
         .map_err(|e| {
@@ -770,7 +773,10 @@ fn snapshot_file(
         kind: kind.to_string(),
         row_count,
         size_bytes,
-        sha256: sha256_file(path)?,
+        sha256: match checksum {
+            Some(checksum) => checksum.to_string(),
+            None => sha256_file(path)?,
+        },
     })
 }
 
