@@ -6,6 +6,10 @@ use crate::integration::common::{MockDatasetStore, MockPortalData};
 use ceres_core::export::{ExportFormat, ExportService};
 use ceres_core::models::NewDataset;
 use ceres_core::traits::DatasetStore;
+use ceres_core::{
+    ParquetExportConfig, ParquetExportService, PortalEntry, PortalType, PortalsConfig,
+};
+use sha2::{Digest, Sha256};
 
 const TEST_PORTAL_URL: &str = "https://test-portal.example.com";
 
@@ -201,6 +205,90 @@ async fn test_export_csv_empty_store() {
 
     // Should have only header
     assert_eq!(lines.len(), 1, "CSV should have only header line");
+}
+
+// =============================================================================
+// Parquet Snapshot Manifest Tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_parquet_export_writes_versioned_snapshot_manifest() {
+    let store = MockDatasetStore::new();
+    let dataset = NewDataset {
+        original_id: "transport-routes".to_string(),
+        source_portal: TEST_PORTAL_URL.to_string(),
+        url: format!("{TEST_PORTAL_URL}/dataset/transport-routes"),
+        title: "Public transport routes".to_string(),
+        description: Some("Route and stop information for public transport.".to_string()),
+        embedding: None,
+        metadata: serde_json::json!({"tags": [{"name": "transport"}]}),
+        content_hash: NewDataset::compute_content_hash(
+            "Public transport routes",
+            Some("Route and stop information for public transport."),
+        ),
+    };
+    store.upsert(&dataset).await.unwrap();
+
+    let portals = PortalsConfig {
+        portals: vec![PortalEntry {
+            name: "test-portal".to_string(),
+            url: TEST_PORTAL_URL.to_string(),
+            portal_type: PortalType::Ckan,
+            enabled: true,
+            description: None,
+            url_template: None,
+            language: None,
+            profile: None,
+            sparql_endpoint: None,
+        }],
+    };
+    let service = ParquetExportService::new(
+        store,
+        Some(portals),
+        ParquetExportConfig::default().with_git_commit("abc123def"),
+    );
+    let output = tempfile::tempdir().unwrap();
+
+    let result = service.export_to_directory(output.path()).await.unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output.path().join("metadata.json")).unwrap())
+            .unwrap();
+
+    assert_eq!(manifest["schema_version"], "1.0.0");
+    assert_eq!(manifest["snapshot_id"], result.snapshot_id);
+    assert_eq!(manifest["ceres"]["git_commit"], "abc123def");
+    assert_eq!(manifest["canonical_file"], "all.parquet");
+    assert_eq!(manifest["row_counts"]["raw"], 1);
+    assert_eq!(manifest["row_counts"]["exported"], 1);
+    assert!(manifest["portal_config"]["sha256"].as_str().is_some());
+    assert!(manifest.get("output_dir").is_none());
+
+    let files = manifest["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    assert!(
+        files
+            .iter()
+            .all(|file| file["sha256"].as_str().unwrap().len() == 64)
+    );
+    assert!(
+        files
+            .iter()
+            .all(|file| file["size_bytes"].as_u64().unwrap() > 0)
+    );
+    let canonical = files
+        .iter()
+        .find(|file| file["path"] == "all.parquet")
+        .unwrap();
+    let canonical_bytes = std::fs::read(output.path().join("all.parquet")).unwrap();
+    assert_eq!(
+        canonical["sha256"],
+        format!("{:x}", Sha256::digest(canonical_bytes))
+    );
+
+    let portal = &manifest["portals"][0];
+    assert_eq!(portal["status"], "included");
+    assert_eq!(portal["portal_type"], "ckan");
+    assert_eq!(portal["file"], "data/test-portal.parquet");
 }
 
 #[tokio::test]
