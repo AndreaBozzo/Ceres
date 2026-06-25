@@ -744,7 +744,14 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 }
             })
             .collect();
-        portal_stats.sort_by_key(|b| std::cmp::Reverse(b.count));
+        // Stable order: count desc, then name/url asc, so identical inputs yield
+        // identical manifest and report ordering (portal_stats comes from a HashMap).
+        portal_stats.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.url.cmp(&b.url))
+        });
 
         Ok(StreamOutcome {
             exported: total_exported,
