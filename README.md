@@ -266,6 +266,13 @@ A Parquet export produces one portable snapshot directory:
 - `metadata.json` is a versioned manifest with the snapshot ID, UTC generation
   time, Ceres version and commit, portal-config checksum, curation counts,
   per-portal inclusion status, and SHA-256 checksums for every Parquet file.
+- `reports.json` is a versioned coverage and quality report: dataset coverage by
+  portal, portal type/profile, and language; field-completeness rates for
+  description, license, organization, tags, and modification date; and curation
+  outcomes (raw, exported, filtered, duplicate-flagged, and excluded portals). It
+  is derived from the same export pass, so its figures match `metadata.json`.
+- `report.md` is a human-readable summary of `reports.json` for the dataset card
+  and release notes.
 
 Verify the checksums in `metadata.json` before consuming a copied or mirrored
 snapshot. A library caller that does not supply build metadata records the Git

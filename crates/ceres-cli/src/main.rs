@@ -448,6 +448,20 @@ fn print_parquet_export_summary(result: &ParquetExportResult) {
     eprintln!("  Filtered (noise):    {}", result.total_filtered);
     eprintln!("  Marked duplicate:    {}", result.total_duplicates);
     eprintln!("───────────────────────────────────────────────────────");
+    let completeness = &result.report.field_completeness;
+    eprintln!("  Field completeness:");
+    eprintln!(
+        "    description {:>5.1}%   license {:>5.1}%",
+        completeness.description.rate * 100.0,
+        completeness.license.rate * 100.0
+    );
+    eprintln!(
+        "    organization {:>4.1}%   tags {:>5.1}%   modified {:>5.1}%",
+        completeness.organization.rate * 100.0,
+        completeness.tags.rate * 100.0,
+        completeness.modification_date.rate * 100.0
+    );
+    eprintln!("───────────────────────────────────────────────────────");
     eprintln!("  Portal breakdown:");
     for portal in &result.portals {
         eprintln!("    {:<25} {:>6} datasets", portal.name, portal.count);

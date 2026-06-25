@@ -30,6 +30,9 @@ use crate::traits::DatasetStore;
 /// Schema version for the snapshot manifest written beside every Parquet export.
 pub const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "1.0.0";
 
+/// Schema version for the coverage and quality report written beside every export.
+pub const SNAPSHOT_REPORT_SCHEMA_VERSION: &str = "1.0.0";
+
 /// Configuration for Parquet export curation and provenance.
 pub struct ParquetExportConfig {
     /// Minimum title length — titles shorter are filtered as noise.
@@ -76,6 +79,7 @@ pub struct ParquetExportResult {
     pub generated_at: String,
     pub manifest_schema_version: String,
     pub output_dir: PathBuf,
+    pub report: SnapshotReport,
 }
 
 /// Per-portal export statistics.
@@ -152,6 +156,118 @@ pub struct SnapshotPortal {
     pub file: String,
 }
 
+/// A coverage and quality report describing what a snapshot contains and where
+/// its metadata is weak.
+///
+/// Written as `reports.json`. It is deterministically derived from the same
+/// export inputs as the manifest, so its figures agree with `metadata.json`.
+#[derive(Debug, Serialize)]
+pub struct SnapshotReport {
+    pub schema_version: String,
+    pub snapshot_id: String,
+    pub snapshot_date: String,
+    pub generated_at: String,
+    pub curation: CurationReport,
+    pub coverage: CoverageReport,
+    pub field_completeness: FieldCompletenessReport,
+}
+
+/// Curation outcomes for a snapshot: how raw rows became the exported set.
+#[derive(Debug, Serialize)]
+pub struct CurationReport {
+    pub raw: u64,
+    pub exported: u64,
+    pub filtered: u64,
+    pub duplicate_flagged: u64,
+    /// Configured portals that contributed no datasets to this snapshot
+    /// (disabled, failed, or empty), by display name.
+    pub excluded_portals: Vec<String>,
+}
+
+/// What the snapshot covers, broken down by independent dimensions.
+#[derive(Debug, Serialize)]
+pub struct CoverageReport {
+    pub total_datasets: u64,
+    pub portals: u64,
+    pub by_portal_type: Vec<CoverageBucket>,
+    pub by_profile: Vec<CoverageBucket>,
+    pub by_language: Vec<CoverageBucket>,
+    pub by_portal: Vec<CoverageBucket>,
+}
+
+/// One coverage bucket: a dimension value and its dataset count.
+#[derive(Debug, Serialize)]
+pub struct CoverageBucket {
+    pub key: String,
+    pub count: u64,
+}
+
+/// Field-completeness rates across the exported dataset.
+#[derive(Debug, Serialize)]
+pub struct FieldCompletenessReport {
+    pub total: u64,
+    pub description: FieldCompleteness,
+    pub license: FieldCompleteness,
+    pub organization: FieldCompleteness,
+    pub tags: FieldCompleteness,
+    pub modification_date: FieldCompleteness,
+}
+
+/// Completeness of a single metadata field: rows present and the resulting rate.
+#[derive(Debug, Serialize)]
+pub struct FieldCompleteness {
+    pub present: u64,
+    /// `present / total`, rounded to four decimals; `0.0` when `total` is zero.
+    pub rate: f64,
+}
+
+/// Accumulates per-record coverage and completeness counters during the export
+/// stream so the report is derived from the same pass that writes Parquet.
+#[derive(Default)]
+struct QualityAccumulator {
+    language_counts: HashMap<String, u64>,
+    description_present: u64,
+    license_present: u64,
+    organization_present: u64,
+    tags_present: u64,
+    modification_date_present: u64,
+}
+
+impl QualityAccumulator {
+    /// Records the metadata signals of one exported record.
+    fn observe(&mut self, record: &FlatRecord) {
+        *self
+            .language_counts
+            .entry(record.language.clone())
+            .or_default() += 1;
+        if !record.description.trim().is_empty() {
+            self.description_present += 1;
+        }
+        if !record.license.trim().is_empty() {
+            self.license_present += 1;
+        }
+        if !record.organization.trim().is_empty() {
+            self.organization_present += 1;
+        }
+        if !record.tags.trim().is_empty() {
+            self.tags_present += 1;
+        }
+        if !record.metadata_modified.trim().is_empty() {
+            self.modification_date_present += 1;
+        }
+    }
+}
+
+/// Outcome of a streaming export pass: counts, per-portal stats, and the
+/// quality counters used to build the snapshot report.
+struct StreamOutcome {
+    exported: u64,
+    filtered: u64,
+    duplicates: u64,
+    portals: Vec<PortalExportStats>,
+    quality: QualityAccumulator,
+}
+
 /// Intermediate flattened record between Database `Dataset` and Arrow `RecordBatch`.
 struct FlatRecord {
     original_id: String,
@@ -225,6 +341,8 @@ impl<S: DatasetStore> ParquetExportService<S> {
     /// - `all.parquet` — complete curated dataset
     /// - `data/<portal-name>.parquet` — per-portal subsets
     /// - `metadata.json` — versioned snapshot manifest and integrity metadata
+    /// - `reports.json` — machine-readable coverage and quality report
+    /// - `report.md` — human-readable coverage and quality summary
     pub async fn export_to_directory(
         &self,
         output_dir: &Path,
@@ -247,27 +365,13 @@ impl<S: DatasetStore> ParquetExportService<S> {
         );
 
         info!("Streaming datasets for Parquet export...");
-        let (exported, filtered, duplicates, portal_stats) =
-            self.stream_and_write(output_dir, &duplicate_titles).await?;
+        let outcome = self.stream_and_write(output_dir, &duplicate_titles).await?;
 
         let generated_at = Utc::now();
         let snapshot_date = generated_at.format("%Y-%m-%d").to_string();
         let generated_at = generated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
-        let mut result = ParquetExportResult {
-            total_exported: exported,
-            total_filtered: filtered,
-            total_duplicates: duplicates,
-            portals: portal_stats,
-            snapshot_date,
-            snapshot_id: String::new(),
-            generated_at,
-            manifest_schema_version: SNAPSHOT_MANIFEST_SCHEMA_VERSION.to_string(),
-            output_dir: output_dir.to_path_buf(),
-        };
-
-        let manifest = self.build_manifest(output_dir, &result)?;
-        result.snapshot_id = manifest.snapshot_id.clone();
+        let manifest = self.build_manifest(output_dir, &outcome, &snapshot_date, &generated_at)?;
 
         // Write the portable snapshot manifest, never the local output path.
         let metadata_path = output_dir.join("metadata.json");
@@ -281,13 +385,45 @@ impl<S: DatasetStore> ParquetExportService<S> {
             ))
         })?;
 
-        Ok(result)
+        // Build the coverage and quality report from the same export pass so its
+        // figures agree with the manifest, then write both machine- and
+        // human-readable forms beside the snapshot.
+        let report = self.build_report(&manifest, &outcome, &snapshot_date, &generated_at);
+        let reports_path = output_dir.join("reports.json");
+        let reports_json = serde_json::to_string_pretty(&report)
+            .map_err(|e| AppError::ExportError(format!("Failed to serialize report: {}", e)))?;
+        fs::write(&reports_path, reports_json).map_err(|e| {
+            AppError::IoError(format!("Failed to write {}: {}", reports_path.display(), e))
+        })?;
+        let report_md_path = output_dir.join("report.md");
+        fs::write(&report_md_path, render_report_markdown(&report)).map_err(|e| {
+            AppError::IoError(format!(
+                "Failed to write {}: {}",
+                report_md_path.display(),
+                e
+            ))
+        })?;
+
+        Ok(ParquetExportResult {
+            total_exported: outcome.exported,
+            total_filtered: outcome.filtered,
+            total_duplicates: outcome.duplicates,
+            snapshot_date,
+            snapshot_id: manifest.snapshot_id.clone(),
+            generated_at,
+            manifest_schema_version: SNAPSHOT_MANIFEST_SCHEMA_VERSION.to_string(),
+            output_dir: output_dir.to_path_buf(),
+            report,
+            portals: outcome.portals,
+        })
     }
 
     fn build_manifest(
         &self,
         output_dir: &Path,
-        result: &ParquetExportResult,
+        outcome: &StreamOutcome,
+        snapshot_date: &str,
+        generated_at: &str,
     ) -> Result<SnapshotManifest, AppError> {
         let canonical_path = output_dir.join("all.parquet");
         let canonical_checksum = sha256_file(&canonical_path)?;
@@ -295,12 +431,12 @@ impl<S: DatasetStore> ParquetExportService<S> {
             &canonical_path,
             "all.parquet",
             "canonical",
-            result.total_exported,
+            outcome.exported,
             Some(&canonical_checksum),
         )?];
 
-        let mut portals = Vec::with_capacity(result.portals.len());
-        for portal in &result.portals {
+        let mut portals = Vec::with_capacity(outcome.portals.len());
+        for portal in &outcome.portals {
             let relative_path = format!("data/{}.parquet", portal_file_name(&portal.name));
             let file_path = output_dir.join(&relative_path);
             files.push(snapshot_file(
@@ -333,11 +469,11 @@ impl<S: DatasetStore> ParquetExportService<S> {
             schema_version: SNAPSHOT_MANIFEST_SCHEMA_VERSION.to_string(),
             snapshot_id: format!(
                 "ceres-{}-{}",
-                result.snapshot_date.replace('-', ""),
+                snapshot_date.replace('-', ""),
                 &canonical_checksum[..12]
             ),
-            generated_at: result.generated_at.clone(),
-            snapshot_date: result.snapshot_date.clone(),
+            generated_at: generated_at.to_string(),
+            snapshot_date: snapshot_date.to_string(),
             ceres: CeresBuildInfo {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 git_commit: self.config.git_commit.clone(),
@@ -346,10 +482,10 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 sha256: self.portal_config_sha256.clone(),
             },
             row_counts: SnapshotRowCounts {
-                raw: result.total_exported + result.total_filtered,
-                exported: result.total_exported,
-                filtered: result.total_filtered,
-                duplicate_flagged: result.total_duplicates,
+                raw: outcome.exported + outcome.filtered,
+                exported: outcome.exported,
+                filtered: outcome.filtered,
+                duplicate_flagged: outcome.duplicates,
             },
             canonical_file: "all.parquet".to_string(),
             files,
@@ -358,14 +494,84 @@ impl<S: DatasetStore> ParquetExportService<S> {
         })
     }
 
+    /// Builds the coverage and quality report from a completed export pass.
+    fn build_report(
+        &self,
+        manifest: &SnapshotManifest,
+        outcome: &StreamOutcome,
+        snapshot_date: &str,
+        generated_at: &str,
+    ) -> SnapshotReport {
+        let total = outcome.exported;
+
+        // Coverage aggregations from the per-portal stats.
+        let mut type_counts: HashMap<String, u64> = HashMap::new();
+        let mut profile_counts: HashMap<String, u64> = HashMap::new();
+        let mut by_portal = Vec::with_capacity(outcome.portals.len());
+        for portal in &outcome.portals {
+            *type_counts.entry(portal.portal_type.clone()).or_default() += portal.count;
+            let profile = portal.profile.clone().unwrap_or_else(|| "none".to_string());
+            *profile_counts.entry(profile).or_default() += portal.count;
+            by_portal.push(CoverageBucket {
+                key: portal.name.clone(),
+                count: portal.count,
+            });
+        }
+
+        // Configured portals that produced no datasets in this snapshot.
+        let exported_urls: HashSet<&str> =
+            outcome.portals.iter().map(|p| p.url.as_str()).collect();
+        let mut excluded_portals: Vec<String> = self
+            .portal_names
+            .iter()
+            .filter(|(url, _)| !exported_urls.contains(url.as_str()))
+            .map(|(_, name)| name.clone())
+            .collect();
+        excluded_portals.sort();
+        excluded_portals.dedup();
+
+        SnapshotReport {
+            schema_version: SNAPSHOT_REPORT_SCHEMA_VERSION.to_string(),
+            snapshot_id: manifest.snapshot_id.clone(),
+            snapshot_date: snapshot_date.to_string(),
+            generated_at: generated_at.to_string(),
+            curation: CurationReport {
+                raw: outcome.exported + outcome.filtered,
+                exported: outcome.exported,
+                filtered: outcome.filtered,
+                duplicate_flagged: outcome.duplicates,
+                excluded_portals,
+            },
+            coverage: CoverageReport {
+                total_datasets: total,
+                portals: outcome.portals.len() as u64,
+                by_portal_type: sorted_buckets(type_counts),
+                by_profile: sorted_buckets(profile_counts),
+                by_language: sorted_buckets(outcome.quality.language_counts.clone()),
+                by_portal,
+            },
+            field_completeness: FieldCompletenessReport {
+                total,
+                description: field_completeness(outcome.quality.description_present, total),
+                license: field_completeness(outcome.quality.license_present, total),
+                organization: field_completeness(outcome.quality.organization_present, total),
+                tags: field_completeness(outcome.quality.tags_present, total),
+                modification_date: field_completeness(
+                    outcome.quality.modification_date_present,
+                    total,
+                ),
+            },
+        }
+    }
+
     /// Streams all datasets, applies curation, and writes Parquet files.
     ///
-    /// Returns (exported_count, filtered_count, duplicate_count, per_portal_stats).
+    /// Returns counts, per-portal stats, and the accumulated quality counters.
     async fn stream_and_write(
         &self,
         output_dir: &Path,
         duplicate_titles: &HashSet<String>,
-    ) -> Result<(u64, u64, u64, Vec<PortalExportStats>), AppError> {
+    ) -> Result<StreamOutcome, AppError> {
         let schema = arrow_schema();
         let writer_props = writer_properties();
 
@@ -394,6 +600,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
         let mut total_exported = 0u64;
         let mut total_filtered = 0u64;
         let mut total_duplicates = 0u64;
+        let mut quality = QualityAccumulator::default();
 
         let mut stream = self.store.list_stream(None, None);
 
@@ -412,6 +619,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
             }
 
             let record = self.flatten_dataset(&dataset, is_duplicate);
+            quality.observe(&record);
 
             // Use normalized source_portal URL as the stable partition key
             let portal_key = normalize_portal_url(&record.source_portal);
@@ -539,12 +747,13 @@ impl<S: DatasetStore> ParquetExportService<S> {
             .collect();
         portal_stats.sort_by_key(|b| std::cmp::Reverse(b.count));
 
-        Ok((
-            total_exported,
-            total_filtered,
-            total_duplicates,
-            portal_stats,
-        ))
+        Ok(StreamOutcome {
+            exported: total_exported,
+            filtered: total_filtered,
+            duplicates: total_duplicates,
+            portals: portal_stats,
+            quality,
+        })
     }
 
     /// Returns true if the dataset should be filtered out as noise.
@@ -778,6 +987,112 @@ fn snapshot_file(
             None => sha256_file(path)?,
         },
     })
+}
+
+// =============================================================================
+// Coverage & Quality Report Helpers
+// =============================================================================
+
+/// Converts a count map into coverage buckets ordered by count (desc) then key
+/// (asc) so the report is deterministic for identical inputs.
+fn sorted_buckets(counts: HashMap<String, u64>) -> Vec<CoverageBucket> {
+    let mut buckets: Vec<CoverageBucket> = counts
+        .into_iter()
+        .map(|(key, count)| CoverageBucket { key, count })
+        .collect();
+    buckets.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.key.cmp(&b.key)));
+    buckets
+}
+
+/// Computes a field's completeness as a present count and a rate rounded to
+/// four decimals.
+fn field_completeness(present: u64, total: u64) -> FieldCompleteness {
+    let rate = if total == 0 {
+        0.0
+    } else {
+        ((present as f64 / total as f64) * 10_000.0).round() / 10_000.0
+    };
+    FieldCompleteness { present, rate }
+}
+
+/// Renders a concise human-readable report for the dataset card / release notes.
+fn render_report_markdown(report: &SnapshotReport) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "# Ceres Snapshot Report — {}", report.snapshot_date);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "- Snapshot ID: `{}`", report.snapshot_id);
+    let _ = writeln!(out, "- Generated at: {}", report.generated_at);
+    let _ = writeln!(out, "- Report schema: {}", report.schema_version);
+    let _ = writeln!(out);
+
+    let c = &report.curation;
+    let _ = writeln!(out, "## Curation");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "| Metric | Count |");
+    let _ = writeln!(out, "| --- | ---: |");
+    let _ = writeln!(out, "| Raw rows | {} |", c.raw);
+    let _ = writeln!(out, "| Exported | {} |", c.exported);
+    let _ = writeln!(out, "| Filtered (noise) | {} |", c.filtered);
+    let _ = writeln!(out, "| Duplicate-flagged | {} |", c.duplicate_flagged);
+    let _ = writeln!(out, "| Excluded portals | {} |", c.excluded_portals.len());
+    let _ = writeln!(out);
+
+    let cov = &report.coverage;
+    let _ = writeln!(
+        out,
+        "## Coverage — {} datasets across {} portals",
+        cov.total_datasets, cov.portals
+    );
+    let _ = writeln!(out);
+    write_bucket_table(&mut out, "By portal type", &cov.by_portal_type);
+    write_bucket_table(&mut out, "By profile", &cov.by_profile);
+    write_bucket_table(&mut out, "By language", &cov.by_language);
+
+    let f = &report.field_completeness;
+    let _ = writeln!(out, "## Field completeness ({} datasets)", f.total);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "| Field | Present | Rate |");
+    let _ = writeln!(out, "| --- | ---: | ---: |");
+    write_completeness_row(&mut out, "description", &f.description);
+    write_completeness_row(&mut out, "license", &f.license);
+    write_completeness_row(&mut out, "organization", &f.organization);
+    write_completeness_row(&mut out, "tags", &f.tags);
+    write_completeness_row(&mut out, "modification_date", &f.modification_date);
+    let _ = writeln!(out);
+
+    out
+}
+
+/// Writes a coverage bucket table, capped to the top entries for readability.
+fn write_bucket_table(out: &mut String, title: &str, buckets: &[CoverageBucket]) {
+    use std::fmt::Write as _;
+
+    let _ = writeln!(out, "### {}", title);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "| Key | Count |");
+    let _ = writeln!(out, "| --- | ---: |");
+    for bucket in buckets.iter().take(15) {
+        let _ = writeln!(out, "| {} | {} |", bucket.key, bucket.count);
+    }
+    if buckets.len() > 15 {
+        let _ = writeln!(out, "| … ({} more) | |", buckets.len() - 15);
+    }
+    let _ = writeln!(out);
+}
+
+/// Writes one field-completeness row as a percentage.
+fn write_completeness_row(out: &mut String, field: &str, completeness: &FieldCompleteness) {
+    use std::fmt::Write as _;
+
+    let _ = writeln!(
+        out,
+        "| {} | {} | {:.1}% |",
+        field,
+        completeness.present,
+        completeness.rate * 100.0
+    );
 }
 
 /// Returns the SHA-256 digest of a file without loading it into memory.

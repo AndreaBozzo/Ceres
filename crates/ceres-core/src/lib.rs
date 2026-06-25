@@ -95,9 +95,11 @@ pub use embedding::{EmbeddingService, EmbeddingStats};
 pub use export::{ExportFormat, ExportService};
 pub use harvest::{HarvestService, SyncOptions};
 pub use parquet_export::{
-    CeresBuildInfo, ParquetExportConfig, ParquetExportResult, ParquetExportService,
-    PortalConfigProvenance, PortalExportStats, SNAPSHOT_MANIFEST_SCHEMA_VERSION, SnapshotFile,
-    SnapshotManifest, SnapshotPortal, SnapshotRowCounts,
+    CeresBuildInfo, CoverageBucket, CoverageReport, CurationReport, FieldCompleteness,
+    FieldCompletenessReport, ParquetExportConfig, ParquetExportResult, ParquetExportService,
+    PortalConfigProvenance, PortalExportStats, SNAPSHOT_MANIFEST_SCHEMA_VERSION,
+    SNAPSHOT_REPORT_SCHEMA_VERSION, SnapshotFile, SnapshotManifest, SnapshotPortal,
+    SnapshotReport, SnapshotRowCounts,
 };
 pub use pipeline::HarvestPipeline;
 pub use search::SearchService;
