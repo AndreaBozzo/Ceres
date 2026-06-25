@@ -293,6 +293,105 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
 }
 
 #[tokio::test]
+async fn test_parquet_export_writes_coverage_and_quality_report() {
+    let store = MockDatasetStore::new();
+    // Two datasets: one fully populated, one missing license/org/tags/modified.
+    let rich = NewDataset {
+        original_id: "rich".to_string(),
+        source_portal: TEST_PORTAL_URL.to_string(),
+        url: format!("{TEST_PORTAL_URL}/dataset/rich"),
+        title: "Air quality measurements".to_string(),
+        description: Some("Hourly air quality readings.".to_string()),
+        embedding: None,
+        metadata: serde_json::json!({
+            "tags": [{"name": "air"}],
+            "organization": {"title": "Env Agency"},
+            "license_title": "CC-BY 4.0",
+            "metadata_modified": "2026-01-01"
+        }),
+        content_hash: NewDataset::compute_content_hash(
+            "Air quality measurements",
+            Some("Hourly air quality readings."),
+        ),
+    };
+    let sparse = NewDataset {
+        original_id: "sparse".to_string(),
+        source_portal: TEST_PORTAL_URL.to_string(),
+        url: format!("{TEST_PORTAL_URL}/dataset/sparse"),
+        title: "Bus timetable export".to_string(),
+        description: Some("Timetable data.".to_string()),
+        embedding: None,
+        metadata: serde_json::json!({}),
+        content_hash: NewDataset::compute_content_hash(
+            "Bus timetable export",
+            Some("Timetable data."),
+        ),
+    };
+    store.upsert(&rich).await.unwrap();
+    store.upsert(&sparse).await.unwrap();
+
+    let portals = PortalsConfig {
+        portals: vec![PortalEntry {
+            name: "test-portal".to_string(),
+            url: TEST_PORTAL_URL.to_string(),
+            portal_type: PortalType::Ckan,
+            enabled: true,
+            description: None,
+            url_template: None,
+            language: Some("en".to_string()),
+            profile: None,
+            sparql_endpoint: None,
+        }],
+    };
+    let service = ParquetExportService::new(store, Some(portals), ParquetExportConfig::default());
+    let output = tempfile::tempdir().unwrap();
+
+    let result = service.export_to_directory(output.path()).await.unwrap();
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output.path().join("reports.json")).unwrap())
+            .unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output.path().join("metadata.json")).unwrap())
+            .unwrap();
+
+    // Report figures agree with the manifest (acceptance criterion).
+    assert_eq!(report["schema_version"], "1.0.0");
+    assert_eq!(report["snapshot_id"], manifest["snapshot_id"]);
+    assert_eq!(
+        report["curation"]["exported"],
+        manifest["row_counts"]["exported"]
+    );
+    assert_eq!(report["curation"]["raw"], manifest["row_counts"]["raw"]);
+    assert_eq!(
+        report["curation"]["filtered"],
+        manifest["row_counts"]["filtered"]
+    );
+
+    assert_eq!(report["coverage"]["total_datasets"], 2);
+    assert_eq!(report["coverage"]["portals"], 1);
+    assert_eq!(report["coverage"]["by_language"][0]["key"], "en");
+    assert_eq!(report["coverage"]["by_language"][0]["count"], 2);
+    assert_eq!(report["coverage"]["by_portal_type"][0]["key"], "ckan");
+
+    // Completeness: description present for both, license/org/tags/modified for one.
+    let fc = &report["field_completeness"];
+    assert_eq!(fc["total"], 2);
+    assert_eq!(fc["description"]["present"], 2);
+    assert_eq!(fc["description"]["rate"], 1.0);
+    assert_eq!(fc["license"]["present"], 1);
+    assert_eq!(fc["license"]["rate"], 0.5);
+    assert_eq!(fc["tags"]["present"], 1);
+    assert_eq!(fc["modification_date"]["present"], 1);
+
+    // Report is also surfaced on the in-memory result and a human-readable form.
+    assert_eq!(result.report.coverage.total_datasets, 2);
+    let report_md = std::fs::read_to_string(output.path().join("report.md")).unwrap();
+    assert!(report_md.contains("# Ceres Snapshot Report"));
+    assert!(report_md.contains("Field completeness"));
+}
+
+#[tokio::test]
 async fn test_export_csv_escapes_special_characters() {
     // Arrange
     let store = MockDatasetStore::new();
