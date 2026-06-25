@@ -322,7 +322,10 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
         description: Some("Timetable data.".to_string()),
         embedding: None,
         metadata: serde_json::json!({}),
-        content_hash: NewDataset::compute_content_hash("Bus timetable export", Some("Timetable data.")),
+        content_hash: NewDataset::compute_content_hash(
+            "Bus timetable export",
+            Some("Timetable data."),
+        ),
     };
     store.upsert(&rich).await.unwrap();
     store.upsert(&sparse).await.unwrap();
@@ -340,8 +343,7 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
             sparql_endpoint: None,
         }],
     };
-    let service =
-        ParquetExportService::new(store, Some(portals), ParquetExportConfig::default());
+    let service = ParquetExportService::new(store, Some(portals), ParquetExportConfig::default());
     let output = tempfile::tempdir().unwrap();
 
     let result = service.export_to_directory(output.path()).await.unwrap();
@@ -356,9 +358,15 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     // Report figures agree with the manifest (acceptance criterion).
     assert_eq!(report["schema_version"], "1.0.0");
     assert_eq!(report["snapshot_id"], manifest["snapshot_id"]);
-    assert_eq!(report["curation"]["exported"], manifest["row_counts"]["exported"]);
+    assert_eq!(
+        report["curation"]["exported"],
+        manifest["row_counts"]["exported"]
+    );
     assert_eq!(report["curation"]["raw"], manifest["row_counts"]["raw"]);
-    assert_eq!(report["curation"]["filtered"], manifest["row_counts"]["filtered"]);
+    assert_eq!(
+        report["curation"]["filtered"],
+        manifest["row_counts"]["filtered"]
+    );
 
     assert_eq!(report["coverage"]["total_datasets"], 2);
     assert_eq!(report["coverage"]["portals"], 1);

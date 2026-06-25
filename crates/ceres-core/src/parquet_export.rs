@@ -519,8 +519,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
         }
 
         // Configured portals that produced no datasets in this snapshot.
-        let exported_urls: HashSet<&str> =
-            outcome.portals.iter().map(|p| p.url.as_str()).collect();
+        let exported_urls: HashSet<&str> = outcome.portals.iter().map(|p| p.url.as_str()).collect();
         let mut excluded_portals: Vec<String> = self
             .portal_names
             .iter()
