@@ -438,12 +438,17 @@ pub trait DatasetStore: Send + Sync + Clone {
         datasets_synced: i32,
     ) -> impl Future<Output = Result<(), AppError>> + Send;
 
-    /// Returns lowercased titles that appear across multiple portals.
+    /// Returns lowercased titles that appear across multiple *distinct* portals.
     ///
-    /// Used for cross-portal duplicate detection in Parquet exports.
+    /// This is a heuristic cross-portal duplicate signal used by Parquet exports,
+    /// not canonical deduplication. `aliases` maps normalized alias/mirror base
+    /// URLs to their canonical portal URL; aliased URLs are folded onto their
+    /// canonical before counting distinct portals, so a mirror of one portal is
+    /// not counted as an independent source. Pass an empty map for no aliasing.
     /// Typically returns ~21k titles (~2MB) for the full dataset.
     fn get_duplicate_titles(
         &self,
+        aliases: &std::collections::HashMap<String, String>,
     ) -> impl Future<Output = Result<std::collections::HashSet<String>, AppError>> + Send;
 
     /// Lists datasets that have no embedding vector (`embedding IS NULL`).

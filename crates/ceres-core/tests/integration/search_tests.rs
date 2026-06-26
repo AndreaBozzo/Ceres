@@ -116,7 +116,10 @@ impl DatasetStore for FailingDatasetStore {
     ) -> Result<(), AppError> {
         unimplemented!()
     }
-    async fn get_duplicate_titles(&self) -> Result<HashSet<String>, AppError> {
+    async fn get_duplicate_titles(
+        &self,
+        _aliases: &HashMap<String, String>,
+    ) -> Result<HashSet<String>, AppError> {
         unimplemented!()
     }
     async fn list_pending_embeddings(

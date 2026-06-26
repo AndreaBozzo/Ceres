@@ -487,15 +487,23 @@ impl DatasetStore for MockDatasetStore {
         Ok(())
     }
 
-    async fn get_duplicate_titles(&self) -> Result<std::collections::HashSet<String>, AppError> {
-        // Find titles that appear in more than one portal
+    async fn get_duplicate_titles(
+        &self,
+        aliases: &HashMap<String, String>,
+    ) -> Result<std::collections::HashSet<String>, AppError> {
+        // Find titles that appear across more than one *distinct* portal, folding
+        // alias/mirror URLs onto their canonical portal first (mirrors the SQL).
+        let canonical = |portal: &str| -> String {
+            let trimmed = portal.trim_end_matches('/').to_string();
+            aliases.get(&trimmed).cloned().unwrap_or(trimmed)
+        };
         let datasets = self.datasets.lock().unwrap();
         let mut title_portals: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
         for ((portal, _), stored) in datasets.iter() {
             title_portals
                 .entry(stored.dataset.title.to_lowercase())
                 .or_default()
-                .insert(portal.clone());
+                .insert(canonical(portal));
         }
         Ok(title_portals
             .into_iter()

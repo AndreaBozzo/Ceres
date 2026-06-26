@@ -158,6 +158,10 @@ pub enum Command {
         /// Custom path to portals.toml (for portal name resolution in parquet export)
         #[arg(short, long, value_name = "PATH")]
         config: Option<std::path::PathBuf>,
+        /// Previous snapshot directory to diff against (parquet only). When set,
+        /// writes changelog.json / changelog.md describing what changed.
+        #[arg(long, value_name = "DIR")]
+        previous: Option<std::path::PathBuf>,
     },
     /// Show database statistics
     Stats,

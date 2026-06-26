@@ -532,6 +532,16 @@ pub struct PortalEntry {
     /// `data.norge.no` portal uses `sparql.fellesdatakatalog.digdir.no`).
     #[serde(default)]
     pub sparql_endpoint: Option<String>,
+
+    /// Alternate or mirror base URLs that are the *same logical portal* as `url`.
+    ///
+    /// Datasets harvested under any of these URLs are folded onto `url` for
+    /// cross-portal duplicate detection and snapshot identity, so a mirror or
+    /// renamed endpoint is not counted as an independent source (which would
+    /// otherwise inflate cross-portal duplicate flags). This is config-declared
+    /// and does not perform entity resolution across genuinely distinct portals.
+    #[serde(default)]
+    pub aliases: Vec<String>,
 }
 
 impl PortalEntry {
@@ -548,6 +558,11 @@ impl PortalEntry {
     /// Returns the custom SPARQL endpoint URL, if set.
     pub fn sparql_endpoint(&self) -> Option<&str> {
         self.sparql_endpoint.as_deref()
+    }
+
+    /// Returns the declared alias/mirror base URLs for this portal.
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
     }
 }
 
