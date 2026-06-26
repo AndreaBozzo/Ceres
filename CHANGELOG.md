@@ -11,7 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **parquet**: Add versioned snapshot manifest and integrity metadata
-- **parquet**: Add versioned snapshot manifest and integrity metadata
 - **index**: Publish coverage and quality reports with each snapshot
 - **index**: Explicit duplicate/alias semantics and snapshot changelogs (#155, #154)
 
