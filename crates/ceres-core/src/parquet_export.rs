@@ -10,17 +10,18 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use arrow::array::{BooleanBuilder, StringBuilder};
+use arrow::array::{Array, BooleanBuilder, StringArray, StringBuilder};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use chrono::Utc;
 use futures::StreamExt;
 use parquet::arrow::ArrowWriter;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::config::PortalsConfig;
 use crate::error::AppError;
@@ -32,6 +33,18 @@ pub const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "1.0.0";
 
 /// Schema version for the coverage and quality report written beside every export.
 pub const SNAPSHOT_REPORT_SCHEMA_VERSION: &str = "1.0.0";
+
+/// Schema version for the snapshot-to-snapshot changelog written when a previous
+/// snapshot is supplied.
+pub const SNAPSHOT_CHANGELOG_SCHEMA_VERSION: &str = "1.0.0";
+
+/// Identifier of the duplicate-detection rule. The `is_duplicate` column is a
+/// heuristic title-match signal, not canonical deduplication.
+pub const DUPLICATE_DETECTION_METHOD: &str = "title-exact-ci-cross-portal";
+
+/// Version of the duplicate-detection rule. Bump when the matching logic changes
+/// so consumers can tell snapshots produced by different rules apart.
+pub const DUPLICATE_DETECTION_VERSION: &str = "1";
 
 /// Configuration for Parquet export curation and provenance.
 pub struct ParquetExportConfig {
@@ -80,6 +93,7 @@ pub struct ParquetExportResult {
     pub manifest_schema_version: String,
     pub output_dir: PathBuf,
     pub report: SnapshotReport,
+    pub changelog: SnapshotChangelog,
 }
 
 /// Per-portal export statistics.
@@ -104,6 +118,7 @@ pub struct SnapshotManifest {
     pub snapshot_date: String,
     pub ceres: CeresBuildInfo,
     pub portal_config: PortalConfigProvenance,
+    pub duplicate_detection: DuplicateDetectionProvenance,
     pub row_counts: SnapshotRowCounts,
     pub canonical_file: String,
     pub files: Vec<SnapshotFile>,
@@ -123,6 +138,23 @@ pub struct CeresBuildInfo {
 pub struct PortalConfigProvenance {
     /// SHA-256 of the serialized portal configuration, when one was supplied.
     pub sha256: Option<String>,
+}
+
+/// Provenance for the cross-portal duplicate-detection rule used in a snapshot.
+///
+/// Records that `is_duplicate` is a heuristic signal and which matching rule
+/// produced it, so consumers can tell snapshots apart if the rule changes and
+/// know not to treat the flag as canonical deduplication.
+#[derive(Debug, Serialize)]
+pub struct DuplicateDetectionProvenance {
+    /// Matching rule identifier, e.g. `title-exact-ci-cross-portal`.
+    pub method: String,
+    /// Rule version; bumped when the matching logic changes.
+    pub version: String,
+    /// Number of portals that declared alias/mirror URLs folded before matching.
+    pub alias_groups: u64,
+    /// Human-readable caveat about the nature of the signal.
+    pub note: String,
 }
 
 /// Counts showing how curation changed the database rows considered for export.
@@ -179,6 +211,10 @@ pub struct CurationReport {
     pub exported: u64,
     pub filtered: u64,
     pub duplicate_flagged: u64,
+    /// Matching rule that produced `duplicate_flagged` (heuristic, not canonical).
+    pub duplicate_detection_method: String,
+    /// Version of the duplicate-detection rule.
+    pub duplicate_detection_version: String,
     /// Configured portals that contributed no datasets to this snapshot
     /// (disabled, failed, or empty), by display name.
     pub excluded_portals: Vec<String>,
@@ -219,6 +255,48 @@ pub struct FieldCompleteness {
     pub present: u64,
     /// `present / total`, rounded to four decimals; `0.0` when `total` is zero.
     pub rate: f64,
+}
+
+/// A snapshot-to-snapshot diff, keyed by the stable identity
+/// (`source_portal` + `original_id`), written as `changelog.json`.
+///
+/// "Changed" is defined by `content_hash` (SHA-256 of title+description); source
+/// modification timestamps are deliberately not used because portal coverage of
+/// them is incomplete. When no comparable previous snapshot is available, the
+/// totals are all zero and `compared` is false.
+#[derive(Debug, Serialize)]
+pub struct SnapshotChangelog {
+    pub schema_version: String,
+    pub snapshot_id: String,
+    pub snapshot_date: String,
+    pub generated_at: String,
+    /// Snapshot ID of the baseline, when one was supplied and readable.
+    pub previous_snapshot_id: Option<String>,
+    /// True when a previous `identity.parquet` was read and diffed.
+    pub compared: bool,
+    /// How "changed" is determined, for consumers reading the artifact directly.
+    pub changed_definition: String,
+    pub totals: ChangelogCounts,
+    pub by_portal: Vec<PortalChangelog>,
+}
+
+/// Added/changed/removed/unchanged counts for a changelog or one of its portals.
+#[derive(Debug, Default, Serialize)]
+pub struct ChangelogCounts {
+    pub added: u64,
+    pub changed: u64,
+    pub removed: u64,
+    pub unchanged: u64,
+}
+
+/// Per-portal diff summary. `portal` is the canonical source URL.
+#[derive(Debug, Serialize)]
+pub struct PortalChangelog {
+    pub portal: String,
+    pub added: u64,
+    pub changed: u64,
+    pub removed: u64,
+    pub unchanged: u64,
 }
 
 /// Accumulates per-record coverage and completeness counters during the export
@@ -295,6 +373,10 @@ pub struct ParquetExportService<S: DatasetStore> {
     portal_types: HashMap<String, String>,
     portal_profiles: HashMap<String, Option<String>>,
     portal_config_sha256: Option<String>,
+    /// Normalized alias/mirror URL -> canonical portal URL. Aliased datasets are
+    /// folded onto their canonical portal for duplicate detection, partitioning,
+    /// and snapshot identity, so a mirror is not treated as an independent source.
+    alias_map: HashMap<String, String>,
 }
 
 impl<S: DatasetStore> ParquetExportService<S> {
@@ -311,16 +393,20 @@ impl<S: DatasetStore> ParquetExportService<S> {
         let mut portal_languages = HashMap::new();
         let mut portal_types = HashMap::new();
         let mut portal_profiles = HashMap::new();
+        let mut alias_map = HashMap::new();
         let portal_config_sha256 = portals_config.as_ref().map(hash_portals_config);
 
         if let Some(pc) = &portals_config {
             for entry in &pc.portals {
                 let url = normalize_portal_url(&entry.url);
                 portal_names.insert(url.clone(), entry.name.clone());
-                portal_languages.insert(url, entry.language().to_string());
-                let url = normalize_portal_url(&entry.url);
+                portal_languages.insert(url.clone(), entry.language().to_string());
                 portal_types.insert(url.clone(), entry.portal_type.to_string());
-                portal_profiles.insert(url, entry.profile().map(str::to_string));
+                portal_profiles.insert(url.clone(), entry.profile().map(str::to_string));
+                // Fold each declared alias onto this entry's canonical URL.
+                for alias in entry.aliases() {
+                    alias_map.insert(normalize_portal_url(alias), url.clone());
+                }
             }
         }
 
@@ -332,20 +418,53 @@ impl<S: DatasetStore> ParquetExportService<S> {
             portal_types,
             portal_profiles,
             portal_config_sha256,
+            alias_map,
         }
+    }
+
+    /// Returns the canonical normalized URL for a portal, folding any declared
+    /// alias/mirror URL onto its canonical. Non-aliased URLs are returned as-is.
+    fn canonical_portal_url(&self, source_portal: &str) -> String {
+        let normalized = normalize_portal_url(source_portal);
+        self.alias_map
+            .get(&normalized)
+            .cloned()
+            .unwrap_or(normalized)
+    }
+
+    /// Number of portals that declared at least one alias (provenance metric).
+    fn alias_group_count(&self) -> u64 {
+        self.alias_map.values().collect::<HashSet<_>>().len() as u64
     }
 
     /// Exports curated datasets as Parquet files to the given directory.
     ///
-    /// Creates:
-    /// - `all.parquet` — complete curated dataset
-    /// - `data/<portal-name>.parquet` — per-portal subsets
-    /// - `metadata.json` — versioned snapshot manifest and integrity metadata
-    /// - `reports.json` — machine-readable coverage and quality report
-    /// - `report.md` — human-readable coverage and quality summary
+    /// Equivalent to [`Self::export_to_directory_with_previous`] with no baseline.
+    /// A `changelog.json` / `changelog.md` is still written, but as a zeroed
+    /// baseline with `compared == false` (nothing to diff against).
     pub async fn export_to_directory(
         &self,
         output_dir: &Path,
+    ) -> Result<ParquetExportResult, AppError> {
+        self.export_to_directory_with_previous(output_dir, None)
+            .await
+    }
+
+    /// Exports curated datasets as Parquet files to the given directory, optionally
+    /// diffing against a previous snapshot directory to produce a changelog.
+    ///
+    /// Creates:
+    /// - `all.parquet` — complete curated dataset
+    /// - `data/<portal-name>.parquet` — per-portal subsets
+    /// - `identity.parquet` — slim per-record fingerprint for snapshot diffing
+    /// - `metadata.json` — versioned snapshot manifest and integrity metadata
+    /// - `reports.json` — machine-readable coverage and quality report
+    /// - `report.md` — human-readable coverage and quality summary
+    /// - `changelog.json` / `changelog.md` — diff vs `previous` (when supplied)
+    pub async fn export_to_directory_with_previous(
+        &self,
+        output_dir: &Path,
+        previous: Option<&Path>,
     ) -> Result<ParquetExportResult, AppError> {
         // Create directory structure
         let data_dir = output_dir.join("data");
@@ -358,7 +477,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
         })?;
 
         info!("Loading cross-portal duplicate titles...");
-        let duplicate_titles = self.store.get_duplicate_titles().await?;
+        let duplicate_titles = self.store.get_duplicate_titles(&self.alias_map).await?;
         info!(
             "Found {} duplicate title groups across portals",
             duplicate_titles.len()
@@ -404,6 +523,34 @@ impl<S: DatasetStore> ParquetExportService<S> {
             ))
         })?;
 
+        // Diff the just-written identity index against the previous snapshot (when
+        // one was supplied) and publish the changelog beside the snapshot.
+        let changelog = build_changelog(
+            &manifest.snapshot_id,
+            &snapshot_date,
+            &generated_at,
+            &output_dir.join("identity.parquet"),
+            previous,
+        )?;
+        let changelog_path = output_dir.join("changelog.json");
+        let changelog_json = serde_json::to_string_pretty(&changelog)
+            .map_err(|e| AppError::ExportError(format!("Failed to serialize changelog: {}", e)))?;
+        fs::write(&changelog_path, changelog_json).map_err(|e| {
+            AppError::IoError(format!(
+                "Failed to write {}: {}",
+                changelog_path.display(),
+                e
+            ))
+        })?;
+        let changelog_md_path = output_dir.join("changelog.md");
+        fs::write(&changelog_md_path, render_changelog_markdown(&changelog)).map_err(|e| {
+            AppError::IoError(format!(
+                "Failed to write {}: {}",
+                changelog_md_path.display(),
+                e
+            ))
+        })?;
+
         Ok(ParquetExportResult {
             total_exported: outcome.exported,
             total_filtered: outcome.filtered,
@@ -414,6 +561,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
             manifest_schema_version: SNAPSHOT_MANIFEST_SCHEMA_VERSION.to_string(),
             output_dir: output_dir.to_path_buf(),
             report,
+            changelog,
             portals: outcome.portals,
         })
     }
@@ -434,6 +582,15 @@ impl<S: DatasetStore> ParquetExportService<S> {
             outcome.exported,
             Some(&canonical_checksum),
         )?];
+
+        // The slim identity fingerprint enables snapshot-to-snapshot diffing.
+        files.push(snapshot_file(
+            &output_dir.join("identity.parquet"),
+            "identity.parquet",
+            "identity",
+            outcome.exported,
+            None,
+        )?);
 
         let mut portals = Vec::with_capacity(outcome.portals.len());
         for portal in &outcome.portals {
@@ -480,6 +637,12 @@ impl<S: DatasetStore> ParquetExportService<S> {
             },
             portal_config: PortalConfigProvenance {
                 sha256: self.portal_config_sha256.clone(),
+            },
+            duplicate_detection: DuplicateDetectionProvenance {
+                method: DUPLICATE_DETECTION_METHOD.to_string(),
+                version: DUPLICATE_DETECTION_VERSION.to_string(),
+                alias_groups: self.alias_group_count(),
+                note: "Heuristic title-match signal, not canonical deduplication.".to_string(),
             },
             row_counts: SnapshotRowCounts {
                 raw: outcome.exported + outcome.filtered,
@@ -539,6 +702,8 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 exported: outcome.exported,
                 filtered: outcome.filtered,
                 duplicate_flagged: outcome.duplicates,
+                duplicate_detection_method: DUPLICATE_DETECTION_METHOD.to_string(),
+                duplicate_detection_version: DUPLICATE_DETECTION_VERSION.to_string(),
                 excluded_portals,
             },
             coverage: CoverageReport {
@@ -586,6 +751,26 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 |e| AppError::ExportError(format!("Failed to create ArrowWriter: {}", e)),
             )?;
 
+        // Open the slim identity writer (used for snapshot-to-snapshot diffing)
+        let identity_schema = identity_schema();
+        let identity_path = output_dir.join("identity.parquet");
+        let identity_file = fs::File::create(&identity_path).map_err(|e| {
+            AppError::IoError(format!(
+                "Failed to create {}: {}",
+                identity_path.display(),
+                e
+            ))
+        })?;
+        let mut identity_writer = ArrowWriter::try_new(
+            identity_file,
+            identity_schema.clone(),
+            Some(writer_props.clone()),
+        )
+        .map_err(|e| {
+            AppError::ExportError(format!("Failed to create identity ArrowWriter: {}", e))
+        })?;
+        let mut identity_buffer: Vec<IdentityRecord> = Vec::with_capacity(self.config.batch_size);
+
         // Per-portal state keyed by normalized source_portal URL (stable, unique)
         let mut portal_writers: HashMap<String, ArrowWriter<fs::File>> = HashMap::new();
         let mut portal_buffers: HashMap<String, Vec<FlatRecord>> = HashMap::new();
@@ -619,6 +804,21 @@ impl<S: DatasetStore> ParquetExportService<S> {
 
             let record = self.flatten_dataset(&dataset, is_duplicate);
             quality.observe(&record);
+
+            // Record the stable identity fingerprint for snapshot diffing. The
+            // record's source_portal is already canonical (aliases folded).
+            identity_buffer.push(IdentityRecord {
+                source_portal: record.source_portal.clone(),
+                original_id: record.original_id.clone(),
+                content_hash: dataset.content_hash.clone(),
+            });
+            if identity_buffer.len() >= self.config.batch_size {
+                let batch = build_identity_batch(&identity_buffer, &identity_schema)?;
+                identity_writer.write(&batch).map_err(|e| {
+                    AppError::ExportError(format!("Identity parquet write error: {}", e))
+                })?;
+                identity_buffer.clear();
+            }
 
             // Use normalized source_portal URL as the stable partition key
             let portal_key = normalize_portal_url(&record.source_portal);
@@ -693,6 +893,14 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 .map_err(|e| AppError::ExportError(format!("Parquet write error: {}", e)))?;
         }
 
+        // Flush remaining identity buffer
+        if !identity_buffer.is_empty() {
+            let batch = build_identity_batch(&identity_buffer, &identity_schema)?;
+            identity_writer.write(&batch).map_err(|e| {
+                AppError::ExportError(format!("Identity parquet write error: {}", e))
+            })?;
+        }
+
         // Flush remaining portal buffers
         for (portal_key, buf) in portal_buffers.drain() {
             if !buf.is_empty() {
@@ -716,6 +924,9 @@ impl<S: DatasetStore> ParquetExportService<S> {
         all_writer
             .close()
             .map_err(|e| AppError::ExportError(format!("Failed to close all.parquet: {}", e)))?;
+        identity_writer.close().map_err(|e| {
+            AppError::ExportError(format!("Failed to close identity.parquet: {}", e))
+        })?;
 
         for (portal_key, writer) in portal_writers {
             let (_, ref fname) = portal_info[&portal_key];
@@ -792,17 +1003,19 @@ impl<S: DatasetStore> ParquetExportService<S> {
     /// Flattens a Dataset into an export record with extracted metadata.
     fn flatten_dataset(&self, dataset: &Dataset, is_duplicate: bool) -> FlatRecord {
         let metadata = &dataset.metadata;
-        let normalized_url = normalize_portal_url(&dataset.source_portal);
+        // Canonicalize so alias/mirror URLs fold onto their primary portal for
+        // name/language resolution, partitioning, and the exported source_portal.
+        let canonical_url = self.canonical_portal_url(&dataset.source_portal);
 
         let portal_name = self
             .portal_names
-            .get(&normalized_url)
+            .get(&canonical_url)
             .cloned()
-            .unwrap_or_else(|| portal_name_from_url(&dataset.source_portal));
+            .unwrap_or_else(|| portal_name_from_url(&canonical_url));
 
         let language = self
             .portal_languages
-            .get(&normalized_url)
+            .get(&canonical_url)
             .cloned()
             .or_else(|| {
                 metadata
@@ -814,7 +1027,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
 
         FlatRecord {
             original_id: dataset.original_id.clone(),
-            source_portal: dataset.source_portal.clone(),
+            source_portal: canonical_url,
             portal_name,
             url: dataset.url.clone(),
             title: dataset.title.clone(),
@@ -853,6 +1066,53 @@ fn arrow_schema() -> Arc<Schema> {
         Field::new("language", DataType::Utf8, true),
         Field::new("is_duplicate", DataType::Boolean, false),
     ]))
+}
+
+/// Returns the Arrow schema for the slim `identity.parquet` snapshot fingerprint.
+///
+/// Carries only the stable identity (`source_portal` canonicalized + `original_id`)
+/// and a `content_hash` fingerprint, so a later export can diff against this
+/// snapshot without re-reading the full `all.parquet`.
+fn identity_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("source_portal", DataType::Utf8, false),
+        Field::new("original_id", DataType::Utf8, false),
+        Field::new("content_hash", DataType::Utf8, true),
+    ]))
+}
+
+/// One row of the identity fingerprint file.
+struct IdentityRecord {
+    source_portal: String,
+    original_id: String,
+    content_hash: Option<String>,
+}
+
+/// Builds an Arrow RecordBatch from a slice of identity records.
+fn build_identity_batch(
+    records: &[IdentityRecord],
+    schema: &Arc<Schema>,
+) -> Result<RecordBatch, AppError> {
+    let len = records.len();
+    let mut source_portal = StringBuilder::with_capacity(len, len * 64);
+    let mut original_id = StringBuilder::with_capacity(len, len * 32);
+    let mut content_hash = StringBuilder::with_capacity(len, len * 64);
+
+    for r in records {
+        source_portal.append_value(&r.source_portal);
+        original_id.append_value(&r.original_id);
+        content_hash.append_option(r.content_hash.as_deref());
+    }
+
+    RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(source_portal.finish()),
+            Arc::new(original_id.finish()),
+            Arc::new(content_hash.finish()),
+        ],
+    )
+    .map_err(|e| AppError::ExportError(format!("Failed to build identity RecordBatch: {}", e)))
 }
 
 /// Returns Parquet writer properties with Zstd compression.
@@ -1099,6 +1359,253 @@ fn write_completeness_row(out: &mut String, field: &str, completeness: &FieldCom
         completeness.present,
         completeness.rate * 100.0
     );
+}
+
+// =============================================================================
+// Snapshot Changelog Helpers
+// =============================================================================
+
+/// Stable identity key for a dataset: (canonical source_portal, original_id).
+type IdentityKey = (String, String);
+
+/// How "changed" is defined, documented in the changelog artifact itself.
+const CHANGELOG_CHANGED_DEFINITION: &str = "A dataset (keyed by source_portal + \
+    original_id) is 'changed' when its content_hash (SHA-256 of title + description) \
+    differs from the previous snapshot. Source modification timestamps are not used \
+    because portal coverage of them is incomplete.";
+
+/// Builds a snapshot-to-snapshot changelog by diffing the current identity index
+/// against a previous snapshot's `identity.parquet`.
+///
+/// When no previous snapshot is supplied, or it lacks a readable
+/// `identity.parquet`, returns a zeroed changelog with `compared == false`.
+fn build_changelog(
+    snapshot_id: &str,
+    snapshot_date: &str,
+    generated_at: &str,
+    current_identity: &Path,
+    previous: Option<&Path>,
+) -> Result<SnapshotChangelog, AppError> {
+    let base = |previous_snapshot_id, compared, totals, by_portal| SnapshotChangelog {
+        schema_version: SNAPSHOT_CHANGELOG_SCHEMA_VERSION.to_string(),
+        snapshot_id: snapshot_id.to_string(),
+        snapshot_date: snapshot_date.to_string(),
+        generated_at: generated_at.to_string(),
+        previous_snapshot_id,
+        compared,
+        changed_definition: CHANGELOG_CHANGED_DEFINITION.to_string(),
+        totals,
+        by_portal,
+    };
+
+    let previous_identity = previous.map(|dir| dir.join("identity.parquet"));
+    let baseline_ready = previous_identity
+        .as_ref()
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    if !baseline_ready {
+        return Ok(base(None, false, ChangelogCounts::default(), Vec::new()));
+    }
+
+    let previous_index = read_identity_index(&previous_identity.unwrap())?;
+    let current_index = read_identity_index(current_identity)?;
+    let previous_snapshot_id = previous.and_then(read_previous_snapshot_id);
+
+    // Diff keyed by identity; bucket per canonical portal (the key's first part).
+    let mut per_portal: HashMap<String, ChangelogCounts> = HashMap::new();
+    let mut totals = ChangelogCounts::default();
+
+    for (key, current_hash) in &current_index {
+        let bucket = per_portal.entry(key.0.clone()).or_default();
+        match previous_index.get(key) {
+            None => {
+                bucket.added += 1;
+                totals.added += 1;
+            }
+            Some(previous_hash) if previous_hash == current_hash => {
+                bucket.unchanged += 1;
+                totals.unchanged += 1;
+            }
+            Some(_) => {
+                bucket.changed += 1;
+                totals.changed += 1;
+            }
+        }
+    }
+    for key in previous_index.keys() {
+        if !current_index.contains_key(key) {
+            let bucket = per_portal.entry(key.0.clone()).or_default();
+            bucket.removed += 1;
+            totals.removed += 1;
+        }
+    }
+
+    let mut by_portal: Vec<PortalChangelog> = per_portal
+        .into_iter()
+        .map(|(portal, c)| PortalChangelog {
+            portal,
+            added: c.added,
+            changed: c.changed,
+            removed: c.removed,
+            unchanged: c.unchanged,
+        })
+        .collect();
+    // Most-active portals first, then by name, for a deterministic, useful order.
+    by_portal.sort_by(|a, b| {
+        let activity = |p: &PortalChangelog| p.added + p.changed + p.removed;
+        activity(b)
+            .cmp(&activity(a))
+            .then_with(|| a.portal.cmp(&b.portal))
+    });
+
+    Ok(base(previous_snapshot_id, true, totals, by_portal))
+}
+
+/// Reads an `identity.parquet` into an identity -> content_hash map.
+fn read_identity_index(path: &Path) -> Result<HashMap<IdentityKey, Option<String>>, AppError> {
+    let file = fs::File::open(path)
+        .map_err(|e| AppError::IoError(format!("Failed to open {}: {}", path.display(), e)))?;
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .map_err(|e| {
+            AppError::ExportError(format!("Failed to open {} for diff: {}", path.display(), e))
+        })?
+        .build()
+        .map_err(|e| {
+            AppError::ExportError(format!("Failed to read {} for diff: {}", path.display(), e))
+        })?;
+
+    let mut index: HashMap<IdentityKey, Option<String>> = HashMap::new();
+    let mut collisions = 0u64;
+    for batch in reader {
+        let batch = batch
+            .map_err(|e| AppError::ExportError(format!("Identity parquet read error: {}", e)))?;
+        let source_portal = identity_column(&batch, 0, "source_portal")?;
+        let original_id = identity_column(&batch, 1, "original_id")?;
+        let content_hash = identity_column(&batch, 2, "content_hash")?;
+        for row in 0..batch.num_rows() {
+            let key = (
+                source_portal.value(row).to_string(),
+                original_id.value(row).to_string(),
+            );
+            let hash = if content_hash.is_null(row) {
+                None
+            } else {
+                Some(content_hash.value(row).to_string())
+            };
+            // Keep the first occurrence so the diff is independent of which
+            // duplicate row comes last. Repeated (source_portal, original_id)
+            // keys can occur when a canonical portal and a folded alias both
+            // expose the same original_id (the same logical dataset mirrored).
+            match index.entry(key) {
+                std::collections::hash_map::Entry::Occupied(_) => collisions += 1,
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(hash);
+                }
+            }
+        }
+    }
+    if collisions > 0 {
+        warn!(
+            "{} has {} duplicate (source_portal, original_id) keys; kept the first \
+             occurrence of each for the changelog diff",
+            path.display(),
+            collisions
+        );
+    }
+    Ok(index)
+}
+
+/// Downcasts an identity-file column to a `StringArray`, with a clear error.
+fn identity_column<'a>(
+    batch: &'a RecordBatch,
+    index: usize,
+    name: &str,
+) -> Result<&'a StringArray, AppError> {
+    batch
+        .column(index)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| {
+            AppError::ExportError(format!(
+                "identity.parquet column '{}' is not a string",
+                name
+            ))
+        })
+}
+
+/// Reads the `snapshot_id` from a previous snapshot's `metadata.json`, if present.
+fn read_previous_snapshot_id(dir: &Path) -> Option<String> {
+    let bytes = fs::read(dir.join("metadata.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    value
+        .get("snapshot_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+/// Renders a concise human-readable changelog for the dataset card / release notes.
+fn render_changelog_markdown(changelog: &SnapshotChangelog) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "# Ceres Snapshot Changelog — {}",
+        changelog.snapshot_date
+    );
+    let _ = writeln!(out);
+    let _ = writeln!(out, "- Snapshot ID: `{}`", changelog.snapshot_id);
+
+    if !changelog.compared {
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "No comparable previous snapshot was supplied; all rows are treated as \
+             the baseline for future changelogs."
+        );
+        return out;
+    }
+
+    let previous = changelog
+        .previous_snapshot_id
+        .as_deref()
+        .unwrap_or("unknown");
+    let t = &changelog.totals;
+    let _ = writeln!(out, "- Previous snapshot ID: `{}`", previous);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Totals");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "| Change | Count |");
+    let _ = writeln!(out, "| --- | ---: |");
+    let _ = writeln!(out, "| Added | {} |", t.added);
+    let _ = writeln!(out, "| Changed | {} |", t.changed);
+    let _ = writeln!(out, "| Removed | {} |", t.removed);
+    let _ = writeln!(out, "| Unchanged | {} |", t.unchanged);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "_{}_", changelog.changed_definition);
+    let _ = writeln!(out);
+
+    let _ = writeln!(out, "## Most active portals");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "| Portal | Added | Changed | Removed | Unchanged |");
+    let _ = writeln!(out, "| --- | ---: | ---: | ---: | ---: |");
+    for portal in changelog.by_portal.iter().take(15) {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} |",
+            portal.portal, portal.added, portal.changed, portal.removed, portal.unchanged
+        );
+    }
+    if changelog.by_portal.len() > 15 {
+        let _ = writeln!(
+            out,
+            "| … ({} more) | | | | |",
+            changelog.by_portal.len() - 15
+        );
+    }
+    let _ = writeln!(out);
+
+    out
 }
 
 /// Returns the SHA-256 digest of a file without loading it into memory.

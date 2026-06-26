@@ -19,6 +19,7 @@
 # IDEs and editors
 .idea/
 .vscode/
+*.code-workspace
 *.swp
 *.swo
 *~

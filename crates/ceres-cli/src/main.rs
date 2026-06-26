@@ -130,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
             limit,
             output,
             config: config_path,
+            previous,
         } => match format {
             ExportFormat::Parquet => {
                 let output_dir = output.ok_or_else(|| {
@@ -150,7 +151,9 @@ async fn main() -> anyhow::Result<()> {
                     ParquetExportConfig::default()
                         .with_git_commit(option_env!("VERGEN_GIT_SHA").unwrap_or("unknown")),
                 );
-                let result = parquet_service.export_to_directory(&output_dir).await?;
+                let result = parquet_service
+                    .export_to_directory_with_previous(&output_dir, previous.as_deref())
+                    .await?;
                 print_parquet_export_summary(&result);
             }
             _ => {
@@ -461,6 +464,17 @@ fn print_parquet_export_summary(result: &ParquetExportResult) {
         completeness.tags.rate * 100.0,
         completeness.modification_date.rate * 100.0
     );
+    eprintln!("───────────────────────────────────────────────────────");
+    let changelog = &result.changelog;
+    if changelog.compared {
+        let t = &changelog.totals;
+        eprintln!(
+            "  Changes vs previous: +{} added  ~{} changed  -{} removed  ={} unchanged",
+            t.added, t.changed, t.removed, t.unchanged
+        );
+    } else {
+        eprintln!("  Changes vs previous: (no comparable previous snapshot)");
+    }
     eprintln!("───────────────────────────────────────────────────────");
     eprintln!("  Portal breakdown:");
     for portal in &result.portals {

@@ -834,17 +834,37 @@ impl DatasetRepository {
         })
     }
 
-    /// Returns lowercased titles that appear across multiple portals.
+    /// Returns lowercased titles that appear across multiple *distinct* portals.
     ///
-    /// Used for cross-portal duplicate detection in Parquet exports.
+    /// Heuristic cross-portal duplicate signal for Parquet exports (not canonical
+    /// deduplication). `aliases` maps normalized alias/mirror base URLs to their
+    /// canonical portal URL; each alias is folded onto its canonical before the
+    /// distinct-portal count, so a mirror is not counted as an independent source.
     pub async fn get_cross_portal_duplicate_titles(
         &self,
+        aliases: &std::collections::HashMap<String, String>,
     ) -> Result<std::collections::HashSet<String>, AppError> {
+        // Inject the (small) alias map as a VALUES-backed CTE and canonicalize
+        // each row's portal before counting. The LEFT JOIN leaves non-aliased
+        // portals unchanged, so an empty map reproduces the plain-portal count.
+        let alias_urls: Vec<String> = aliases.keys().cloned().collect();
+        let canonical_urls: Vec<String> =
+            alias_urls.iter().map(|url| aliases[url].clone()).collect();
+
         let rows: Vec<DuplicateTitleRow> = sqlx::query_as(
-            "SELECT LOWER(title) as title FROM datasets \
-             GROUP BY LOWER(title) \
-             HAVING COUNT(DISTINCT TRIM(TRAILING '/' FROM source_portal)) > 1",
+            "WITH alias_map(alias_url, canonical_url) AS ( \
+                 SELECT * FROM UNNEST($1::text[], $2::text[]) \
+             ) \
+             SELECT LOWER(d.title) AS title FROM datasets d \
+             LEFT JOIN alias_map a \
+                 ON TRIM(TRAILING '/' FROM d.source_portal) = a.alias_url \
+             GROUP BY LOWER(d.title) \
+             HAVING COUNT(DISTINCT COALESCE( \
+                 a.canonical_url, TRIM(TRAILING '/' FROM d.source_portal) \
+             )) > 1",
         )
+        .bind(&alias_urls)
+        .bind(&canonical_urls)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -1050,8 +1070,11 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
         .await
     }
 
-    async fn get_duplicate_titles(&self) -> Result<std::collections::HashSet<String>, AppError> {
-        DatasetRepository::get_cross_portal_duplicate_titles(self).await
+    async fn get_duplicate_titles(
+        &self,
+        aliases: &std::collections::HashMap<String, String>,
+    ) -> Result<std::collections::HashSet<String>, AppError> {
+        DatasetRepository::get_cross_portal_duplicate_titles(self, aliases).await
     }
 
     async fn list_pending_embeddings(

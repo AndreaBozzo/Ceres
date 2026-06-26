@@ -240,6 +240,7 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
             language: None,
             profile: None,
             sparql_endpoint: None,
+            aliases: Vec::new(),
         }],
     };
     let service = ParquetExportService::new(
@@ -263,8 +264,23 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
     assert!(manifest["portal_config"]["sha256"].as_str().is_some());
     assert!(manifest.get("output_dir").is_none());
 
+    // Duplicate detection is recorded as a documented heuristic, not canonical dedup.
+    assert_eq!(
+        manifest["duplicate_detection"]["method"],
+        "title-exact-ci-cross-portal"
+    );
+    assert_eq!(manifest["duplicate_detection"]["version"], "1");
+    assert_eq!(manifest["duplicate_detection"]["alias_groups"], 0);
+
+    // Files now include all.parquet, identity.parquet, and the portal subset.
     let files = manifest["files"].as_array().unwrap();
-    assert_eq!(files.len(), 2);
+    assert_eq!(files.len(), 3);
+    assert!(
+        files
+            .iter()
+            .any(|file| file["path"] == "identity.parquet" && file["kind"] == "identity")
+    );
+    assert!(output.path().join("identity.parquet").exists());
     assert!(
         files
             .iter()
@@ -341,6 +357,7 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
             language: Some("en".to_string()),
             profile: None,
             sparql_endpoint: None,
+            aliases: Vec::new(),
         }],
     };
     let service = ParquetExportService::new(store, Some(portals), ParquetExportConfig::default());
@@ -389,6 +406,265 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     let report_md = std::fs::read_to_string(output.path().join("report.md")).unwrap();
     assert!(report_md.contains("# Ceres Snapshot Report"));
     assert!(report_md.contains("Field completeness"));
+}
+
+// =============================================================================
+// Duplicate / Alias Semantics (#155)
+// =============================================================================
+
+/// Builds a CKAN portal entry with optional alias/mirror URLs.
+fn portal_entry(name: &str, url: &str, aliases: Vec<String>) -> PortalEntry {
+    PortalEntry {
+        name: name.to_string(),
+        url: url.to_string(),
+        portal_type: PortalType::Ckan,
+        enabled: true,
+        description: None,
+        url_template: None,
+        language: Some("en".to_string()),
+        profile: None,
+        sparql_endpoint: None,
+        aliases,
+    }
+}
+
+/// Upserts one dataset into the mock store with a content-hash fingerprint.
+async fn upsert_dataset(
+    store: &MockDatasetStore,
+    portal: &str,
+    id: &str,
+    title: &str,
+    description: &str,
+) {
+    let dataset = NewDataset {
+        original_id: id.to_string(),
+        source_portal: portal.to_string(),
+        url: format!("{portal}/dataset/{id}"),
+        title: title.to_string(),
+        description: Some(description.to_string()),
+        embedding: None,
+        metadata: serde_json::json!({}),
+        content_hash: NewDataset::compute_content_hash(title, Some(description)),
+    };
+    store.upsert(&dataset).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_duplicate_flagged_across_independent_portals() {
+    let store = MockDatasetStore::new();
+    upsert_dataset(
+        &store,
+        "https://a.example.com",
+        "x",
+        "Shared air quality",
+        "Readings A",
+    )
+    .await;
+    upsert_dataset(
+        &store,
+        "https://b.example.com",
+        "y",
+        "Shared air quality",
+        "Readings B",
+    )
+    .await;
+
+    let portals = PortalsConfig {
+        portals: vec![
+            portal_entry("portal-a", "https://a.example.com", vec![]),
+            portal_entry("portal-b", "https://b.example.com", vec![]),
+        ],
+    };
+    let service = ParquetExportService::new(store, Some(portals), ParquetExportConfig::default());
+    let output = tempfile::tempdir().unwrap();
+
+    let result = service.export_to_directory(output.path()).await.unwrap();
+
+    // Same title on two genuinely independent portals -> both flagged.
+    assert_eq!(result.total_duplicates, 2);
+}
+
+#[tokio::test]
+async fn test_alias_folds_mirror_so_title_not_flagged_duplicate() {
+    let store = MockDatasetStore::new();
+    upsert_dataset(
+        &store,
+        "https://a.example.com",
+        "x",
+        "Shared air quality",
+        "Readings",
+    )
+    .await;
+    upsert_dataset(
+        &store,
+        "https://mirror.example.com",
+        "y",
+        "Shared air quality",
+        "Readings via mirror",
+    )
+    .await;
+
+    // portal-a declares the mirror as an alias.
+    let portals = PortalsConfig {
+        portals: vec![portal_entry(
+            "portal-a",
+            "https://a.example.com",
+            vec!["https://mirror.example.com".to_string()],
+        )],
+    };
+    let service = ParquetExportService::new(store, Some(portals), ParquetExportConfig::default());
+    let output = tempfile::tempdir().unwrap();
+
+    let result = service.export_to_directory(output.path()).await.unwrap();
+
+    // The mirror folds onto portal-a, so the shared title is a single source.
+    assert_eq!(result.total_duplicates, 0);
+    assert_eq!(result.total_exported, 2);
+    assert_eq!(result.portals.len(), 1);
+    assert_eq!(result.portals[0].name, "portal-a");
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output.path().join("metadata.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["duplicate_detection"]["alias_groups"], 1);
+}
+
+#[tokio::test]
+async fn test_same_portal_repeated_title_not_flagged() {
+    let store = MockDatasetStore::new();
+    upsert_dataset(
+        &store,
+        "https://a.example.com",
+        "x",
+        "Repeated title here",
+        "One",
+    )
+    .await;
+    upsert_dataset(
+        &store,
+        "https://a.example.com",
+        "y",
+        "Repeated title here",
+        "Two",
+    )
+    .await;
+
+    let portals = PortalsConfig {
+        portals: vec![portal_entry("portal-a", "https://a.example.com", vec![])],
+    };
+    let service = ParquetExportService::new(store, Some(portals), ParquetExportConfig::default());
+    let output = tempfile::tempdir().unwrap();
+
+    let result = service.export_to_directory(output.path()).await.unwrap();
+
+    // A repeated title within one portal is not a cross-portal duplicate.
+    assert_eq!(result.total_duplicates, 0);
+}
+
+// =============================================================================
+// Snapshot Changelog (#154)
+// =============================================================================
+
+#[tokio::test]
+async fn test_changelog_diffs_against_previous_snapshot() {
+    const PORTAL: &str = "https://c.example.com";
+    let portals = || PortalsConfig {
+        portals: vec![portal_entry("portal-c", PORTAL, vec![])],
+    };
+
+    // Previous snapshot: alpha (stable), bravo (will change), delta (removed later).
+    let prev_store = MockDatasetStore::new();
+    upsert_dataset(
+        &prev_store,
+        PORTAL,
+        "a",
+        "Alpha dataset",
+        "Stable description",
+    )
+    .await;
+    upsert_dataset(
+        &prev_store,
+        PORTAL,
+        "b",
+        "Bravo dataset",
+        "Original description",
+    )
+    .await;
+    upsert_dataset(&prev_store, PORTAL, "d", "Delta dataset", "To be removed").await;
+    let prev_dir = tempfile::tempdir().unwrap();
+    ParquetExportService::new(prev_store, Some(portals()), ParquetExportConfig::default())
+        .export_to_directory(prev_dir.path())
+        .await
+        .unwrap();
+
+    // Current snapshot: alpha (unchanged), bravo (changed description), charlie (added).
+    let curr_store = MockDatasetStore::new();
+    upsert_dataset(
+        &curr_store,
+        PORTAL,
+        "a",
+        "Alpha dataset",
+        "Stable description",
+    )
+    .await;
+    upsert_dataset(
+        &curr_store,
+        PORTAL,
+        "b",
+        "Bravo dataset",
+        "Updated description",
+    )
+    .await;
+    upsert_dataset(&curr_store, PORTAL, "c", "Charlie dataset", "Newly added").await;
+    let curr_dir = tempfile::tempdir().unwrap();
+    let result =
+        ParquetExportService::new(curr_store, Some(portals()), ParquetExportConfig::default())
+            .export_to_directory_with_previous(curr_dir.path(), Some(prev_dir.path()))
+            .await
+            .unwrap();
+
+    let totals = &result.changelog.totals;
+    assert!(result.changelog.compared);
+    assert_eq!(totals.added, 1, "charlie is new");
+    assert_eq!(totals.changed, 1, "bravo's content_hash changed");
+    assert_eq!(totals.removed, 1, "delta dropped out");
+    assert_eq!(totals.unchanged, 1, "alpha is identical");
+
+    let changelog: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(curr_dir.path().join("changelog.json")).unwrap())
+            .unwrap();
+    assert_eq!(changelog["compared"], true);
+    assert_eq!(changelog["totals"]["added"], 1);
+    assert!(changelog["previous_snapshot_id"].as_str().is_some());
+    assert!(curr_dir.path().join("changelog.md").exists());
+}
+
+#[tokio::test]
+async fn test_changelog_without_previous_is_baseline() {
+    let store = MockDatasetStore::new();
+    upsert_dataset(
+        &store,
+        "https://c.example.com",
+        "a",
+        "Alpha dataset",
+        "Desc",
+    )
+    .await;
+    let portals = PortalsConfig {
+        portals: vec![portal_entry("portal-c", "https://c.example.com", vec![])],
+    };
+    let output = tempfile::tempdir().unwrap();
+
+    let result = ParquetExportService::new(store, Some(portals), ParquetExportConfig::default())
+        .export_to_directory(output.path())
+        .await
+        .unwrap();
+
+    assert!(!result.changelog.compared);
+    let changelog: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output.path().join("changelog.json")).unwrap())
+            .unwrap();
+    assert_eq!(changelog["compared"], false);
 }
 
 #[tokio::test]
