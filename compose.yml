@@ -4,9 +4,9 @@ services:
     container_name: ceres_db
     restart: always
     environment:
-      POSTGRES_USER: ceres_user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: ceres_db
+      POSTGRES_USER: ${POSTGRES_USER:-ceres_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-ceres_db}
     ports:
       - "5432:5432"
     # HNSW index builds need shared memory for parallel workers; the 64MB default
@@ -27,7 +27,7 @@ services:
     volumes:
       - ceres_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ceres_user -d ceres_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ceres_user} -d ${POSTGRES_DB:-ceres_db}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -41,7 +41,7 @@ services:
 #      - path: .env
 #        required: false
 #    environment:
-#      DATABASE_URL: postgresql://ceres_user:password@db:5432/ceres_db
+#      DATABASE_URL: postgresql://${POSTGRES_USER:-ceres_user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-ceres_db}
 #    ports:
 #      - "3000:3000"
 #    depends_on:
@@ -52,10 +52,10 @@ services:
   pgadmin:
     image: dpage/pgadmin4
     container_name: ceres_pgadmin
-    restart: always
+    restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@ceres.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@ceres.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-change-me}
     ports:
       - "5050:80"
     depends_on:

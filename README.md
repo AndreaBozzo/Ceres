@@ -342,7 +342,11 @@ The website lives in `website/` and documents the same harvest-first model:
 
 ## Version
 
-Current version: `0.4.0`
+Current released version: `0.4.2`
+
+The `0.5.0` milestone is focused on the published index contract: versioned
+snapshot manifests, integrity checks, coverage and quality reports, explicit
+duplicate/source-alias semantics, and snapshot-to-snapshot changelogs.
 
 ## Contributing
 

@@ -13,7 +13,7 @@ use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
-use tracing::{Level, info};
+use tracing::{Level, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
 use ceres_client::{EmbeddingConfig, EmbeddingProviderEnum};
@@ -91,6 +91,16 @@ async fn main() -> anyhow::Result<()> {
         info!("Admin authentication: enabled");
     } else {
         info!("Admin authentication: disabled (set CERES_ADMIN_TOKEN to enable)");
+    }
+
+    if config
+        .cors_origins
+        .split(',')
+        .any(|origin| origin.trim() == "*")
+    {
+        warn!(
+            "CORS_ALLOWED_ORIGINS includes '*'. This is convenient for local development, but production deployments should set explicit origins."
+        );
     }
 
     // Create application state
