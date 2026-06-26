@@ -473,7 +473,7 @@ fn print_parquet_export_summary(result: &ParquetExportResult) {
             t.added, t.changed, t.removed, t.unchanged
         );
     } else {
-        eprintln!("  Changes vs previous: (no previous snapshot supplied)");
+        eprintln!("  Changes vs previous: (no comparable previous snapshot)");
     }
     eprintln!("───────────────────────────────────────────────────────");
     eprintln!("  Portal breakdown:");

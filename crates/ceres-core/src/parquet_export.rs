@@ -21,7 +21,7 @@ use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::config::PortalsConfig;
 use crate::error::AppError;
@@ -439,8 +439,9 @@ impl<S: DatasetStore> ParquetExportService<S> {
 
     /// Exports curated datasets as Parquet files to the given directory.
     ///
-    /// Equivalent to [`Self::export_to_directory_with_previous`] with no baseline,
-    /// so no changelog is produced.
+    /// Equivalent to [`Self::export_to_directory_with_previous`] with no baseline.
+    /// A `changelog.json` / `changelog.md` is still written, but as a zeroed
+    /// baseline with `compared == false` (nothing to diff against).
     pub async fn export_to_directory(
         &self,
         output_dir: &Path,
@@ -1473,7 +1474,8 @@ fn read_identity_index(path: &Path) -> Result<HashMap<IdentityKey, Option<String
             AppError::ExportError(format!("Failed to read {} for diff: {}", path.display(), e))
         })?;
 
-    let mut index = HashMap::new();
+    let mut index: HashMap<IdentityKey, Option<String>> = HashMap::new();
+    let mut collisions = 0u64;
     for batch in reader {
         let batch = batch
             .map_err(|e| AppError::ExportError(format!("Identity parquet read error: {}", e)))?;
@@ -1490,8 +1492,25 @@ fn read_identity_index(path: &Path) -> Result<HashMap<IdentityKey, Option<String
             } else {
                 Some(content_hash.value(row).to_string())
             };
-            index.insert(key, hash);
+            // Keep the first occurrence so the diff is independent of which
+            // duplicate row comes last. Repeated (source_portal, original_id)
+            // keys can occur when a canonical portal and a folded alias both
+            // expose the same original_id (the same logical dataset mirrored).
+            match index.entry(key) {
+                std::collections::hash_map::Entry::Occupied(_) => collisions += 1,
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(hash);
+                }
+            }
         }
+    }
+    if collisions > 0 {
+        warn!(
+            "{} has {} duplicate (source_portal, original_id) keys; kept the first \
+             occurrence of each for the changelog diff",
+            path.display(),
+            collisions
+        );
     }
     Ok(index)
 }
