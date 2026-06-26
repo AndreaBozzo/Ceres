@@ -41,6 +41,7 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+compose.override.yml
 
 # Logs
 *.log
