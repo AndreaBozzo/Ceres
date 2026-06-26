@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-26
+
+
+### Added
+
+- **parquet**: Add versioned snapshot manifest and integrity metadata
+- **parquet**: Add versioned snapshot manifest and integrity metadata
+- **index**: Publish coverage and quality reports with each snapshot
+- **index**: Explicit duplicate/alias semantics and snapshot changelogs (#155, #154)
+
+
+### Dependencies
+
+- **deps**: Bump astro from 6.3.1 to 6.4.8 in /website
+- **deps**: Bump js-yaml from 4.1.1 to 4.2.0 in /website
+- **deps**: Bump vite, @astrojs/starlight and astro in /website
+- **deps**: Bump esbuild, @astrojs/starlight and astro in /website
+
+
+### Miscellaneous
+
+- Tighten pre-0.5 docs and infra
 ## [0.4.2] - 2026-06-22
 
 
