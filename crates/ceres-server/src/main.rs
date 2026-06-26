@@ -93,13 +93,9 @@ async fn main() -> anyhow::Result<()> {
         info!("Admin authentication: disabled (set CERES_ADMIN_TOKEN to enable)");
     }
 
-    if config
-        .cors_origins
-        .split(',')
-        .any(|origin| origin.trim() == "*")
-    {
+    if config.cors_origins.trim() == "*" {
         warn!(
-            "CORS_ALLOWED_ORIGINS includes '*'. This is convenient for local development, but production deployments should set explicit origins."
+            "CORS_ALLOWED_ORIGINS is set to '*'. This is convenient for local development, but production deployments should set explicit origins."
         );
     }
 
