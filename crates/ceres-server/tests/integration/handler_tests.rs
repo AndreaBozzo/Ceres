@@ -3,8 +3,11 @@
 //! Tests the HTTP API endpoints via the actual Axum router with a real
 //! PostgreSQL database and mock embedding provider.
 
+use std::collections::HashMap;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use ceres_core::{PortalEntry, PortalType, PortalsConfig};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -20,6 +23,18 @@ async fn body_json(body: Body) -> serde_json::Value {
             String::from_utf8_lossy(&bytes)
         )
     })
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct HarvestJobConfigRow {
+    portal_name: Option<String>,
+    portal_url: String,
+    force_full_sync: bool,
+    url_template: Option<String>,
+    language: Option<String>,
+    portal_type: String,
+    profile: Option<String>,
+    sparql_endpoint: Option<String>,
 }
 
 // =============================================================================
@@ -151,6 +166,144 @@ async fn test_protected_endpoint_disabled_returns_403() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_harvest_all_creates_jobs_for_supported_portal_configs() {
+    let portals_config = PortalsConfig {
+        portals: vec![
+            PortalEntry {
+                name: "ckan-city".to_string(),
+                url: "https://ckan.example.org".to_string(),
+                portal_type: PortalType::Ckan,
+                enabled: true,
+                description: None,
+                url_template: Some("https://ckan.example.org/dataset/{name}".to_string()),
+                language: Some("it".to_string()),
+                profile: None,
+                sparql_endpoint: None,
+                aliases: vec![],
+            },
+            PortalEntry {
+                name: "dcat-udata".to_string(),
+                url: "https://data.public.example".to_string(),
+                portal_type: PortalType::Dcat,
+                enabled: true,
+                description: None,
+                url_template: None,
+                language: Some("fr".to_string()),
+                profile: None,
+                sparql_endpoint: None,
+                aliases: vec![],
+            },
+            PortalEntry {
+                name: "dcat-sparql".to_string(),
+                url: "https://data.eu.example".to_string(),
+                portal_type: PortalType::Dcat,
+                enabled: true,
+                description: None,
+                url_template: None,
+                language: Some("en".to_string()),
+                profile: Some("sparql".to_string()),
+                sparql_endpoint: Some("https://sparql.example.org/query".to_string()),
+                aliases: vec![],
+            },
+            PortalEntry {
+                name: "disabled-dcat".to_string(),
+                url: "https://disabled.example.org".to_string(),
+                portal_type: PortalType::Dcat,
+                enabled: false,
+                description: None,
+                url_template: None,
+                language: Some("en".to_string()),
+                profile: Some("sparql".to_string()),
+                sparql_endpoint: Some("https://disabled.example.org/sparql".to_string()),
+                aliases: vec![],
+            },
+        ],
+    };
+    let app = TestApp::with_portals_config_and_admin_token(portals_config, "test-secret").await;
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/harvest")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer test-secret")
+                .body(Body::from(r#"{"force_full_sync": true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let json = body_json(response.into_body()).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "Response: {:?}", json);
+
+    let response_jobs = json.as_array().expect("harvest response array");
+    assert_eq!(response_jobs.len(), 3);
+    assert!(
+        response_jobs
+            .iter()
+            .all(|job| job["status"].as_str() == Some("pending"))
+    );
+
+    let rows: Vec<HarvestJobConfigRow> = sqlx::query_as(
+        "SELECT portal_name, portal_url, force_full_sync, url_template, language, portal_type, profile, sparql_endpoint \
+         FROM harvest_jobs ORDER BY portal_name",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .expect("failed to load harvest jobs");
+
+    assert_eq!(rows.len(), 3);
+    let by_name: HashMap<String, HarvestJobConfigRow> = rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.portal_name
+                    .clone()
+                    .expect("test jobs should preserve portal_name"),
+                row,
+            )
+        })
+        .collect();
+
+    let ckan = by_name.get("ckan-city").expect("ckan job");
+    assert_eq!(ckan.portal_url, "https://ckan.example.org");
+    assert_eq!(ckan.portal_type, "ckan");
+    assert_eq!(ckan.language.as_deref(), Some("it"));
+    assert_eq!(
+        ckan.url_template.as_deref(),
+        Some("https://ckan.example.org/dataset/{name}")
+    );
+    assert!(ckan.force_full_sync);
+    assert!(ckan.profile.is_none());
+    assert!(ckan.sparql_endpoint.is_none());
+
+    let dcat = by_name.get("dcat-udata").expect("dcat udata job");
+    assert_eq!(dcat.portal_url, "https://data.public.example");
+    assert_eq!(dcat.portal_type, "dcat");
+    assert_eq!(dcat.language.as_deref(), Some("fr"));
+    assert!(dcat.force_full_sync);
+    assert!(dcat.profile.is_none());
+    assert!(dcat.sparql_endpoint.is_none());
+
+    let sparql = by_name.get("dcat-sparql").expect("sparql dcat job");
+    assert_eq!(sparql.portal_url, "https://data.eu.example");
+    assert_eq!(sparql.portal_type, "dcat");
+    assert_eq!(sparql.language.as_deref(), Some("en"));
+    assert_eq!(sparql.profile.as_deref(), Some("sparql"));
+    assert_eq!(
+        sparql.sparql_endpoint.as_deref(),
+        Some("https://sparql.example.org/query")
+    );
+    assert!(sparql.force_full_sync);
+
+    assert!(!by_name.contains_key("disabled-dcat"));
 }
 
 // =============================================================================

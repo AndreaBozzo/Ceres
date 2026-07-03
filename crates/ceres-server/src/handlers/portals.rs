@@ -6,12 +6,13 @@ use axum::{
     http::StatusCode,
 };
 
-use ceres_core::{CreateJobRequest, JobQueue};
+use ceres_core::JobQueue;
 
 use crate::dto::{
     HarvestJobResponse, PortalInfoResponse, PortalStatsResponse, TriggerHarvestRequest,
 };
 use crate::error::ApiError;
+use crate::handlers::build_harvest_job_request;
 use crate::state::AppState;
 
 /// List all configured portals with sync status.
@@ -148,27 +149,7 @@ pub async fn trigger_portal_harvest(
         .find_by_name(&name)
         .ok_or_else(|| ApiError::NotFound(format!("Portal not found: {}", name)))?;
 
-    let mut job_request = CreateJobRequest::new(&portal.url)
-        .with_name(&portal.name)
-        .with_portal_type(portal.portal_type);
-
-    if let Some(ref tmpl) = portal.url_template {
-        job_request = job_request.with_url_template(tmpl);
-    }
-
-    if let Some(ref lang) = portal.language {
-        job_request = job_request.with_language(lang);
-    }
-
-    if let Some(ref profile) = portal.profile {
-        job_request = job_request.with_profile(profile);
-    }
-    if let Some(ref sparql_endpoint) = portal.sparql_endpoint {
-        job_request = job_request.with_sparql_endpoint(sparql_endpoint);
-    }
-    if request.force_full_sync {
-        job_request = job_request.with_full_sync();
-    }
+    let job_request = build_harvest_job_request(portal, request.force_full_sync);
 
     let job = state
         .job_repo
