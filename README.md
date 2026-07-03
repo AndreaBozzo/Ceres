@@ -81,7 +81,7 @@ The codebase already models additional portal types such as `socrata`, but they 
 
 ### Prerequisites
 
-- Rust 1.88+
+- Rust 1.95+
 - Docker and Docker Compose
 - PostgreSQL 16+ with `pgvector` when running outside Docker
 - Optional for embeddings: [Ollama](https://ollama.com) locally, or Gemini/OpenAI credentials

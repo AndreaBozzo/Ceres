@@ -1,17 +1,17 @@
-use vergen_git2::{BuildBuilder, CargoBuilder, Emitter, Git2Builder, RustcBuilder};
+use vergen_gitcl::{Build, Cargo, Emitter, Gitcl, Rustc};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build instructions
-    let git2 = Git2Builder::default().sha(true).build()?;
-    let build = BuildBuilder::default().build_date(true).build()?;
-    let cargo = CargoBuilder::default().target_triple(true).build()?;
-    let rustc = RustcBuilder::default().semver(true).build()?;
+    let git = Gitcl::builder().sha(true).build();
+    let build = Build::builder().build_date(true).build();
+    let cargo = Cargo::builder().target_triple(true).build();
+    let rustc = Rustc::builder().semver(true).build();
 
     // Emit env variables for cargo
     Emitter::default()
         .add_instructions(&build)?
         .add_instructions(&cargo)?
-        .add_instructions(&git2)?
+        .add_instructions(&git)?
         .add_instructions(&rustc)?
         .emit()?;
 

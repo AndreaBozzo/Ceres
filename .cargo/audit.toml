@@ -1,0 +1,8 @@
+[advisories]
+ignore = [
+    # rsa is retained in Cargo.lock through SQLx's optional MySQL package
+    # metadata, but it is not reachable from the resolved Ceres workspace
+    # graph (`cargo tree --target all -i rsa` is empty). RustSec currently
+    # lists no patched version.
+    "RUSTSEC-2023-0071",
+]
