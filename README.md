@@ -81,7 +81,7 @@ The codebase already models additional portal types such as `socrata`, but they 
 
 ### Prerequisites
 
-- Rust 1.88+
+- Rust 1.95+
 - Docker and Docker Compose
 - PostgreSQL 16+ with `pgvector` when running outside Docker
 - Optional for embeddings: [Ollama](https://ollama.com) locally, or Gemini/OpenAI credentials
@@ -326,6 +326,11 @@ Available endpoints:
 - `GET /swagger-ui`
 
 Set `CERES_ADMIN_TOKEN` to enable protected write endpoints.
+
+Server-triggered harvest jobs use the matching `portals.toml` entry for both
+`POST /api/v1/portals/{name}/harvest` and `POST /api/v1/harvest`: portal
+`type`, DCAT `profile`, language, URL template, and optional
+`sparql_endpoint` are copied onto each durable job before the worker runs it.
 
 ## Website Docs
 

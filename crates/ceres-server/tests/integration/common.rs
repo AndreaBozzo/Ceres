@@ -68,6 +68,10 @@ const MIGRATIONS: &[&str] = &[
         force_full_sync BOOLEAN NOT NULL DEFAULT FALSE,
         url_template TEXT,
         language TEXT,
+        portal_type TEXT NOT NULL DEFAULT 'ckan'
+            CHECK (portal_type IN ('ckan', 'dcat', 'socrata')),
+        profile TEXT,
+        sparql_endpoint TEXT,
         CONSTRAINT chk_harvest_jobs_status CHECK (
             status IN ('pending', 'running', 'completed', 'failed', 'cancelled')
         )
@@ -104,6 +108,14 @@ impl TestApp {
     /// Create a test app with an admin token configured.
     pub async fn with_admin_token(token: &str) -> Self {
         Self::build(None, Some(token.to_string())).await
+    }
+
+    /// Create a test app with a portals config and admin token configured.
+    pub async fn with_portals_config_and_admin_token(
+        portals_config: ceres_core::PortalsConfig,
+        token: &str,
+    ) -> Self {
+        Self::build(Some(portals_config), Some(token.to_string())).await
     }
 
     async fn build(
