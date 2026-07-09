@@ -423,15 +423,28 @@ impl FromStr for PortalType {
 /// This is the single source of truth for profile semantics: `portals.toml`,
 /// CLI `--profile`, harvest job requests, and factory dispatch all parse into
 /// and match on this enum. Every profile preserves full source metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+///
+/// Deserialization delegates to [`FromStr`], so every input path shares the
+/// same parsing rules (canonical names, the `udata` alias, case-insensitive)
+/// and the same error message listing supported values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DcatProfile {
     /// udata REST JSON-LD catalog endpoint (default when omitted).
     #[default]
-    #[serde(alias = "udata")]
     UdataRest,
     /// SPARQL endpoint returning DCAT-AP metadata.
     Sparql,
+}
+
+impl<'de> Deserialize<'de> for DcatProfile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
 }
 
 impl DcatProfile {
@@ -1128,7 +1141,35 @@ type = "dcat"
 profile = "spqarql"
 "#;
         let err = toml::from_str::<PortalsConfig>(toml).unwrap_err();
-        assert!(err.to_string().contains("unknown variant"));
+        assert!(err.to_string().contains("Unknown DCAT profile"));
+        assert!(err.to_string().contains("udata_rest"));
+    }
+
+    #[test]
+    fn test_portals_config_profile_is_case_insensitive() {
+        // TOML deserialization delegates to FromStr, so it accepts the same
+        // case-insensitive spellings as the CLI --profile flag.
+        let toml = r#"
+[[portals]]
+name = "eu"
+url = "https://data.europa.eu"
+type = "dcat"
+profile = "SPARQL"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.portals[0].profile(), Some(DcatProfile::Sparql));
+    }
+
+    #[test]
+    fn test_dcat_profile_serializes_to_canonical_name() {
+        assert_eq!(
+            serde_json::to_string(&DcatProfile::UdataRest).unwrap(),
+            "\"udata_rest\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DcatProfile::Sparql).unwrap(),
+            "\"sparql\""
+        );
     }
 
     #[test]
