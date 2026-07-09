@@ -15,7 +15,7 @@ use crate::harvest::HarvestService;
 use crate::progress::{ProgressReporter, SilentReporter};
 use crate::sync::{BatchHarvestSummary, ContentHashDetector, DeltaDetector, SyncResult, SyncStats};
 use crate::traits::{DatasetStore, EmbeddingProvider, PortalClientFactory};
-use crate::{AppError, PortalEntry, PortalType};
+use crate::{AppError, DcatProfile, PortalEntry, PortalType};
 
 /// Combined harvest + embed pipeline.
 ///
@@ -120,7 +120,7 @@ where
         language: &str,
         reporter: &R,
         portal_type: PortalType,
-        profile: Option<&str>,
+        profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
     ) -> Result<(SyncResult, EmbeddingStats), AppError> {
         self.sync_portal_with_progress_cancellable_with_options(
@@ -148,7 +148,7 @@ where
         cancel_token: CancellationToken,
         force_full_sync: bool,
         portal_type: PortalType,
-        profile: Option<&str>,
+        profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
     ) -> Result<(SyncResult, EmbeddingStats), AppError> {
         // Step 1: Harvest metadata

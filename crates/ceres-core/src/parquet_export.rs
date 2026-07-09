@@ -402,7 +402,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 portal_names.insert(url.clone(), entry.name.clone());
                 portal_languages.insert(url.clone(), entry.language().to_string());
                 portal_types.insert(url.clone(), entry.portal_type.to_string());
-                portal_profiles.insert(url.clone(), entry.profile().map(str::to_string));
+                portal_profiles.insert(url.clone(), entry.profile().map(|p| p.to_string()));
                 // Fold each declared alias onto this entry's canonical URL.
                 for alias in entry.aliases() {
                     alias_map.insert(normalize_portal_url(alias), url.clone());

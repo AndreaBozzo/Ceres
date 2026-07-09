@@ -1,0 +1,5 @@
+# Checkout all text files with LF line endings on every platform.
+# .rustfmt.toml declares newline_style = "Unix"; without this, Windows
+# checkouts (core.autocrlf=true) get CRLF and `cargo fmt --check` fails
+# locally while passing in CI.
+* text=auto eol=lf

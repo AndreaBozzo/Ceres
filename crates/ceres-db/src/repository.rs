@@ -2,6 +2,7 @@
 
 use ceres_core::error::AppError;
 use ceres_core::models::{DatabaseStats, Dataset, NewDataset, SearchResult};
+use ceres_core::sync::{SyncMode, SyncStatus};
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use futures::stream::BoxStream;
@@ -1055,16 +1056,16 @@ impl ceres_core::traits::DatasetStore for DatasetRepository {
         &self,
         portal_url: &str,
         sync_time: DateTime<Utc>,
-        sync_mode: &str,
-        sync_status: &str,
+        sync_mode: Option<SyncMode>,
+        sync_status: SyncStatus,
         datasets_synced: i32,
     ) -> Result<(), AppError> {
         DatasetRepository::upsert_sync_status(
             self,
             portal_url,
             sync_time,
-            sync_mode,
-            sync_status,
+            sync_mode.map(|m| m.as_str()).unwrap_or("unknown"),
+            sync_status.as_str(),
             datasets_synced,
         )
         .await

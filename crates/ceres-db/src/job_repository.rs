@@ -8,7 +8,7 @@ use sqlx::{PgPool, Pool, Postgres};
 use uuid::Uuid;
 
 use ceres_core::SyncStats;
-use ceres_core::config::PortalType;
+use ceres_core::config::{DcatProfile, PortalType};
 use ceres_core::error::AppError;
 use ceres_core::job::{CreateJobRequest, HarvestJob, JobStatus};
 use ceres_core::job_queue::JobQueue;
@@ -109,8 +109,14 @@ impl From<JobRow> for HarvestJob {
                 );
                 PortalType::Ckan
             }),
-            // TODO(correctness): log warning when unknown job status falls back to Pending
-            status: row.status.parse().unwrap_or(JobStatus::Pending),
+            status: row.status.parse().unwrap_or_else(|_| {
+                tracing::warn!(
+                    job_id = %row.id,
+                    raw_value = %row.status,
+                    "Unknown status in harvest_jobs, defaulting to Pending"
+                );
+                JobStatus::Pending
+            }),
             created_at: row.created_at,
             updated_at: row.updated_at,
             started_at: row.started_at,
@@ -124,7 +130,17 @@ impl From<JobRow> for HarvestJob {
             force_full_sync: row.force_full_sync,
             url_template: row.url_template,
             language: row.language,
-            profile: row.profile,
+            profile: row.profile.and_then(|p| {
+                p.parse::<DcatProfile>()
+                    .map_err(|_| {
+                        tracing::warn!(
+                            job_id = %row.id,
+                            raw_value = %p,
+                            "Unknown DCAT profile in harvest_jobs, defaulting to none (udata_rest)"
+                        );
+                    })
+                    .ok()
+            }),
             sparql_endpoint: row.sparql_endpoint,
         }
     }
@@ -152,7 +168,7 @@ impl JobQueue for JobRepository {
         .bind(&request.url_template)
         .bind(&request.language)
         .bind(request.portal_type.to_string())
-        .bind(&request.profile)
+        .bind(request.profile.map(|p| p.as_str()))
         .bind(&request.sparql_endpoint)
         .fetch_one(&self.pool)
         .await

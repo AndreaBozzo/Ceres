@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use ceres_core::{PortalEntry, PortalType, PortalsConfig};
+use ceres_core::{DcatProfile, PortalEntry, PortalType, PortalsConfig};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -204,7 +204,7 @@ async fn test_harvest_all_creates_jobs_for_supported_portal_configs() {
                 description: None,
                 url_template: None,
                 language: Some("en".to_string()),
-                profile: Some("sparql".to_string()),
+                profile: Some(DcatProfile::Sparql),
                 sparql_endpoint: Some("https://sparql.example.org/query".to_string()),
                 aliases: vec![],
             },
@@ -216,7 +216,7 @@ async fn test_harvest_all_creates_jobs_for_supported_portal_configs() {
                 description: None,
                 url_template: None,
                 language: Some("en".to_string()),
-                profile: Some("sparql".to_string()),
+                profile: Some(DcatProfile::Sparql),
                 sparql_endpoint: Some("https://disabled.example.org/sparql".to_string()),
                 aliases: vec![],
             },

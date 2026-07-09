@@ -110,8 +110,8 @@ impl DatasetStore for FailingDatasetStore {
         &self,
         _portal_url: &str,
         _sync_time: DateTime<Utc>,
-        _sync_mode: &str,
-        _sync_status: &str,
+        _sync_mode: Option<ceres_core::SyncMode>,
+        _sync_status: ceres_core::SyncStatus,
         _datasets_synced: i32,
     ) -> Result<(), AppError> {
         unimplemented!()

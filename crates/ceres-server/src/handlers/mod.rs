@@ -26,8 +26,8 @@ pub(crate) fn build_harvest_job_request(
         request = request.with_language(language.as_str());
     }
 
-    if let Some(ref profile) = portal.profile {
-        request = request.with_profile(profile.as_str());
+    if let Some(profile) = portal.profile {
+        request = request.with_profile(profile);
     }
 
     if let Some(ref sparql_endpoint) = portal.sparql_endpoint {

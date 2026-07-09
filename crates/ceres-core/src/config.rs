@@ -417,6 +417,72 @@ impl FromStr for PortalType {
     }
 }
 
+/// DCAT transport profile identifier.
+///
+/// Selects which client implementation handles a `type = "dcat"` portal.
+/// This is the single source of truth for profile semantics: `portals.toml`,
+/// CLI `--profile`, harvest job requests, and factory dispatch all parse into
+/// and match on this enum. Every profile preserves full source metadata.
+///
+/// Deserialization delegates to [`FromStr`], so every input path shares the
+/// same parsing rules (canonical names, the `udata` alias, case-insensitive)
+/// and the same error message listing supported values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DcatProfile {
+    /// udata REST JSON-LD catalog endpoint (default when omitted).
+    #[default]
+    UdataRest,
+    /// SPARQL endpoint returning DCAT-AP metadata.
+    Sparql,
+}
+
+impl<'de> Deserialize<'de> for DcatProfile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl DcatProfile {
+    /// Human-readable list of accepted profile names, for error messages.
+    pub const SUPPORTED: &'static str = "'udata_rest' (alias: 'udata'), 'sparql'";
+
+    /// Returns the canonical string representation (used in config files,
+    /// the harvest job table, and API responses).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::UdataRest => "udata_rest",
+            Self::Sparql => "sparql",
+        }
+    }
+}
+
+impl fmt::Display for DcatProfile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for DcatProfile {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "udata_rest" | "udata" => Ok(Self::UdataRest),
+            "sparql" => Ok(Self::Sparql),
+            _ => Err(AppError::ConfigError(format!(
+                "Unknown DCAT profile: '{}'. Supported profiles: {}",
+                s,
+                Self::SUPPORTED
+            ))),
+        }
+    }
+}
+
 /// Default enabled status when not specified in configuration.
 fn default_enabled() -> bool {
     true
@@ -466,6 +532,13 @@ impl PortalsConfig {
         self.portals
             .iter()
             .find(|p| p.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Validates every portal entry (see [`PortalEntry::validate`]).
+    ///
+    /// Returns the first validation error encountered.
+    pub fn validate(&self) -> Result<(), AppError> {
+        self.portals.iter().try_for_each(PortalEntry::validate)
     }
 }
 
@@ -518,11 +591,11 @@ pub struct PortalEntry {
 
     /// Optional DCAT profile for sub-dispatch.
     ///
-    /// Only meaningful when `type = "dcat"`. Values:
-    /// - `"udata_rest"` (default when omitted): udata REST JSON-LD catalog endpoint
-    /// - `"sparql"`: SPARQL endpoint returning DCAT-AP metadata
+    /// Only valid when `type = "dcat"` (validated by [`PortalEntry::validate`]).
+    /// See [`DcatProfile`] for the supported profiles; defaults to
+    /// [`DcatProfile::UdataRest`] when omitted.
     #[serde(default)]
-    pub profile: Option<String>,
+    pub profile: Option<DcatProfile>,
 
     /// Optional custom SPARQL endpoint URL.
     ///
@@ -551,8 +624,8 @@ impl PortalEntry {
     }
 
     /// Returns the DCAT profile, if set.
-    pub fn profile(&self) -> Option<&str> {
-        self.profile.as_deref()
+    pub fn profile(&self) -> Option<DcatProfile> {
+        self.profile
     }
 
     /// Returns the custom SPARQL endpoint URL, if set.
@@ -563,6 +636,27 @@ impl PortalEntry {
     /// Returns the declared alias/mirror base URLs for this portal.
     pub fn aliases(&self) -> &[String] {
         &self.aliases
+    }
+
+    /// Validates profile-specific settings for this portal entry.
+    ///
+    /// Rules:
+    /// - `profile` is only valid when `type = "dcat"`
+    /// - `sparql_endpoint` is only valid when `profile = "sparql"`
+    pub fn validate(&self) -> Result<(), AppError> {
+        if self.profile.is_some() && self.portal_type != PortalType::Dcat {
+            return Err(AppError::ConfigError(format!(
+                "Portal '{}': 'profile' is only valid for type = \"dcat\" portals (found type = \"{}\")",
+                self.name, self.portal_type
+            )));
+        }
+        if self.sparql_endpoint.is_some() && self.profile != Some(DcatProfile::Sparql) {
+            return Err(AppError::ConfigError(format!(
+                "Portal '{}': 'sparql_endpoint' is only valid with profile = \"sparql\"",
+                self.name
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -680,6 +774,8 @@ pub fn load_portals_config(path: Option<PathBuf>) -> Result<Option<PortalsConfig
             e
         ))
     })?;
+
+    config.validate()?;
 
     Ok(Some(config))
 }
@@ -973,8 +1069,9 @@ language = "en"
         let config: PortalsConfig = toml::from_str(toml).unwrap();
         let portal = &config.portals[0];
         assert_eq!(portal.portal_type, PortalType::Dcat);
-        assert_eq!(portal.profile(), Some("sparql"));
+        assert_eq!(portal.profile(), Some(DcatProfile::Sparql));
         assert_eq!(portal.language(), "en");
+        assert!(portal.validate().is_ok());
     }
 
     #[test]
@@ -987,6 +1084,122 @@ type = "dcat"
 "#;
         let config: PortalsConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.portals[0].profile(), None);
+    }
+
+    #[test]
+    fn test_dcat_profile_from_str() {
+        assert_eq!(
+            "udata_rest".parse::<DcatProfile>().unwrap(),
+            DcatProfile::UdataRest
+        );
+        assert_eq!(
+            "udata".parse::<DcatProfile>().unwrap(),
+            DcatProfile::UdataRest
+        );
+        assert_eq!(
+            "sparql".parse::<DcatProfile>().unwrap(),
+            DcatProfile::Sparql
+        );
+        assert_eq!(
+            "SPARQL".parse::<DcatProfile>().unwrap(),
+            DcatProfile::Sparql
+        );
+
+        let err = "spqarql".parse::<DcatProfile>().unwrap_err();
+        assert!(err.to_string().contains("spqarql"));
+        assert!(err.to_string().contains("udata_rest"));
+    }
+
+    #[test]
+    fn test_dcat_profile_canonical_roundtrip() {
+        for profile in [DcatProfile::UdataRest, DcatProfile::Sparql] {
+            assert_eq!(profile.as_str().parse::<DcatProfile>().unwrap(), profile);
+        }
+        assert_eq!(DcatProfile::default(), DcatProfile::UdataRest);
+    }
+
+    #[test]
+    fn test_portals_config_udata_alias_accepted() {
+        let toml = r#"
+[[portals]]
+name = "luxembourg"
+url = "https://data.public.lu"
+type = "dcat"
+profile = "udata"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.portals[0].profile(), Some(DcatProfile::UdataRest));
+    }
+
+    #[test]
+    fn test_portals_config_rejects_unknown_profile() {
+        let toml = r#"
+[[portals]]
+name = "bad"
+url = "https://example.org"
+type = "dcat"
+profile = "spqarql"
+"#;
+        let err = toml::from_str::<PortalsConfig>(toml).unwrap_err();
+        assert!(err.to_string().contains("Unknown DCAT profile"));
+        assert!(err.to_string().contains("udata_rest"));
+    }
+
+    #[test]
+    fn test_portals_config_profile_is_case_insensitive() {
+        // TOML deserialization delegates to FromStr, so it accepts the same
+        // case-insensitive spellings as the CLI --profile flag.
+        let toml = r#"
+[[portals]]
+name = "eu"
+url = "https://data.europa.eu"
+type = "dcat"
+profile = "SPARQL"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.portals[0].profile(), Some(DcatProfile::Sparql));
+    }
+
+    #[test]
+    fn test_dcat_profile_serializes_to_canonical_name() {
+        assert_eq!(
+            serde_json::to_string(&DcatProfile::UdataRest).unwrap(),
+            "\"udata_rest\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DcatProfile::Sparql).unwrap(),
+            "\"sparql\""
+        );
+    }
+
+    #[test]
+    fn test_portal_entry_validate_rejects_profile_on_non_dcat() {
+        let toml = r#"
+[[portals]]
+name = "bad-ckan"
+url = "https://example.org"
+type = "ckan"
+profile = "sparql"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("bad-ckan"));
+        assert!(err.to_string().contains("dcat"));
+    }
+
+    #[test]
+    fn test_portal_entry_validate_rejects_sparql_endpoint_without_sparql_profile() {
+        let toml = r#"
+[[portals]]
+name = "bad-endpoint"
+url = "https://example.org"
+type = "dcat"
+sparql_endpoint = "https://example.org/sparql"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("bad-endpoint"));
+        assert!(err.to_string().contains("sparql_endpoint"));
     }
 
     #[test]

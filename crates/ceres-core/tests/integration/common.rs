@@ -206,7 +206,7 @@ impl PortalClientFactory for MockPortalClientFactory {
         portal_url: &str,
         _portal_type: ceres_core::config::PortalType,
         _language: &str,
-        _profile: Option<&str>,
+        _profile: Option<ceres_core::config::DcatProfile>,
         _sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         Ok(MockPortalClient::new(portal_url, self.datasets.clone()))
@@ -474,14 +474,17 @@ impl DatasetStore for MockDatasetStore {
         &self,
         portal_url: &str,
         _sync_time: DateTime<Utc>,
-        sync_mode: &str,
-        sync_status: &str,
+        sync_mode: Option<ceres_core::SyncMode>,
+        sync_status: ceres_core::SyncStatus,
         datasets_synced: i32,
     ) -> Result<(), AppError> {
         self.sync_history.lock().unwrap().push(SyncStatusRecord {
             portal_url: portal_url.to_string(),
-            sync_mode: sync_mode.to_string(),
-            sync_status: sync_status.to_string(),
+            sync_mode: sync_mode
+                .map(|m| m.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            sync_status: sync_status.as_str().to_string(),
             datasets_synced,
         });
         Ok(())

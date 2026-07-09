@@ -64,6 +64,25 @@ impl SyncStats {
 // Sync Status and Result Types (for cancellation support)
 // =============================================================================
 
+/// Mode of a sync operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncMode {
+    /// Full sync: fetch all datasets from the portal.
+    Full,
+    /// Incremental sync: fetch only datasets modified since the last sync.
+    Incremental,
+}
+
+impl SyncMode {
+    /// Returns the string representation for database storage.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SyncMode::Full => "full",
+            SyncMode::Incremental => "incremental",
+        }
+    }
+}
+
 /// Overall status of a sync operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncStatus {

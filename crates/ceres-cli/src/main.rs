@@ -12,7 +12,7 @@ use tracing_subscriber::FmtSubscriber;
 use ceres_client::{EmbeddingConfig, EmbeddingProviderEnum, PortalClientFactoryEnum};
 use ceres_core::traits::EmbeddingProvider;
 use ceres_core::{
-    BatchHarvestSummary, DbConfig, EmbeddingService, EmbeddingStats,
+    BatchHarvestSummary, DbConfig, DcatProfile, EmbeddingService, EmbeddingStats,
     ExportFormat as CoreExportFormat, ExportService, HarvestConfig, HarvestService,
     ParquetExportConfig, ParquetExportResult, ParquetExportService, PortalEntry, PortalType,
     SearchService, SyncStats, TracingReporter, load_portals_config,
@@ -191,6 +191,12 @@ async fn handle_harvest(
         anyhow::bail!("--profile is only valid with --type dcat");
     }
 
+    // Same parsing semantics as portals.toml and the server job path.
+    let ad_hoc_profile: Option<DcatProfile> = ad_hoc_profile
+        .map(|s| s.parse())
+        .transpose()
+        .context("Invalid --profile value")?;
+
     match (portal_url, portal_name) {
         (Some(url), None) => {
             info!("Syncing portal{}: {}", mode_label, url);
@@ -201,7 +207,7 @@ async fn handle_harvest(
                     "en",
                     &reporter,
                     ad_hoc_portal_type,
-                    ad_hoc_profile.as_deref(),
+                    ad_hoc_profile,
                     None,
                 )
                 .await?;

@@ -157,6 +157,13 @@ description = "Open Data NRW (Germany)"
 
 # =============================================================================
 # DCAT-AP portals (udata REST flavor)
+#
+# type = "dcat" portals select a transport via `profile`:
+#   profile = "udata_rest"  (alias "udata"; default when omitted)
+#   profile = "sparql"      (SPARQL endpoint; defaults to {url}/sparql,
+#                            override with sparql_endpoint = "...")
+# `profile` is only valid on dcat portals, and `sparql_endpoint` only with
+# profile = "sparql" — anything else fails config validation.
 # =============================================================================
 
 # Luxembourg Open Data Portal (~2,490 datasets) — DCAT-AP udata REST

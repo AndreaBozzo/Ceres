@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::SyncStats;
-use crate::config::PortalType;
+use crate::config::{DcatProfile, PortalType};
 
 // =============================================================================
 // Job Status
@@ -211,8 +211,8 @@ pub struct HarvestJob {
     /// Preferred language for multilingual portals.
     pub language: Option<String>,
 
-    /// Optional DCAT profile (e.g., `"sparql"` for SPARQL endpoints).
-    pub profile: Option<String>,
+    /// Optional DCAT profile.
+    pub profile: Option<DcatProfile>,
 
     /// Optional SPARQL endpoint override for DCAT harvests.
     pub sparql_endpoint: Option<String>,
@@ -255,8 +255,8 @@ pub struct CreateJobRequest {
     /// Type of portal (ckan, dcat, etc.).
     pub portal_type: PortalType,
 
-    /// Optional DCAT profile (e.g., `"sparql"` for SPARQL endpoints).
-    pub profile: Option<String>,
+    /// Optional DCAT profile.
+    pub profile: Option<DcatProfile>,
 
     /// Optional SPARQL endpoint override for DCAT harvests.
     pub sparql_endpoint: Option<String>,
@@ -314,9 +314,9 @@ impl CreateJobRequest {
         self
     }
 
-    /// Set the DCAT profile (e.g., `"sparql"`).
-    pub fn with_profile(mut self, profile: impl Into<String>) -> Self {
-        self.profile = Some(profile.into());
+    /// Set the DCAT profile.
+    pub fn with_profile(mut self, profile: DcatProfile) -> Self {
+        self.profile = Some(profile);
         self
     }
 
