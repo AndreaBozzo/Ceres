@@ -54,7 +54,7 @@ impl PortalClientFactory for FailingPortalClientFactory {
         _portal_url: &str,
         _portal_type: PortalType,
         _language: &str,
-        _profile: Option<&str>,
+        _profile: Option<ceres_core::DcatProfile>,
         _sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         Err(AppError::NetworkError(

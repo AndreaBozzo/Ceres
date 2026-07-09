@@ -10,7 +10,7 @@
 //! We use an enum for static dispatch, following the same pattern as
 //! [`EmbeddingProviderEnum`](crate::provider::EmbeddingProviderEnum).
 
-use ceres_core::config::PortalType;
+use ceres_core::config::{DcatProfile, PortalType};
 use ceres_core::error::AppError;
 use ceres_core::models::NewDataset;
 use ceres_core::traits::{PortalClient, PortalClientFactory};
@@ -224,23 +224,31 @@ impl PortalClientFactory for PortalClientFactoryEnum {
         portal_url: &str,
         portal_type: PortalType,
         language: &str,
-        profile: Option<&str>,
+        profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
+        if profile.is_some() && portal_type != PortalType::Dcat {
+            return Err(AppError::ConfigError(format!(
+                "A DCAT profile was specified for portal '{portal_url}', but its type is '{portal_type}'. Profiles are only valid for 'dcat' portals."
+            )));
+        }
+        if sparql_endpoint.is_some() && profile != Some(DcatProfile::Sparql) {
+            return Err(AppError::ConfigError(format!(
+                "A SPARQL endpoint was specified for portal '{portal_url}', but its profile is not 'sparql'."
+            )));
+        }
+
         match portal_type {
             PortalType::Ckan => Ok(PortalClientEnum::Ckan(ckan_client_for(portal_url)?)),
-            PortalType::Dcat => match profile {
-                Some("sparql") => Ok(PortalClientEnum::SparqlDcat(SparqlDcatClient::new(
+            PortalType::Dcat => match profile.unwrap_or_default() {
+                DcatProfile::UdataRest => Ok(PortalClientEnum::Dcat(DcatClient::new(
+                    portal_url, language,
+                )?)),
+                DcatProfile::Sparql => Ok(PortalClientEnum::SparqlDcat(SparqlDcatClient::new(
                     portal_url,
                     language,
                     sparql_endpoint,
                 )?)),
-                None | Some("" | "udata_rest") => Ok(PortalClientEnum::Dcat(DcatClient::new(
-                    portal_url, language,
-                )?)),
-                Some(other) => Err(AppError::ConfigError(format!(
-                    "Unsupported DCAT profile '{other}'. Supported profiles are 'sparql' and 'udata_rest'."
-                ))),
             },
             other => Err(AppError::ConfigError(format!(
                 "Portal type '{}' is not yet supported.",
@@ -287,7 +295,7 @@ mod tests {
             "https://data.europa.eu",
             PortalType::Dcat,
             "en",
-            Some("sparql"),
+            Some(DcatProfile::Sparql),
             None,
         );
         assert!(client.is_ok());
@@ -304,7 +312,7 @@ mod tests {
             "https://data.norge.no",
             PortalType::Dcat,
             "nb",
-            Some("sparql"),
+            Some(DcatProfile::Sparql),
             Some("https://sparql.fellesdatakatalog.digdir.no"),
         );
         assert!(client.is_ok());
@@ -324,16 +332,48 @@ mod tests {
     }
 
     #[test]
-    fn test_factory_rejects_unknown_dcat_profile() {
+    fn test_factory_creates_udata_client_for_explicit_profile() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory
+            .create(
+                "https://data.public.lu",
+                PortalType::Dcat,
+                "fr",
+                Some(DcatProfile::UdataRest),
+                None,
+            )
+            .unwrap();
+        assert!(matches!(client, PortalClientEnum::Dcat(_)));
+    }
+
+    #[test]
+    fn test_factory_rejects_profile_on_non_dcat_portal() {
+        let factory = PortalClientFactoryEnum::new();
+        let result = factory.create(
+            "https://dati.comune.milano.it",
+            PortalType::Ckan,
+            "en",
+            Some(DcatProfile::Sparql),
+            None,
+        );
+        let err = result.err().expect("expected profile-on-ckan error");
+        assert!(err.to_string().contains("only valid for 'dcat'"));
+    }
+
+    #[test]
+    fn test_factory_rejects_sparql_endpoint_without_sparql_profile() {
         let factory = PortalClientFactoryEnum::new();
         let result = factory.create(
             "https://data.public.lu",
             PortalType::Dcat,
-            "en",
-            Some("spqarql"),
-            None,
+            "fr",
+            Some(DcatProfile::UdataRest),
+            Some("https://example.org/sparql"),
         );
-        assert!(result.is_err());
+        let err = result
+            .err()
+            .expect("expected endpoint-without-sparql error");
+        assert!(err.to_string().contains("not 'sparql'"));
     }
 
     #[test]

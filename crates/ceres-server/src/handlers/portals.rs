@@ -46,7 +46,7 @@ pub async fn list_portals(
                 name: portal.name.clone(),
                 url: portal.url.clone(),
                 portal_type: portal.portal_type.to_string(),
-                profile: portal.profile.clone(),
+                profile: portal.profile.map(|p| p.to_string()),
                 sparql_endpoint: portal.sparql_endpoint.clone(),
                 enabled: portal.enabled,
                 description: portal.description.clone(),

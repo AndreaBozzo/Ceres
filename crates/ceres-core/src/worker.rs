@@ -305,7 +305,7 @@ where
                 job_cancel.clone(),
                 job.force_full_sync,
                 job.portal_type,
-                job.profile.as_deref(),
+                job.profile,
                 job.sparql_endpoint.as_deref(),
             )
             .await;

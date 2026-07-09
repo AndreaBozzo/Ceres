@@ -34,7 +34,8 @@ use chrono::{DateTime, Utc};
 use futures::stream::{self, BoxStream};
 use uuid::Uuid;
 
-use crate::config::PortalType;
+use crate::config::{DcatProfile, PortalType};
+use crate::sync::{SyncMode, SyncStatus};
 use crate::{AppError, Dataset, NewDataset, SearchResult};
 
 /// Provider for generating text embeddings.
@@ -224,14 +225,15 @@ pub trait PortalClientFactory: Send + Sync + Clone {
     /// * `portal_url` - The portal API base URL
     /// * `portal_type` - The type of portal to create a client for
     /// * `language` - Preferred language for multilingual portals (e.g. "en", "fr")
-    /// * `profile` - Optional profile for sub-dispatch (e.g. `"sparql"` for DCAT portals)
+    /// * `profile` - Optional DCAT profile for sub-dispatch; defaults to
+    ///   [`DcatProfile::UdataRest`] for DCAT portals, must be `None` otherwise
     /// * `sparql_endpoint` - Optional custom SPARQL endpoint URL (overrides `{url}/sparql`)
     fn create(
         &self,
         portal_url: &str,
         portal_type: PortalType,
         language: &str,
-        profile: Option<&str>,
+        profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError>;
 }
@@ -419,22 +421,21 @@ pub trait DatasetStore: Send + Sync + Clone {
     /// Records a sync status for a portal.
     ///
     /// Called after a harvest operation to update the sync status.
-    /// The `sync_status` parameter indicates the outcome: "completed" or "cancelled".
     ///
     /// # Arguments
     ///
     /// * `portal_url` - The source portal URL
     /// * `sync_time` - The timestamp of this sync
-    /// * `sync_mode` - Either "full" or "incremental"
-    ///   TODO(design): sync_mode/sync_status should be typed enums, not &str
-    /// * `sync_status` - The outcome: "completed" or "cancelled"
+    /// * `sync_mode` - The sync mode, or `None` if the sync was interrupted
+    ///   before a mode was determined (stored as `"unknown"`)
+    /// * `sync_status` - The outcome: completed or cancelled
     /// * `datasets_synced` - Number of datasets processed
     fn record_sync_status(
         &self,
         portal_url: &str,
         sync_time: DateTime<Utc>,
-        sync_mode: &str,
-        sync_status: &str,
+        sync_mode: Option<SyncMode>,
+        sync_status: SyncStatus,
         datasets_synced: i32,
     ) -> impl Future<Output = Result<(), AppError>> + Send;
 

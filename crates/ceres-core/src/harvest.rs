@@ -43,11 +43,12 @@ use chrono::Utc;
 use futures::stream::{self, StreamExt};
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{HarvestConfig, PortalType};
+use crate::config::{DcatProfile, HarvestConfig, PortalType};
 use crate::models::NewDataset;
 use crate::progress::{HarvestEvent, ProgressReporter, SilentReporter};
 use crate::sync::{
-    AtomicSyncStats, ContentHashDetector, DeltaDetector, SyncOutcome, SyncResult, SyncStatus,
+    AtomicSyncStats, ContentHashDetector, DeltaDetector, SyncMode, SyncOutcome, SyncResult,
+    SyncStatus,
 };
 use crate::traits::{DatasetStore, PortalClient, PortalClientFactory};
 use crate::{AppError, BatchHarvestSummary, PortalEntry, PortalHarvestResult, SyncStats};
@@ -58,25 +59,6 @@ struct PreProcessedDataset {
     dataset: NewDataset,
     /// The sync outcome (Created or Updated).
     outcome: SyncOutcome,
-}
-
-/// Mode of sync operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SyncMode {
-    /// Full sync: fetch all datasets from portal.
-    Full,
-    /// Incremental sync: fetch only datasets modified since last sync.
-    Incremental,
-}
-
-impl SyncMode {
-    /// Returns the string representation for database storage.
-    fn as_str(&self) -> &'static str {
-        match self {
-            SyncMode::Full => "full",
-            SyncMode::Incremental => "incremental",
-        }
-    }
 }
 
 /// Shared state passed to the per-dataset pre-processing step.
@@ -185,8 +167,8 @@ pub struct SyncOptions<'a> {
     pub force_full_sync: bool,
     /// The portal protocol (CKAN, DCAT, ...).
     pub portal_type: PortalType,
-    /// Optional DCAT profile selector (e.g. `"sparql"`).
-    pub profile: Option<&'a str>,
+    /// Optional DCAT profile selector.
+    pub profile: Option<DcatProfile>,
     /// Optional SPARQL endpoint override for SPARQL-backed DCAT portals.
     pub sparql_endpoint: Option<&'a str>,
 }
@@ -356,7 +338,7 @@ where
         language: &str,
         reporter: &R,
         portal_type: PortalType,
-        profile: Option<&str>,
+        profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
     ) -> Result<SyncStats, AppError> {
         let result = self
@@ -526,7 +508,7 @@ where
         reporter: &R,
         cancel_token: CancellationToken,
         portal_type: PortalType,
-        profile: Option<&str>,
+        profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
@@ -557,7 +539,7 @@ where
         cancel_token: CancellationToken,
         force_full_sync: bool,
         portal_type: PortalType,
-        profile: Option<&str>,
+        profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         let force_full_sync = self.config.force_full_sync || force_full_sync;
@@ -599,13 +581,7 @@ where
         if cancel_token.is_cancelled() {
             if let Err(e) = self
                 .store
-                .record_sync_status(
-                    portal_url,
-                    sync_start,
-                    "unknown",
-                    SyncStatus::Cancelled.as_str(),
-                    0,
-                )
+                .record_sync_status(portal_url, sync_start, None, SyncStatus::Cancelled, 0)
                 .await
             {
                 tracing::warn!(error = %e, "Failed to record cancelled sync status");
@@ -633,8 +609,8 @@ where
                 .record_sync_status(
                     portal_url,
                     sync_start,
-                    sync_mode.as_str(),
-                    SyncStatus::Cancelled.as_str(),
+                    Some(sync_mode),
+                    SyncStatus::Cancelled,
                     0,
                 )
                 .await
@@ -663,8 +639,8 @@ where
                 .record_sync_status(
                     portal_url,
                     sync_start,
-                    sync_mode.as_str(),
-                    SyncStatus::Completed.as_str(),
+                    Some(sync_mode),
+                    SyncStatus::Completed,
                     0,
                 )
                 .await
@@ -1162,8 +1138,8 @@ where
             .record_sync_status(
                 portal_url,
                 sync_start,
-                sync_mode.as_str(),
-                status.as_str(),
+                Some(sync_mode),
+                status,
                 final_stats.total() as i32,
             )
             .await

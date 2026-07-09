@@ -95,7 +95,8 @@ pub enum Command {
         )]
         r#type: PortalType,
 
-        /// DCAT profile when harvesting an ad-hoc DCAT URL (e.g., "sparql")
+        /// DCAT profile when harvesting an ad-hoc DCAT URL.
+        /// Supported: "udata_rest" (alias "udata", default), "sparql"
         #[arg(long, value_name = "PROFILE", requires = "portal_url")]
         profile: Option<String>,
 

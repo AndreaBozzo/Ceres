@@ -63,8 +63,8 @@ pub use circuit_breaker::{
 
 // Configuration
 pub use config::{
-    DbConfig, EmbeddingServiceConfig, HarvestConfig, HttpConfig, PortalEntry, PortalType,
-    PortalsConfig, SyncConfig, default_config_path, load_portals_config,
+    DbConfig, DcatProfile, EmbeddingServiceConfig, HarvestConfig, HttpConfig, PortalEntry,
+    PortalType, PortalsConfig, SyncConfig, default_config_path, load_portals_config,
 };
 
 // Error handling
@@ -80,8 +80,8 @@ pub use schema::{DatasetResource, DatasetSchema, ResourceField};
 // Sync types and business logic
 pub use sync::{
     AlwaysReprocessDetector, AtomicSyncStats, BatchHarvestSummary, ContentHashDetector,
-    DeltaDetector, PortalHarvestResult, ReprocessingDecision, SyncOutcome, SyncResult, SyncStats,
-    SyncStatus, needs_reprocessing,
+    DeltaDetector, PortalHarvestResult, ReprocessingDecision, SyncMode, SyncOutcome, SyncResult,
+    SyncStats, SyncStatus, needs_reprocessing,
 };
 
 // Progress reporting

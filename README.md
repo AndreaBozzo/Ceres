@@ -72,7 +72,7 @@ Ceres addresses that by splitting the system into two stages:
 Today, the shipped portal clients cover:
 
 - `ckan`
-- `dcat` for udata-flavored DCAT-AP portals such as `data.public.lu` and `data.gouv.fr`
+- `dcat` for udata-flavored DCAT-AP portals such as `data.public.lu` and `data.gouv.fr` (profile `udata_rest`, the default)
 - `dcat` with `--profile sparql` for SPARQL-backed DCAT catalogs such as `data.europa.eu`
 
 The codebase already models additional portal types such as `socrata`, but they are not yet implemented in the current client factory.

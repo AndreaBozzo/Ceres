@@ -15,6 +15,25 @@ Today the shipping portal clients cover:
 - DCAT-AP portals that expose the udata REST JSON-LD catalog
 - SPARQL-backed DCAT catalogs (via `--profile sparql`, e.g. `data.europa.eu`)
 
+## DCAT profiles
+
+Portals with `type = "dcat"` select their transport through an explicit profile
+(the `DcatProfile` enum in `ceres-core`). The same names are accepted everywhere
+a profile can be specified: `portals.toml` (`profile = "..."`), the CLI
+(`--profile ...`), and REST harvest jobs.
+
+| Profile | Aliases | Client | Notes |
+|---|---|---|---|
+| `udata_rest` | `udata` | udata REST JSON-LD catalog | Default when omitted |
+| `sparql` | — | SPARQL endpoint (DCAT-AP) | Endpoint defaults to `{url}/sparql`; override with `sparql_endpoint` |
+
+Every profile preserves full source metadata. Validation is enforced at config
+load and at client creation:
+
+- `profile` is only valid on `type = "dcat"` portals
+- `sparql_endpoint` is only valid with `profile = "sparql"`
+- unknown profile names are rejected with the list of supported values
+
 ## Core pipeline
 
 ```text
