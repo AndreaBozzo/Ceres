@@ -435,6 +435,8 @@ pub enum DcatProfile {
     UdataRest,
     /// SPARQL endpoint returning DCAT-AP metadata.
     Sparql,
+    /// Static Project Open Data / DCAT-US `data.json` catalog.
+    StaticJson,
 }
 
 impl<'de> Deserialize<'de> for DcatProfile {
@@ -449,7 +451,8 @@ impl<'de> Deserialize<'de> for DcatProfile {
 
 impl DcatProfile {
     /// Human-readable list of accepted profile names, for error messages.
-    pub const SUPPORTED: &'static str = "'udata_rest' (alias: 'udata'), 'sparql'";
+    pub const SUPPORTED: &'static str =
+        "'udata_rest' (alias: 'udata'), 'sparql', 'static_json' (alias: 'data_json')";
 
     /// Returns the canonical string representation (used in config files,
     /// the harvest job table, and API responses).
@@ -457,6 +460,7 @@ impl DcatProfile {
         match self {
             Self::UdataRest => "udata_rest",
             Self::Sparql => "sparql",
+            Self::StaticJson => "static_json",
         }
     }
 }
@@ -474,6 +478,7 @@ impl FromStr for DcatProfile {
         match s.to_lowercase().as_str() {
             "udata_rest" | "udata" => Ok(Self::UdataRest),
             "sparql" => Ok(Self::Sparql),
+            "static_json" | "data_json" => Ok(Self::StaticJson),
             _ => Err(AppError::ConfigError(format!(
                 "Unknown DCAT profile: '{}'. Supported profiles: {}",
                 s,
@@ -1104,6 +1109,14 @@ type = "dcat"
             "SPARQL".parse::<DcatProfile>().unwrap(),
             DcatProfile::Sparql
         );
+        assert_eq!(
+            "static_json".parse::<DcatProfile>().unwrap(),
+            DcatProfile::StaticJson
+        );
+        assert_eq!(
+            "data_json".parse::<DcatProfile>().unwrap(),
+            DcatProfile::StaticJson
+        );
 
         let err = "spqarql".parse::<DcatProfile>().unwrap_err();
         assert!(err.to_string().contains("spqarql"));
@@ -1112,7 +1125,11 @@ type = "dcat"
 
     #[test]
     fn test_dcat_profile_canonical_roundtrip() {
-        for profile in [DcatProfile::UdataRest, DcatProfile::Sparql] {
+        for profile in [
+            DcatProfile::UdataRest,
+            DcatProfile::Sparql,
+            DcatProfile::StaticJson,
+        ] {
             assert_eq!(profile.as_str().parse::<DcatProfile>().unwrap(), profile);
         }
         assert_eq!(DcatProfile::default(), DcatProfile::UdataRest);
@@ -1169,6 +1186,10 @@ profile = "SPARQL"
         assert_eq!(
             serde_json::to_string(&DcatProfile::Sparql).unwrap(),
             "\"sparql\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DcatProfile::StaticJson).unwrap(),
+            "\"static_json\""
         );
     }
 

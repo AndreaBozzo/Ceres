@@ -162,6 +162,8 @@ description = "Open Data NRW (Germany)"
 #   profile = "udata_rest"  (alias "udata"; default when omitted)
 #   profile = "sparql"      (SPARQL endpoint; defaults to {url}/sparql,
 #                            override with sparql_endpoint = "...")
+#   profile = "static_json" (Project Open Data / DCAT-US data.json; the URL
+#                            may be a site root or point directly to data.json)
 # `profile` is only valid on dcat portals, and `sparql_endpoint` only with
 # profile = "sparql" — anything else fails config validation.
 # =============================================================================
@@ -182,6 +184,46 @@ description = "Luxembourg Open Data Portal (DCAT-AP / udata)"
 # language = "fr"
 # enabled = false
 # description = "data.gouv.fr — French Government Open Data Portal (~50,000+ datasets)"
+
+# =============================================================================
+# DCAT-US / Project Open Data static data.json catalogs
+# =============================================================================
+
+[[portals]]
+name = "us-veterans-affairs"
+url = "https://www.data.va.gov/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "US Department of Veterans Affairs Project Open Data catalog (~1,965 datasets)"
+
+[[portals]]
+name = "us-energy"
+url = "https://www.energy.gov/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "US Department of Energy Project Open Data catalog (~483 datasets)"
+
+[[portals]]
+name = "us-census"
+url = "https://www.census.gov/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "US Census Bureau Project Open Data catalog (~1,790 datasets)"
+
+[[portals]]
+name = "us-justice"
+url = "https://www.justice.gov/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "US Department of Justice Project Open Data catalog (~3,273 datasets)"
 
 # =============================================================================
 # DCAT-AP portals (SPARQL endpoint)

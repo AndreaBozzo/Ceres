@@ -74,6 +74,7 @@ Today, the shipped portal clients cover:
 - `ckan`
 - `dcat` for udata-flavored DCAT-AP portals such as `data.public.lu` and `data.gouv.fr` (profile `udata_rest`, the default)
 - `dcat` with `--profile sparql` for SPARQL-backed DCAT catalogs such as `data.europa.eu`
+- `dcat` with `--profile static_json` for Project Open Data / DCAT-US `data.json` catalogs
 
 The codebase already models additional portal types such as `socrata`, but they are not yet implemented in the current client factory.
 
@@ -221,6 +222,9 @@ ceres harvest https://data.public.lu --type dcat
 
 # Ad-hoc SPARQL-backed DCAT harvest
 ceres harvest https://data.europa.eu --type dcat --profile sparql
+
+# Harvest a static Project Open Data catalog
+ceres harvest https://www.data.va.gov/data.json --type dcat --profile static_json --metadata-only
 
 # Named portal from config
 ceres harvest --portal milano --config examples/portals.toml
