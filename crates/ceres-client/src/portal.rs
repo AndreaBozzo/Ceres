@@ -19,6 +19,7 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 
 use crate::ckan::{CkanClient, CkanDataset};
+use crate::datajson::{DataJsonClient, DataJsonDataset};
 use crate::dcat::{DcatClient, DcatDataset};
 use crate::sparql::SparqlDcatClient;
 
@@ -29,6 +30,8 @@ pub enum PortalDataEnum {
     Ckan(CkanDataset),
     /// Data from a DCAT-AP portal.
     Dcat(DcatDataset),
+    /// Data from a static Project Open Data / DCAT-US catalog.
+    DataJson(DataJsonDataset),
 }
 
 /// Unified portal client that wraps concrete portal implementations.
@@ -43,6 +46,8 @@ pub enum PortalClientEnum {
     Dcat(DcatClient),
     /// DCAT-AP SPARQL endpoint client.
     SparqlDcat(SparqlDcatClient),
+    /// Static Project Open Data / DCAT-US `data.json` client.
+    DataJson(DataJsonClient),
 }
 
 impl PortalClient for PortalClientEnum {
@@ -53,6 +58,7 @@ impl PortalClient for PortalClientEnum {
             Self::Ckan(c) => c.portal_type(),
             Self::Dcat(c) => c.portal_type(),
             Self::SparqlDcat(c) => c.portal_type(),
+            Self::DataJson(c) => c.portal_type(),
         }
     }
 
@@ -61,6 +67,7 @@ impl PortalClient for PortalClientEnum {
             Self::Ckan(c) => c.base_url(),
             Self::Dcat(c) => c.base_url(),
             Self::SparqlDcat(c) => c.base_url(),
+            Self::DataJson(c) => c.base_url(),
         }
     }
 
@@ -69,6 +76,7 @@ impl PortalClient for PortalClientEnum {
             Self::Ckan(c) => c.list_dataset_ids().await,
             Self::Dcat(c) => c.list_dataset_ids().await,
             Self::SparqlDcat(c) => c.list_dataset_ids().await,
+            Self::DataJson(c) => c.list_dataset_ids().await,
         }
     }
 
@@ -77,6 +85,7 @@ impl PortalClient for PortalClientEnum {
             Self::Ckan(c) => c.get_dataset(id).await.map(PortalDataEnum::Ckan),
             Self::Dcat(c) => c.get_dataset(id).await.map(PortalDataEnum::Dcat),
             Self::SparqlDcat(c) => c.get_dataset(id).await.map(PortalDataEnum::Dcat),
+            Self::DataJson(c) => c.get_dataset(id).await.map(PortalDataEnum::DataJson),
         }
     }
 
@@ -92,6 +101,9 @@ impl PortalClient for PortalClientEnum {
             }
             PortalDataEnum::Dcat(dcat_data) => {
                 DcatClient::into_new_dataset(dcat_data, portal_url, url_template, language)
+            }
+            PortalDataEnum::DataJson(data) => {
+                DataJsonClient::into_new_dataset(data, portal_url, url_template, language)
             }
         }
     }
@@ -113,6 +125,10 @@ impl PortalClient for PortalClientEnum {
                 .search_modified_since(since)
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect()),
+            Self::DataJson(c) => c
+                .search_modified_since(since)
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::DataJson).collect()),
         }
     }
 
@@ -130,6 +146,10 @@ impl PortalClient for PortalClientEnum {
                 .search_all_datasets()
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect()),
+            Self::DataJson(c) => c
+                .search_all_datasets()
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::DataJson).collect()),
         }
     }
 
@@ -153,6 +173,11 @@ impl PortalClient for PortalClientEnum {
                     r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Dcat).collect())
                 },
             )),
+            Self::DataJson(c) => Box::pin(futures::stream::once(async move {
+                c.search_all_datasets()
+                    .await
+                    .map(|datasets| datasets.into_iter().map(PortalDataEnum::DataJson).collect())
+            })),
         }
     }
 
@@ -163,6 +188,10 @@ impl PortalClient for PortalClientEnum {
                 "dataset_count not supported for DCAT udata REST portals".to_string(),
             )),
             Self::SparqlDcat(c) => c.dataset_count().await,
+            Self::DataJson(_) => Err(AppError::Generic(
+                "dataset_count is not available without downloading the static data.json catalog"
+                    .to_string(),
+            )),
         }
     }
 }
@@ -248,6 +277,9 @@ impl PortalClientFactory for PortalClientFactoryEnum {
                     portal_url,
                     language,
                     sparql_endpoint,
+                )?)),
+                DcatProfile::StaticJson => Ok(PortalClientEnum::DataJson(DataJsonClient::new(
+                    portal_url, language,
                 )?)),
             },
             other => Err(AppError::ConfigError(format!(
@@ -344,6 +376,21 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(client, PortalClientEnum::Dcat(_)));
+    }
+
+    #[test]
+    fn test_factory_creates_static_json_client() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory
+            .create(
+                "https://www.data.va.gov/data.json",
+                PortalType::Dcat,
+                "en",
+                Some(DcatProfile::StaticJson),
+                None,
+            )
+            .unwrap();
+        assert!(matches!(client, PortalClientEnum::DataJson(_)));
     }
 
     #[test]

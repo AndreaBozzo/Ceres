@@ -14,6 +14,7 @@ Today the shipping portal clients cover:
 - CKAN portals
 - DCAT-AP portals that expose the udata REST JSON-LD catalog
 - SPARQL-backed DCAT catalogs (via `--profile sparql`, e.g. `data.europa.eu`)
+- Static Project Open Data / DCAT-US catalogs (via `--profile static_json`)
 
 ## DCAT profiles
 
@@ -26,6 +27,7 @@ a profile can be specified: `portals.toml` (`profile = "..."`), the CLI
 |---|---|---|---|
 | `udata_rest` | `udata` | udata REST JSON-LD catalog | Default when omitted |
 | `sparql` | — | SPARQL endpoint (DCAT-AP) | Endpoint defaults to `{url}/sparql`; override with `sparql_endpoint` |
+| `static_json` | `data_json` | Project Open Data / DCAT-US `data.json` | URL may be the site root or the JSON document |
 
 Every profile preserves full source metadata. Validation is enforced at config
 load and at client creation:
@@ -33,6 +35,33 @@ load and at client creation:
 - `profile` is only valid on `type = "dcat"` portals
 - `sparql_endpoint` is only valid with `profile = "sparql"`
 - unknown profile names are rejected with the list of supported values
+
+Static catalogs are downloaded with a hard 256 MiB response limit because the
+format is normally one JSON document without server-side pagination. Override
+the ceiling with `CERES_STATIC_JSON_MAX_BYTES` when a trusted catalog is larger.
+The complete source dataset object, including distributions, is preserved in
+`metadata`; incremental runs filter the catalog locally using `modified`.
+
+```bash
+ceres harvest https://www.data.va.gov/data.json \
+  --type dcat --profile static_json --metadata-only
+```
+
+Verified public catalogs (live smoke-tested 2026-07-10):
+
+| Portal | URL | Usable datasets observed |
+|---|---|---:|
+| US Department of Veterans Affairs | `https://www.data.va.gov/data.json` | 1,965 |
+| US Department of Energy | `https://www.energy.gov/data.json` | 483 |
+| US Census Bureau | `https://www.census.gov/data.json` | 1,790 |
+| US Department of Justice | `https://www.justice.gov/data.json` | 3,273 |
+
+Run the opt-in parser/network smoke check against any candidate URL:
+
+```bash
+CERES_DATAJSON_SMOKE_URL=https://www.energy.gov/data.json \
+  cargo test -p ceres-client data_json_smoke_catalog -- --ignored --nocapture
+```
 
 ## Core pipeline
 
@@ -204,4 +233,5 @@ This converges faster than halving and handles portals with resource-heavy datas
 - CKAN client: [`crates/ceres-client/src/ckan.rs`](../crates/ceres-client/src/ckan.rs) (`search_modified_since`, adaptive page size)
 - DCAT client: [`crates/ceres-client/src/dcat.rs`](../crates/ceres-client/src/dcat.rs)
 - SPARQL DCAT client: [`crates/ceres-client/src/sparql.rs`](../crates/ceres-client/src/sparql.rs)
+- Project Open Data client: [`crates/ceres-client/src/datajson.rs`](../crates/ceres-client/src/datajson.rs)
 - DB schema: [`migrations/`](../migrations/)

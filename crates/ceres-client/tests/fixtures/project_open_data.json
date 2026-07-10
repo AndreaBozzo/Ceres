@@ -1,0 +1,36 @@
+{
+  "@context": "https://project-open-data.cio.gov/v1.1/schema/catalog.jsonld",
+  "@id": "https://agency.gov/data.json",
+  "conformsTo": "https://project-open-data.cio.gov/v1.1/schema",
+  "describedBy": "https://project-open-data.cio.gov/v1.1/schema/catalog.json",
+  "dataset": [
+    {
+      "identifier": "dataset-1",
+      "title": "Air quality observations",
+      "description": "Hourly sensor observations.",
+      "keyword": ["air", "environment"],
+      "modified": "2026-06-01T10:30:00Z",
+      "publisher": {"name": "Example Agency"},
+      "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "landingPage": "https://agency.gov/datasets/air-quality",
+      "distribution": [
+        {
+          "title": "CSV download",
+          "format": "CSV",
+          "downloadURL": "https://agency.gov/files/air-quality.csv"
+        }
+      ]
+    },
+    {
+      "identifier": "https://agency.gov/datasets/budget",
+      "title": "Budget",
+      "modified": "2026-05-01",
+      "distribution": [{"accessURL": "https://api.agency.gov/budget"}]
+    },
+    {
+      "identifier": "dataset-3",
+      "title": {"fr": "Titre français", "en": "English title"},
+      "description": ["Description en français"]
+    }
+  ]
+}

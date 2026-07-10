@@ -22,6 +22,7 @@
 //! | CKAN | Supported | [CKAN API](https://docs.ckan.org/en/2.9/api/) |
 //! | DCAT-AP (udata REST) | Supported | [DCAT-AP](https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe) |
 //! | DCAT-AP (SPARQL) | Supported | SPARQL endpoint with DCAT vocabulary |
+//! | DCAT-US (`data.json`) | Supported | Project Open Data static catalog |
 //! | Socrata | Planned | [Socrata API](https://dev.socrata.com/) |
 //!
 //! # Embedding Providers
@@ -37,6 +38,7 @@
 //! | Ollama | mxbai-embed-large | 1024 |
 
 pub mod ckan;
+pub mod datajson;
 pub mod dcat;
 pub mod gemini;
 pub mod ollama;
@@ -47,6 +49,7 @@ pub mod sparql;
 
 // Re-export main client types
 pub use ckan::{CkanClient, CkanClientFactory};
+pub use datajson::{DataJsonClient, DataJsonDataset};
 pub use dcat::DcatClient;
 pub use gemini::GeminiClient;
 pub use ollama::OllamaClient;
