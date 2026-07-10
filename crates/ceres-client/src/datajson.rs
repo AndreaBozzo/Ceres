@@ -5,6 +5,7 @@
 //! pagination or incremental queries, so Ceres downloads one size-bounded
 //! document and applies `modified` filtering locally.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use ceres_core::error::AppError;
@@ -13,6 +14,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use futures::StreamExt;
 use reqwest::{Client, StatusCode, Url};
 use serde_json::Value;
+use tokio::sync::OnceCell;
 use tokio::time::sleep;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -38,6 +40,10 @@ pub struct DataJsonClient {
     catalog_url: Url,
     language: String,
     max_catalog_bytes: u64,
+    /// Parsed catalog shared by all clones of this client. Static catalogs have
+    /// no per-dataset endpoint, so caching prevents list-then-get callers from
+    /// downloading the same document once per dataset.
+    datasets: Arc<OnceCell<Vec<DataJsonDataset>>>,
 }
 
 impl DataJsonClient {
@@ -61,6 +67,7 @@ impl DataJsonClient {
             catalog_url,
             language: language.to_string(),
             max_catalog_bytes,
+            datasets: Arc::new(OnceCell::new()),
         })
     }
 
@@ -78,18 +85,19 @@ impl DataJsonClient {
 
     pub async fn list_dataset_ids(&self) -> Result<Vec<String>, AppError> {
         Ok(self
-            .search_all_datasets()
+            .datasets()
             .await?
-            .into_iter()
-            .map(|dataset| dataset.identifier)
+            .iter()
+            .map(|dataset| dataset.identifier.clone())
             .collect())
     }
 
     pub async fn get_dataset(&self, id: &str) -> Result<DataJsonDataset, AppError> {
-        self.search_all_datasets()
+        self.datasets()
             .await?
-            .into_iter()
+            .iter()
             .find(|dataset| dataset.identifier == id)
+            .cloned()
             .ok_or_else(|| AppError::ClientError(format!("Dataset '{id}' was not found")))
     }
 
@@ -98,16 +106,16 @@ impl DataJsonClient {
         since: DateTime<Utc>,
     ) -> Result<Vec<DataJsonDataset>, AppError> {
         Ok(self
-            .search_all_datasets()
+            .datasets()
             .await?
-            .into_iter()
+            .iter()
             .filter(|dataset| dataset.modified.is_none_or(|modified| modified >= since))
+            .cloned()
             .collect())
     }
 
     pub async fn search_all_datasets(&self) -> Result<Vec<DataJsonDataset>, AppError> {
-        let body = self.fetch_catalog().await?;
-        parse_catalog(&body, self.base_url.as_str(), &self.language)
+        Ok(self.datasets().await?.clone())
     }
 
     pub fn into_new_dataset(
@@ -187,6 +195,15 @@ impl DataJsonClient {
         }
         Err(last_error)
     }
+
+    async fn datasets(&self) -> Result<&Vec<DataJsonDataset>, AppError> {
+        self.datasets
+            .get_or_try_init(|| async {
+                let body = self.fetch_catalog().await?;
+                parse_catalog(&body, self.base_url.as_str(), &self.language)
+            })
+            .await
+    }
 }
 
 fn catalog_url(base_url: &Url) -> Result<Url, AppError> {
@@ -194,7 +211,11 @@ fn catalog_url(base_url: &Url) -> Result<Url, AppError> {
     if path.ends_with(".json") {
         Ok(base_url.clone())
     } else {
-        base_url
+        let mut directory_url = base_url.clone();
+        if !directory_url.path().ends_with('/') {
+            directory_url.set_path(&format!("{}/", directory_url.path()));
+        }
+        directory_url
             .join("data.json")
             .map_err(|error| AppError::InvalidPortalUrl(error.to_string()))
     }
@@ -326,6 +347,22 @@ mod tests {
             client.catalog_url(),
             "https://agency.gov/open-data/data.json"
         );
+    }
+
+    #[test]
+    fn site_path_without_trailing_slash_gets_data_json_path() {
+        let client = DataJsonClient::new("https://agency.gov/open-data", "en").unwrap();
+        assert_eq!(
+            client.catalog_url(),
+            "https://agency.gov/open-data/data.json"
+        );
+    }
+
+    #[test]
+    fn client_clones_share_the_catalog_cache() {
+        let client = DataJsonClient::new("https://agency.gov/", "en").unwrap();
+        let clone = client.clone();
+        assert!(Arc::ptr_eq(&client.datasets, &clone.datasets));
     }
 
     #[test]
