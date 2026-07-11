@@ -1,7 +1,7 @@
 <div align="center">
   <img src="website/src/assets/images/logo.png" alt="Ceres Logo" width="800" height="auto"/>
   <h1>Ceres</h1>
-  <p><strong>Harvest-first toolkit for open data portals</strong></p>
+  <p><strong>Harvest-first toolkit for open data portals — one synchronized catalog from 120+ portals and 2M+ datasets</strong></p>
   <p>
     <a href="https://crates.io/crates/ceres-search"><img src="https://img.shields.io/crates/v/ceres-search.svg" alt="crates.io"></a>
     <a href="https://github.com/AndreaBozzo/Ceres/actions"><img src="https://github.com/AndreaBozzo/Ceres/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -10,75 +10,67 @@
     <a href="https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-Open%20Data%20Index-yellow" alt="HuggingFace Dataset"></a>
   </p>
   <p>
+    <a href="https://learnceres.pages.dev">Website</a> •
     <a href="#quick-start">Quick Start</a> •
-    <a href="#what-ceres-does">What Ceres Does</a> •
-    <a href="#usage">Usage</a> •
+    <a href="#supported-portals">Supported Portals</a> •
+    <a href="#the-open-data-index">The Index</a> •
     <a href="#rest-api">REST API</a>
   </p>
 </div>
 
 ---
 
-Ceres is a Rust toolkit for harvesting metadata from open data portals and keeping that catalog synchronized over time.
+Open data is fragmented across thousands of portals speaking different APIs — CKAN, DCAT, SPARQL endpoints, static `data.json` catalogs, Socrata. Ceres harvests them all into **one synchronized PostgreSQL catalog**: incremental sync, delta detection, stale tracking, bounded memory on multi-million-dataset sources.
 
-Harvesting is the center of the project. Embeddings, semantic search, exports, and the REST API build on top of the harvested catalog when you want them.
+Everything else is layered on top, and optional: local embeddings, semantic search, a REST API, and reproducible Parquet snapshots published as the public **[Ceres Open Data Index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index)**.
 
 > Named after the Roman goddess of harvest and agriculture.
 
-## What Ceres Does
+## At a Glance
 
-- Harvests dataset metadata from portal APIs into PostgreSQL with incremental sync, delta detection, and stale dataset tracking
-- Works in metadata-only mode, so you can build and maintain a local catalog without any embedding provider configured
-- Adds embeddings later through a separate pipeline, with local Ollama as the recommended zero-cost path and OpenAI or Gemini still available
-- Exposes optional search, export, and API layers once your catalog is populated
+- **120+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, govdata.de, dados.gov.pt), cities (Milano, NYC), and agencies
+- **2M+ datasets** in the live catalog; 1.85M+ curated in the latest published snapshot
+- **5 harvest paths** shipped: CKAN, DCAT udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, and Socrata Discovery — with more clients landing on the [roadmap](#roadmap)
+- **Metadata-only by default** — no embedding provider, API key, or GPU required to build and maintain a catalog
+- **Local-first embeddings** via Ollama when you want semantic search; Gemini and OpenAI supported
+- **Reproducible exports** — Parquet snapshots with versioned manifests, SHA-256 checksums, coverage/quality reports, and changelogs
 
-## Why This Shape
+## Why Harvest-First
 
-Most open data tooling focuses on search first. In practice, the hard part is getting a reliable, repeatable harvesting pipeline:
+Most open data tooling starts at search. In practice the hard part comes earlier:
 
-- Portals expose different APIs and quality levels
+- Portals expose different APIs, capabilities, and reliability profiles
 - Large catalogs need incremental syncs and bounded memory usage
-- Removed datasets need to be detected without deleting history
-- Embedding should not be coupled to harvesting, because it is optional, slower, and operationally distinct
+- Removed datasets must be detected without deleting history
+- Embedding is optional, slower, and operationally distinct — it should never block harvesting
 
-Ceres addresses that by splitting the system into two stages:
+Ceres splits the system accordingly:
 
-1. Harvest and normalize metadata
-2. Optionally embed and search that catalog
+1. **Harvest and normalize metadata** — `HarvestService`, always available
+2. **Optionally embed and search** — `EmbeddingService`, added later if useful
 
-## Current Scope
+## Supported Portals
 
-- Harvesting: CKAN, DCAT-AP udata REST, and SPARQL-backed DCAT endpoints (e.g. `data.europa.eu`)
-- Embeddings: Ollama locally, or Gemini/OpenAI if you prefer hosted providers
-- Search: semantic search over datasets that already have embeddings, backed by a tuned HNSW index for catalogs at scale
-- Export: JSONL, JSON, CSV, and curated Parquet
-- Operations: CLI, REST API, database-backed harvest jobs, graceful shutdown, protected admin endpoints
+| Type | Flag | Serves | Examples |
+|---|---|---|---|
+| CKAN | `--type ckan` | CKAN action API portals | dati.comune.milano.it, catalog.data.gov, dati.gov.it |
+| DCAT udata REST | `--type dcat` (default profile) | udata-flavored DCAT-AP portals | data.gouv.fr, data.public.lu |
+| DCAT SPARQL | `--type dcat --profile sparql` | SPARQL-backed DCAT-AP catalogs | data.europa.eu |
+| Project Open Data | `--type dcat --profile static_json` | Static DCAT-US `data.json` catalogs | data.va.gov, census.gov, justice.gov |
+| Socrata | `--type socrata` | Socrata Discovery API catalogs | data.cityofnewyork.us, data.wa.gov |
 
-## Key Capabilities
+All clients stream page-by-page, preserve the complete source metadata for downstream use, and share the same sync machinery (incremental sync, content-hash delta detection, stale marking). Next up: OpenDataSoft and ArcGIS Hub ([v0.6.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones)).
 
-- Harvest-first workflow with optional embedding and search
-- Streaming harvest pipeline for large portals
-- Incremental sync plus content-hash delta detection
-- Metadata-only mode with no embedding dependency
-- Standalone `embed` command for backfills and provider switches
-- Local Ollama embedding support with native batching
-- Recoverable job queue for API-triggered harvests
-- Soft stale detection for datasets removed upstream
-- Batch harvesting through `portals.toml`
-- Export pipeline for downstream analytics and HuggingFace publishing
+## The Open Data Index
 
-## Supported Portal Types
+Ceres is both a toolkit and a working pipeline. The catalog it maintains is published as the **[Ceres Open Data Index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index)** on Hugging Face: a curated, deduplicated Parquet snapshot of open dataset metadata across national, regional, and city portals worldwide.
 
-Today, the shipped portal clients cover:
+Each snapshot ships a verifiable contract:
 
-- `ckan`
-- `dcat` for udata-flavored DCAT-AP portals such as `data.public.lu` and `data.gouv.fr` (profile `udata_rest`, the default)
-- `dcat` with `--profile sparql` for SPARQL-backed DCAT catalogs such as `data.europa.eu`
-- `dcat` with `--profile static_json` for Project Open Data / DCAT-US `data.json` catalogs
-- `socrata` for Socrata Discovery API catalogs such as NYC Open Data
-
-Socrata harvests scope Discovery API results to the configured portal domain,
-keeps the complete source result in metadata, and streams the catalog page-by-page.
+- `all.parquet` — the canonical complete index (per-portal subsets under `data/`)
+- `metadata.json` — versioned manifest: snapshot ID, provenance, per-portal counts, SHA-256 checksums
+- `reports.json` / `report.md` — coverage by portal/type/language and field-completeness rates
+- `changelog.json` / `changelog.md` — dataset-level diff against the previous snapshot
 
 ## Quick Start
 
@@ -86,7 +78,6 @@ keeps the complete source result in metadata, and streams the catalog page-by-pa
 
 - Rust 1.95+
 - Docker and Docker Compose
-- PostgreSQL 16+ with `pgvector` when running outside Docker
 - Optional for embeddings: [Ollama](https://ollama.com) locally, or Gemini/OpenAI credentials
 
 ### 1. Clone and start the database
@@ -105,10 +96,10 @@ make migrate
 # Single CKAN portal
 cargo run --bin ceres -- harvest https://dati.comune.milano.it --metadata-only
 
-# Single DCAT portal
+# DCAT portal
 cargo run --bin ceres -- harvest https://data.public.lu --type dcat --metadata-only
 
-# Single Socrata portal (no app token required for public reads)
+# Socrata portal (no app token required for public reads)
 cargo run --bin ceres -- harvest https://data.cityofnewyork.us --type socrata --metadata-only
 
 # All enabled portals from config
@@ -174,11 +165,17 @@ type = "ckan"
 language = "it"
 
 [[portals]]
-name = "luxembourg"
-url = "https://data.public.lu"
+name = "nyc"
+url = "https://data.cityofnewyork.us"
+type = "socrata"
+language = "en"
+
+[[portals]]
+name = "europa"
+url = "https://data.europa.eu"
 type = "dcat"
-language = "fr"
-enabled = false
+profile = "sparql"
+language = "en"
 ```
 
 See `examples/portals.toml` for a larger configuration set.
@@ -223,19 +220,11 @@ requests return `403`.
 # All enabled portals from config
 ceres harvest
 
-# Ad-hoc CKAN harvest
+# Ad-hoc harvests by portal type
 ceres harvest https://dati.comune.milano.it
-
-# Ad-hoc DCAT harvest
 ceres harvest https://data.public.lu --type dcat
-
-# Ad-hoc SPARQL-backed DCAT harvest
 ceres harvest https://data.europa.eu --type dcat --profile sparql
-
-# Harvest a static Project Open Data catalog
 ceres harvest https://www.data.va.gov/data.json --type dcat --profile static_json --metadata-only
-
-# Harvest a Socrata Discovery API catalog
 ceres harvest https://data.cityofnewyork.us --type socrata --metadata-only
 
 # Named portal from config
@@ -348,30 +337,28 @@ Server-triggered harvest jobs use the matching `portals.toml` entry for both
 `type`, DCAT `profile`, language, URL template, and optional
 `sparql_endpoint` are copied onto each durable job before the worker runs it.
 
-## Website Docs
+## Agentic Usage (Claude Code and friends)
 
-The website lives in `website/` and documents the same harvest-first model:
+Ceres ships with agent support in-repo:
 
-- harvesting architecture
-- optional embeddings and costs
-- contributing and security notes
+- [`AGENTS.md`](AGENTS.md) — contributor guide for coding agents (project map, conventions, validation commands); `CLAUDE.md` points Claude Code at it
+- [`.claude/skills/ceres`](.claude/skills/ceres/SKILL.md) — a Claude Code skill covering architecture, traits, CLI/REST usage, and extension points; picked up automatically when you open the repo with Claude Code
+- [`.claude/skills/ceres-publish-dataset`](.claude/skills/ceres-publish-dataset/SKILL.md) — the maintainer workflow for publishing Open Data Index snapshots to Hugging Face
+
+## Roadmap
+
+- **Now (v0.5.0)** — trustable published index: versioned snapshot manifests, integrity checksums, coverage/quality reports, alias-aware duplicate semantics, snapshot changelogs; Socrata Discovery and static `data.json` harvest paths
+- **Next (v0.6.0)** — portal coverage expansion: OpenDataSoft and ArcGIS Hub clients, job-based harvesting for every supported client, newly validated portals at scale
+- **Later (v0.7.0)** — resource-level metadata depth ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
 
 ## Related Projects
 
-- [Ceres-Claude-Skill](https://github.com/AndreaBozzo/Ceres-Claude-Skill) for Claude Code and Claude custom skill support
-- [AndreaBozzo/ceres-open-data-index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index) for published dataset snapshots
-
-## Version
-
-Current released version: `0.4.2`
-
-The `0.5.0` milestone is focused on the published index contract: versioned
-snapshot manifests, integrity checks, coverage and quality reports, explicit
-duplicate/source-alias semantics, and snapshot-to-snapshot changelogs.
+- [AndreaBozzo/ceres-open-data-index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index) — published dataset snapshots on Hugging Face
+- [learnceres.pages.dev](https://learnceres.pages.dev) — documentation website
 
 ## Contributing
 
-See `website/src/content/docs/CONTRIBUTING.md` and the crate-level docs for development setup, tests, and release workflow.
+See [CONTRIBUTING](website/src/content/docs/CONTRIBUTING.md), [`AGENTS.md`](AGENTS.md), and the crate-level docs for development setup, tests, and release workflow. Come talk to us on [Discord](https://discord.gg/fztdKSPXSz).
 
 ## License
 

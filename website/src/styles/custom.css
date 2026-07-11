@@ -70,6 +70,45 @@ html[data-theme='dark'] .sl-markdown-content h1 {
 	}
 }
 
+/* Landing page stat band */
+.stat-band {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: 1rem;
+	margin: 2rem 0;
+}
+
+.stat {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	text-align: center;
+	padding: 1.25rem 1rem;
+	background: var(--sl-color-bg-nav);
+	border: 1px solid var(--sl-color-hairline);
+	border-radius: 8px;
+	transition: all 0.3s ease;
+}
+
+.stat:hover {
+	border-color: #3b82f6;
+	transform: translateY(-2px);
+}
+
+.stat-value {
+	font-family: var(--sl-font-mono);
+	font-size: 1.9rem;
+	font-weight: 500;
+	color: var(--sl-color-text-accent);
+	line-height: 1.2;
+}
+
+.stat-label {
+	font-size: 0.85rem;
+	color: var(--sl-color-gray-2);
+	margin-top: 0.35rem;
+}
+
 /* Feature Grid Card Enhancements */
 .ceres-card {
 	background: var(--sl-color-bg-nav);
@@ -124,9 +163,4 @@ html[data-theme='dark'] .ceres-card:hover {
 .arch-img-wrapper img:hover {
 	transform: scale(1.02);
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-}
-
-/* Fix Starlight Hero Image Background (removes white box on light theme) */
-:root:not([data-theme='dark']) .hero img {
-	mix-blend-mode: multiply !important;
 }

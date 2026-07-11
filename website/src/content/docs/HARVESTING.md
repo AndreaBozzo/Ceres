@@ -17,6 +17,9 @@ Today the shipping portal clients cover:
 - Static Project Open Data / DCAT-US catalogs (via `--profile static_json`)
 - Socrata catalogs through the Discovery API (via `--type socrata`)
 
+See [Supported portals](/portals/) for per-portal configuration, examples, and
+current coverage numbers.
+
 ## Socrata Discovery API
 
 Socrata portals are harvested from their paginated `/api/catalog/v1` endpoint,
