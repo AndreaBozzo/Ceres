@@ -101,6 +101,47 @@ async fn test_upsert_updates_existing_dataset() {
     );
 }
 
+/// A full-sync exclusion pass restores a dataset that has reappeared without
+/// touching unchanged rows that remained active.
+#[tokio::test]
+async fn test_mark_stale_by_exclusion_restores_seen_datasets() {
+    let (pool, _container) = setup_test_db().await;
+    let repo = DatasetRepository::new(pool.clone());
+    let portal = "https://example.com";
+
+    repo.upsert(&sample_new_dataset("seen", portal))
+        .await
+        .expect("insert seen dataset");
+    repo.upsert(&sample_new_dataset("missing", portal))
+        .await
+        .expect("insert missing dataset");
+
+    sqlx::query("UPDATE datasets SET is_stale = TRUE WHERE original_id = 'seen'")
+        .execute(&pool)
+        .await
+        .expect("mark seen dataset stale");
+
+    let newly_stale = repo
+        .mark_stale_by_exclusion(portal, &["seen".to_string()])
+        .await
+        .expect("exclusion pass should succeed");
+
+    assert_eq!(newly_stale, 1, "only the missing dataset is newly stale");
+
+    let states: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT original_id, is_stale FROM datasets WHERE source_portal = $1 ORDER BY original_id",
+    )
+    .bind(portal)
+    .fetch_all(&pool)
+    .await
+    .expect("load stale states");
+
+    assert_eq!(
+        states,
+        vec![("missing".to_string(), true), ("seen".to_string(), false)]
+    );
+}
+
 /// Test 3: Verify vector search returns results ordered by similarity
 #[tokio::test]
 async fn test_search_returns_ordered_by_similarity() {

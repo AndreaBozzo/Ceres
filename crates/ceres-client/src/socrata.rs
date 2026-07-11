@@ -157,6 +157,7 @@ impl SocrataClient {
     ) -> Result<Vec<SocrataDataset>, AppError> {
         let mut offset = 0;
         let mut datasets = Vec::new();
+        let mut seen_ids = HashSet::new();
 
         loop {
             let page = self
@@ -186,7 +187,8 @@ impl SocrataClient {
             datasets.extend(
                 page.datasets
                     .into_iter()
-                    .filter(|dataset| dataset.modified.is_some_and(|modified| modified >= since)),
+                    .filter(|dataset| dataset.modified.is_some_and(|modified| modified >= since))
+                    .filter(|dataset| seen_ids.insert(dataset.id.clone())),
             );
 
             let done = reached_cutoff
@@ -215,8 +217,8 @@ impl SocrataClient {
     ) -> BoxStream<'_, Result<Vec<SocrataDataset>, AppError>> {
         let client = self.clone();
         Box::pin(stream::unfold(
-            (client, 0_usize, false),
-            |(client, offset, finished)| async move {
+            (client, 0_usize, false, HashSet::new(), 0_u8),
+            |(client, offset, finished, mut seen_ids, pass)| async move {
                 if finished {
                     return None;
                 }
@@ -226,9 +228,44 @@ impl SocrataClient {
                         let done =
                             page.raw_count == 0 || offset + page.raw_count >= page.result_set_size;
                         let next_offset = offset + page.raw_count;
-                        Some((Ok(page.datasets), (client, next_offset, done)))
+                        let raw_dataset_count = page.datasets.len();
+                        let datasets: Vec<_> = page
+                            .datasets
+                            .into_iter()
+                            .filter(|dataset| seen_ids.insert(dataset.id.clone()))
+                            .collect();
+                        let duplicate_count = raw_dataset_count - datasets.len();
+                        if duplicate_count > 0 {
+                            tracing::debug!(
+                                portal = %client.base_url,
+                                duplicate_count,
+                                "Skipping duplicate Socrata dataset IDs across catalog pages"
+                            );
+                        }
+                        let reconcile = done && pass == 0 && seen_ids.len() < page.result_set_size;
+                        if reconcile {
+                            tracing::warn!(
+                                portal = %client.base_url,
+                                unique_ids = seen_ids.len(),
+                                result_set_size = page.result_set_size,
+                                "Socrata catalog returned duplicate IDs across pages; reconciling with a second pass"
+                            );
+                        } else if done && seen_ids.len() < page.result_set_size {
+                            tracing::warn!(
+                                portal = %client.base_url,
+                                unique_ids = seen_ids.len(),
+                                result_set_size = page.result_set_size,
+                                "Socrata catalog ended with fewer unique IDs than its reported result set size"
+                            );
+                        }
+                        let state = if reconcile {
+                            (client, 0, false, seen_ids, pass + 1)
+                        } else {
+                            (client, next_offset, done, seen_ids, pass)
+                        };
+                        Some((Ok(datasets), state))
                     }
-                    Err(error) => Some((Err(error), (client, offset, true))),
+                    Err(error) => Some((Err(error), (client, offset, true, seen_ids, pass))),
                 }
             },
         ))
@@ -729,6 +766,42 @@ mod tests {
                 .iter()
                 .all(|request| !request.headers.contains_key("x-app-token"))
         );
+    }
+
+    #[tokio::test]
+    async fn deduplicates_dataset_ids_across_catalog_pages() {
+        #[derive(Clone)]
+        struct DuplicateAcrossPages(Arc<AtomicUsize>);
+
+        impl Respond for DuplicateAcrossPages {
+            fn respond(&self, _request: &Request) -> ResponseTemplate {
+                let call = self.0.fetch_add(1, Ordering::SeqCst);
+                let id = if call < 3 { "aaaa-1111" } else { "bbbb-2222" };
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "results": [{
+                        "resource": {"id": id, "name": "Repeated"},
+                        "metadata": {"domain": "127.0.0.1"}
+                    }],
+                    "resultSetSize": 2
+                }))
+            }
+        }
+
+        let server = MockServer::start().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        Mock::given(method("GET"))
+            .and(path("/api/catalog/v1"))
+            .respond_with(DuplicateAcrossPages(calls.clone()))
+            .expect(4)
+            .mount(&server)
+            .await;
+
+        let client = SocrataClient::new_with_app_token(&server.uri(), None).unwrap();
+        let datasets = client.search_all_datasets().await.unwrap();
+        assert_eq!(datasets.len(), 2);
+        assert_eq!(datasets[0].id, "aaaa-1111");
+        assert_eq!(datasets[1].id, "bbbb-2222");
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
     #[tokio::test]

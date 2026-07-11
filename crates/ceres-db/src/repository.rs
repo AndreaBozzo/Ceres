@@ -302,11 +302,12 @@ impl DatasetRepository {
         Ok(result.rows_affected())
     }
 
-    /// Marks datasets as stale if their original_id is NOT in the given set.
+    /// Marks unseen datasets as stale and restores seen datasets that were stale.
     ///
     /// This is much faster than the timestamp-based approach because it avoids
     /// updating every unchanged row. Uses a CTE with UNNEST for efficient
-    /// hash-based exclusion in PostgreSQL.
+    /// hash-based exclusion in PostgreSQL. Existing fresh datasets are not
+    /// otherwise updated, so unchanged metadata keeps its original timestamp.
     pub async fn mark_stale_by_exclusion(
         &self,
         portal_url: &str,
@@ -329,27 +330,40 @@ impl DatasetRepository {
             return Ok(result.rows_affected());
         }
 
-        let result = sqlx::query(
+        let stale_count: (i64,) = sqlx::query_as(
             r#"
             WITH seen AS (
                 SELECT UNNEST($2::text[]) AS original_id
+            ),
+            revived AS (
+                UPDATE datasets d
+                SET is_stale = FALSE
+                WHERE d.source_portal = $1
+                  AND d.is_stale = TRUE
+                  AND EXISTS (
+                      SELECT 1 FROM seen s WHERE s.original_id = d.original_id
+                  )
+            ),
+            marked AS (
+                UPDATE datasets d
+                SET is_stale = TRUE
+                WHERE d.source_portal = $1
+                  AND d.is_stale = FALSE
+                  AND NOT EXISTS (
+                      SELECT 1 FROM seen s WHERE s.original_id = d.original_id
+                  )
+                RETURNING 1
             )
-            UPDATE datasets d
-            SET is_stale = TRUE
-            WHERE d.source_portal = $1
-              AND d.is_stale = FALSE
-              AND NOT EXISTS (
-                  SELECT 1 FROM seen s WHERE s.original_id = d.original_id
-              )
+            SELECT COUNT(*)::bigint FROM marked
             "#,
         )
         .bind(portal_url)
         .bind(seen_ids)
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        Ok(result.rows_affected())
+        Ok(stale_count.0 as u64)
     }
 
     /// Retrieves a dataset by UUID.
