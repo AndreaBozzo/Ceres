@@ -78,7 +78,7 @@ Today, the shipped portal clients cover:
 - `socrata` for Socrata Discovery API catalogs such as NYC Open Data
 
 Socrata harvests scope Discovery API results to the configured portal domain,
-keep the complete source result in metadata, and stream the catalog page-by-page.
+keeps the complete source result in metadata, and streams the catalog page-by-page.
 
 ## Quick Start
 

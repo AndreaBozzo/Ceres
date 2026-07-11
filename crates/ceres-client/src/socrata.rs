@@ -61,6 +61,9 @@ pub struct SocrataClient {
     base_url: Url,
     catalog_url: Url,
     domain: String,
+    request_timeout: Duration,
+    max_retries: u32,
+    retry_base_delay: Duration,
 }
 
 impl SocrataClient {
@@ -74,6 +77,14 @@ impl SocrataClient {
 
     /// Creates a client with an explicitly supplied optional Socrata app token.
     pub fn new_with_app_token(base_url: &str, app_token: Option<String>) -> Result<Self, AppError> {
+        Self::new_with_app_token_and_http_config(base_url, app_token, HttpConfig::from_env())
+    }
+
+    fn new_with_app_token_and_http_config(
+        base_url: &str,
+        app_token: Option<String>,
+        http_config: HttpConfig,
+    ) -> Result<Self, AppError> {
         let mut base_url =
             Url::parse(base_url).map_err(|_| AppError::InvalidPortalUrl(base_url.to_string()))?;
         let domain = base_url
@@ -109,6 +120,9 @@ impl SocrataClient {
             base_url,
             catalog_url,
             domain,
+            request_timeout: http_config.timeout,
+            max_retries: http_config.max_retries,
+            retry_base_delay: http_config.retry_base_delay,
         })
     }
 
@@ -148,16 +162,31 @@ impl SocrataClient {
             let page = self
                 .fetch_page(offset, PAGE_SIZE, "updatedAt", None)
                 .await?;
+            let undated_count = page
+                .datasets
+                .iter()
+                .filter(|dataset| dataset.modified.is_none())
+                .count();
+            if undated_count > 0 {
+                tracing::warn!(
+                    portal = %self.base_url,
+                    count = undated_count,
+                    "Skipping undated Socrata datasets during incremental sync; they remain covered by full syncs"
+                );
+            }
+            // Discovery normally supplies `updatedAt`. Missing timestamps are
+            // full-sync-only and count as older here so they cannot make every
+            // incremental run scan the entire catalog.
             let reached_cutoff = !page.datasets.is_empty()
                 && page
                     .datasets
                     .iter()
-                    .all(|dataset| dataset.modified.is_some_and(|modified| modified < since));
+                    .all(|dataset| dataset.modified.is_none_or(|modified| modified < since));
 
             datasets.extend(
                 page.datasets
                     .into_iter()
-                    .filter(|dataset| dataset.modified.is_none_or(|modified| modified >= since)),
+                    .filter(|dataset| dataset.modified.is_some_and(|modified| modified >= since)),
             );
 
             let done = reached_cutoff
@@ -279,14 +308,13 @@ impl SocrataClient {
     }
 
     async fn request_with_retry(&self, url: &Url) -> Result<reqwest::Response, AppError> {
-        let config = HttpConfig::from_env();
         let mut last_error = AppError::Generic("No Socrata request attempted".to_string());
 
-        for attempt in 1..=config.max_retries {
+        for attempt in 1..=self.max_retries {
             match self
                 .client
                 .get(url.clone())
-                .timeout(config.timeout)
+                .timeout(self.request_timeout)
                 .send()
                 .await
             {
@@ -295,17 +323,14 @@ impl SocrataClient {
                     let status = response.status();
                     if status == StatusCode::TOO_MANY_REQUESTS {
                         last_error = AppError::RateLimitExceeded;
-                        if attempt < config.max_retries {
+                        if attempt < self.max_retries {
                             let delay = response
                                 .headers()
                                 .get("retry-after")
                                 .and_then(|value| value.to_str().ok())
                                 .and_then(|value| value.parse::<u64>().ok())
                                 .map(Duration::from_secs)
-                                .unwrap_or_else(|| {
-                                    (config.retry_base_delay * 2_u32.pow(attempt))
-                                        .min(MAX_RETRY_DELAY)
-                                });
+                                .unwrap_or_else(|| retry_delay(self.retry_base_delay, attempt));
                             tracing::warn!(
                                 attempt,
                                 delay_ms = delay.as_millis(),
@@ -322,8 +347,8 @@ impl SocrataClient {
                             "Socrata server error: HTTP {}",
                             status.as_u16()
                         ));
-                        if attempt < config.max_retries {
-                            sleep(config.retry_base_delay * attempt).await;
+                        if attempt < self.max_retries {
+                            sleep(self.retry_base_delay.saturating_mul(attempt)).await;
                             continue;
                         }
                     }
@@ -336,14 +361,14 @@ impl SocrataClient {
                 }
                 Err(error) => {
                     last_error = if error.is_timeout() {
-                        AppError::Timeout(config.timeout.as_secs())
+                        AppError::Timeout(self.request_timeout.as_secs())
                     } else if error.is_connect() {
                         AppError::NetworkError(format!("Connection failed: {error}"))
                     } else {
                         AppError::ClientError(error.to_string())
                     };
-                    if attempt < config.max_retries && (error.is_timeout() || error.is_connect()) {
-                        sleep(config.retry_base_delay * attempt).await;
+                    if attempt < self.max_retries && (error.is_timeout() || error.is_connect()) {
+                        sleep(self.retry_base_delay.saturating_mul(attempt)).await;
                         continue;
                     }
                 }
@@ -358,19 +383,19 @@ impl PortalClient for SocrataClient {
     type PortalData = SocrataDataset;
 
     fn portal_type(&self) -> &'static str {
-        self.portal_type()
+        SocrataClient::portal_type(self)
     }
 
     fn base_url(&self) -> &str {
-        self.base_url()
+        SocrataClient::base_url(self)
     }
 
     async fn list_dataset_ids(&self) -> Result<Vec<String>, AppError> {
-        self.list_dataset_ids().await
+        SocrataClient::list_dataset_ids(self).await
     }
 
     async fn get_dataset(&self, id: &str) -> Result<Self::PortalData, AppError> {
-        self.get_dataset(id).await
+        SocrataClient::get_dataset(self, id).await
     }
 
     fn into_new_dataset(
@@ -386,20 +411,26 @@ impl PortalClient for SocrataClient {
         &self,
         since: DateTime<Utc>,
     ) -> Result<Vec<Self::PortalData>, AppError> {
-        self.search_modified_since(since).await
+        SocrataClient::search_modified_since(self, since).await
     }
 
     async fn search_all_datasets(&self) -> Result<Vec<Self::PortalData>, AppError> {
-        self.search_all_datasets().await
+        SocrataClient::search_all_datasets(self).await
     }
 
     fn search_all_datasets_stream(&self) -> BoxStream<'_, Result<Vec<Self::PortalData>, AppError>> {
-        self.search_all_datasets_stream()
+        SocrataClient::search_all_datasets_stream(self)
     }
 
     async fn dataset_count(&self) -> Result<usize, AppError> {
-        self.dataset_count().await
+        SocrataClient::dataset_count(self).await
     }
+}
+
+fn retry_delay(base_delay: Duration, attempt: u32) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(u32::BITS - 1);
+    let multiplier = 1_u32.checked_shl(exponent).unwrap_or(u32::MAX);
+    base_delay.saturating_mul(multiplier).min(MAX_RETRY_DELAY)
 }
 
 fn extract_dataset(raw: Value, base_url: &Url, configured_domain: &str) -> Option<SocrataDataset> {
@@ -537,6 +568,14 @@ mod tests {
 
     const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/socrata_catalog.json");
 
+    fn test_http_config(max_retries: u32) -> HttpConfig {
+        HttpConfig {
+            timeout: Duration::from_secs(5),
+            max_retries,
+            retry_base_delay: Duration::ZERO,
+        }
+    }
+
     #[test]
     fn parses_and_normalizes_fixture_without_changing_raw_metadata() {
         let response: CatalogResponse = serde_json::from_slice(FIXTURE).unwrap();
@@ -629,7 +668,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = SocrataClient::new_with_app_token(&server.uri(), None).unwrap();
+        let client = SocrataClient::new_with_app_token_and_http_config(
+            &server.uri(),
+            None,
+            test_http_config(2),
+        )
+        .unwrap();
         assert!(client.search_all_datasets().await.unwrap().is_empty());
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
@@ -731,11 +775,18 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = SocrataClient::new_with_app_token(&server.uri(), None).unwrap();
+        let retry_config = test_http_config(3);
+        let expected_retries = retry_config.max_retries;
+        let client =
+            SocrataClient::new_with_app_token_and_http_config(&server.uri(), None, retry_config)
+                .unwrap();
         let error = client.search_all_datasets().await.unwrap_err();
         assert!(error.to_string().contains("503"));
         assert_eq!(first_page_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(second_page_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            second_page_calls.load(Ordering::SeqCst),
+            expected_retries as usize
+        );
     }
 
     #[tokio::test]
@@ -764,6 +815,41 @@ mod tests {
         let datasets = client.search_modified_since(since).await.unwrap();
         assert_eq!(datasets.len(), 1);
         assert_eq!(datasets[0].id, "aaaa-1111");
+    }
+
+    #[tokio::test]
+    async fn incremental_search_excludes_undated_datasets_and_stops_at_cutoff() {
+        let server = MockServer::start().await;
+        let old = json!({
+            "resource": {"id": "bbbb-2222", "name": "Old", "updatedAt": "2026-07-09T10:00:00Z"},
+            "metadata": {"domain": "127.0.0.1"}
+        });
+        let undated = json!({
+            "resource": {"id": "cccc-3333", "name": "Undated"},
+            "metadata": {"domain": "127.0.0.1"}
+        });
+        Mock::given(method("GET"))
+            .and(query_param("order", "updatedAt"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "results": [old, undated],
+                "resultSetSize": 10_000
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = SocrataClient::new_with_app_token(&server.uri(), None).unwrap();
+        let since = Utc.with_ymd_and_hms(2026, 7, 10, 0, 0, 0).unwrap();
+        let datasets = client.search_modified_since(since).await.unwrap();
+        assert!(datasets.is_empty());
+    }
+
+    #[test]
+    fn retry_backoff_starts_at_base_and_saturates_before_overflow() {
+        let base = Duration::from_millis(500);
+        assert_eq!(retry_delay(base, 1), base);
+        assert_eq!(retry_delay(base, 2), Duration::from_secs(1));
+        assert_eq!(retry_delay(base, u32::MAX), MAX_RETRY_DELAY);
     }
 
     #[tokio::test]
