@@ -155,6 +155,56 @@ description = "Open Data NRW (Germany)"
 # type = "ckan"
 # description = "Australian Government Open Data (~109,000 datasets, English, very large)"
 
+# --- New verified portals (Jul 2026) --- #
+
+[[portals]]
+name = "greece"
+url = "https://data.gov.gr"
+type = "ckan"
+language = "el"
+enabled = false
+description = "Greek Government Open Data Portal (~22,600 datasets)"
+
+[[portals]]
+name = "latvia"
+url = "https://data.gov.lv"
+type = "ckan"
+language = "lv"
+enabled = false
+description = "Latvian Open Data Portal (~1,500 datasets)"
+
+[[portals]]
+name = "japan"
+url = "https://www.data.go.jp/data"
+type = "ckan"
+language = "ja"
+enabled = false
+description = "Japanese Government Open Data Portal (~18,200 datasets)"
+
+[[portals]]
+name = "denmark"
+url = "https://portal.opendata.dk"
+type = "ckan"
+language = "da"
+enabled = false
+description = "Danish Open Data Portal (~630 datasets)"
+
+[[portals]]
+name = "montreal"
+url = "https://donnees.montreal.ca"
+type = "ckan"
+language = "fr"
+enabled = false
+description = "Ville de Montréal open data (~400 datasets)"
+
+[[portals]]
+name = "boston"
+url = "https://data.boston.gov"
+type = "ckan"
+language = "en"
+enabled = false
+description = "City of Boston open data (~230 datasets)"
+
 # =============================================================================
 # Socrata Discovery API portals
 #
@@ -232,6 +282,142 @@ type = "opendatasoft"
 language = "fr"
 enabled = false
 description = "SNCF (French railways) open data (OpenDataSoft, ~170 datasets)"
+
+[[portals]]
+name = "nantes"
+url = "https://data.nantesmetropole.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Nantes Métropole open data (OpenDataSoft, ~590 datasets)"
+
+[[portals]]
+name = "strasbourg"
+url = "https://data.strasbourg.eu"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Eurométropole de Strasbourg open data (OpenDataSoft, ~400 datasets)"
+
+[[portals]]
+name = "angers"
+url = "https://data.angers.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Angers Loire Métropole open data (OpenDataSoft, ~150 datasets)"
+
+[[portals]]
+name = "occitanie"
+url = "https://data.laregion.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Région Occitanie open data (OpenDataSoft, ~200 datasets)"
+
+[[portals]]
+name = "aix-marseille"
+url = "https://data.ampmetropole.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Métropole Aix-Marseille-Provence open data (OpenDataSoft, ~250 datasets)"
+
+[[portals]]
+name = "issy"
+url = "https://data.issy.com"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Ville d'Issy-les-Moulineaux open data (OpenDataSoft, ~330 datasets)"
+
+[[portals]]
+name = "ratp"
+url = "https://data.ratp.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "RATP (Paris transit) open data (OpenDataSoft, ~25 datasets)"
+
+[[portals]]
+name = "idf-mobilites"
+url = "https://data.iledefrance-mobilites.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Île-de-France Mobilités open data (OpenDataSoft, ~90 datasets)"
+
+[[portals]]
+name = "star-rennes"
+url = "https://data.explore.star.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "STAR (Rennes transit) open data (OpenDataSoft, ~45 datasets)"
+
+[[portals]]
+name = "saemes"
+url = "https://opendata.saemes.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Saemes (Paris parking) open data (OpenDataSoft, ~20 datasets)"
+
+[[portals]]
+name = "odre"
+url = "https://odre.opendatasoft.com"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Open Data Réseaux Énergies (OpenDataSoft, ~190 datasets)"
+
+[[portals]]
+name = "basel-stadt"
+url = "https://data.bs.ch"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "Kanton Basel-Stadt open data (OpenDataSoft, ~350 datasets)"
+
+[[portals]]
+name = "thurgau"
+url = "https://data.tg.ch"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "Kanton Thurgau open data (OpenDataSoft, ~450 datasets)"
+
+[[portals]]
+name = "sbb"
+url = "https://data.sbb.ch"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "SBB (Swiss railways) open data (OpenDataSoft, ~65 datasets)"
+
+[[portals]]
+name = "rhein-kreis-neuss"
+url = "https://opendata.rhein-kreis-neuss.de"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "Rhein-Kreis Neuss open data (OpenDataSoft, ~420 datasets)"
+
+[[portals]]
+name = "bruxelles"
+url = "https://opendata.bruxelles.be"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Ville de Bruxelles open data (OpenDataSoft, ~210 datasets)"
+
+[[portals]]
+name = "namur"
+url = "https://data.namur.be"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Ville de Namur open data (OpenDataSoft, ~300 datasets)"
 
 # The OpenDataSoft federation hub aggregates datasets from many ODS portals
 # (ids carry an @domain suffix). Very large; harvest deliberately.
