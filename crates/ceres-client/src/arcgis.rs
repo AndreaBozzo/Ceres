@@ -9,8 +9,8 @@
 //! 10,000, so deep catalogs are walked with a keyset cursor on the
 //! `modified` timestamp (`sortBy=-properties.modified` plus
 //! `filter=modified <= <epoch millis>`), mirroring the OpenDataSoft
-//! client. ArcGIS items always carry a platform-managed `modified`
-//! timestamp, so no separate undated sweep is needed.
+//! client. ArcGIS items typically carry a platform-managed `modified`,
+//! so no separate undated sweep is needed.
 //!
 //! # Service URLs versus downloadable resources
 //!
