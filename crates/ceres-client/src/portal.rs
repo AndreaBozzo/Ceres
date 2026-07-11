@@ -21,6 +21,7 @@ use futures::stream::BoxStream;
 use crate::ckan::{CkanClient, CkanDataset};
 use crate::datajson::{DataJsonClient, DataJsonDataset};
 use crate::dcat::{DcatClient, DcatDataset};
+use crate::opendatasoft::{OpenDataSoftClient, OpenDataSoftDataset};
 use crate::socrata::{SocrataClient, SocrataDataset};
 use crate::sparql::SparqlDcatClient;
 
@@ -35,6 +36,8 @@ pub enum PortalDataEnum {
     DataJson(DataJsonDataset),
     /// Data from a Socrata Discovery API catalog.
     Socrata(SocrataDataset),
+    /// Data from an OpenDataSoft Explore API catalog.
+    OpenDataSoft(OpenDataSoftDataset),
 }
 
 /// Unified portal client that wraps concrete portal implementations.
@@ -53,6 +56,8 @@ pub enum PortalClientEnum {
     DataJson(DataJsonClient),
     /// Socrata Discovery API client.
     Socrata(SocrataClient),
+    /// OpenDataSoft Explore API v2.1 client.
+    OpenDataSoft(OpenDataSoftClient),
 }
 
 impl PortalClient for PortalClientEnum {
@@ -65,6 +70,7 @@ impl PortalClient for PortalClientEnum {
             Self::SparqlDcat(c) => c.portal_type(),
             Self::DataJson(c) => c.portal_type(),
             Self::Socrata(c) => c.portal_type(),
+            Self::OpenDataSoft(c) => c.portal_type(),
         }
     }
 
@@ -75,6 +81,7 @@ impl PortalClient for PortalClientEnum {
             Self::SparqlDcat(c) => c.base_url(),
             Self::DataJson(c) => c.base_url(),
             Self::Socrata(c) => c.base_url(),
+            Self::OpenDataSoft(c) => c.base_url(),
         }
     }
 
@@ -85,6 +92,7 @@ impl PortalClient for PortalClientEnum {
             Self::SparqlDcat(c) => c.list_dataset_ids().await,
             Self::DataJson(c) => c.list_dataset_ids().await,
             Self::Socrata(c) => c.list_dataset_ids().await,
+            Self::OpenDataSoft(c) => c.list_dataset_ids().await,
         }
     }
 
@@ -95,6 +103,7 @@ impl PortalClient for PortalClientEnum {
             Self::SparqlDcat(c) => c.get_dataset(id).await.map(PortalDataEnum::Dcat),
             Self::DataJson(c) => c.get_dataset(id).await.map(PortalDataEnum::DataJson),
             Self::Socrata(c) => c.get_dataset(id).await.map(PortalDataEnum::Socrata),
+            Self::OpenDataSoft(c) => c.get_dataset(id).await.map(PortalDataEnum::OpenDataSoft),
         }
     }
 
@@ -116,6 +125,9 @@ impl PortalClient for PortalClientEnum {
             }
             PortalDataEnum::Socrata(data) => {
                 SocrataClient::into_new_dataset(data, portal_url, url_template, language)
+            }
+            PortalDataEnum::OpenDataSoft(data) => {
+                OpenDataSoftClient::into_new_dataset(data, portal_url, url_template, language)
             }
         }
     }
@@ -145,6 +157,12 @@ impl PortalClient for PortalClientEnum {
                 .search_modified_since(since)
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Socrata).collect()),
+            Self::OpenDataSoft(c) => c.search_modified_since(since).await.map(|datasets| {
+                datasets
+                    .into_iter()
+                    .map(PortalDataEnum::OpenDataSoft)
+                    .collect()
+            }),
         }
     }
 
@@ -170,6 +188,12 @@ impl PortalClient for PortalClientEnum {
                 .search_all_datasets()
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Socrata).collect()),
+            Self::OpenDataSoft(c) => c.search_all_datasets().await.map(|datasets| {
+                datasets
+                    .into_iter()
+                    .map(PortalDataEnum::OpenDataSoft)
+                    .collect()
+            }),
         }
     }
 
@@ -204,6 +228,17 @@ impl PortalClient for PortalClientEnum {
                     r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Socrata).collect())
                 },
             )),
+            Self::OpenDataSoft(c) => Box::pin(StreamExt::map(
+                c.search_all_datasets_stream(),
+                |r: Result<Vec<OpenDataSoftDataset>, AppError>| {
+                    r.map(|datasets| {
+                        datasets
+                            .into_iter()
+                            .map(PortalDataEnum::OpenDataSoft)
+                            .collect()
+                    })
+                },
+            )),
         }
     }
 
@@ -219,6 +254,7 @@ impl PortalClient for PortalClientEnum {
                     .to_string(),
             )),
             Self::Socrata(c) => c.dataset_count().await,
+            Self::OpenDataSoft(c) => c.dataset_count().await,
         }
     }
 }
@@ -297,6 +333,9 @@ impl PortalClientFactory for PortalClientFactoryEnum {
         match portal_type {
             PortalType::Ckan => Ok(PortalClientEnum::Ckan(ckan_client_for(portal_url)?)),
             PortalType::Socrata => Ok(PortalClientEnum::Socrata(SocrataClient::new(portal_url)?)),
+            PortalType::OpenDataSoft => Ok(PortalClientEnum::OpenDataSoft(
+                OpenDataSoftClient::new(portal_url)?,
+            )),
             PortalType::Dcat => match profile.unwrap_or_default() {
                 DcatProfile::UdataRest => Ok(PortalClientEnum::Dcat(DcatClient::new(
                     portal_url, language,
@@ -445,6 +484,37 @@ mod tests {
             .err()
             .expect("expected endpoint-without-sparql error");
         assert!(err.to_string().contains("not 'sparql'"));
+    }
+
+    #[test]
+    fn test_factory_creates_opendatasoft_client() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory
+            .create(
+                "https://opendata.paris.fr",
+                PortalType::OpenDataSoft,
+                "fr",
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(matches!(client, PortalClientEnum::OpenDataSoft(_)));
+        assert_eq!(client.portal_type(), "opendatasoft");
+        assert_eq!(client.base_url(), "https://opendata.paris.fr/");
+    }
+
+    #[test]
+    fn test_factory_rejects_profile_on_opendatasoft_portal() {
+        let factory = PortalClientFactoryEnum::new();
+        let result = factory.create(
+            "https://opendata.paris.fr",
+            PortalType::OpenDataSoft,
+            "fr",
+            Some(DcatProfile::Sparql),
+            None,
+        );
+        let err = result.err().expect("expected profile-on-ods error");
+        assert!(err.to_string().contains("only valid for 'dcat'"));
     }
 
     #[test]

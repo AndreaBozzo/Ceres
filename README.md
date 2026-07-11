@@ -1,7 +1,7 @@
 <div align="center">
   <img src="website/src/assets/images/logo.png" alt="Ceres Logo" width="800" height="auto"/>
   <h1>Ceres</h1>
-  <p><strong>Harvest-first toolkit for open data portals — one synchronized catalog from 120+ portals and 2M+ datasets</strong></p>
+  <p><strong>Harvest-first toolkit for open data portals — one synchronized catalog from 150+ portals and 2M+ datasets</strong></p>
   <p>
     <a href="https://crates.io/crates/ceres-search"><img src="https://img.shields.io/crates/v/ceres-search.svg" alt="crates.io"></a>
     <a href="https://github.com/AndreaBozzo/Ceres/actions"><img src="https://github.com/AndreaBozzo/Ceres/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -28,9 +28,9 @@ Everything else is layered on top, and optional: local embeddings, semantic sear
 
 ## At a Glance
 
-- **120+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, govdata.de, dados.gov.pt), cities (Milano, NYC), and agencies
+- **150+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, govdata.de, dados.gov.pt), cities (Milano, NYC), and agencies
 - **2M+ datasets** in the live catalog; 1.85M+ curated in the latest published snapshot
-- **5 harvest paths** shipped: CKAN, DCAT udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, and Socrata Discovery — with more clients landing on the [roadmap](#roadmap)
+- **6 harvest paths** shipped: CKAN, DCAT udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, Socrata Discovery, and OpenDataSoft Explore — with more clients landing on the [roadmap](#roadmap)
 - **Metadata-only by default** — no embedding provider, API key, or GPU required to build and maintain a catalog
 - **Local-first embeddings** via Ollama when you want semantic search; Gemini and OpenAI supported
 - **Reproducible exports** — Parquet snapshots with versioned manifests, SHA-256 checksums, coverage/quality reports, and changelogs
@@ -58,8 +58,9 @@ Ceres splits the system accordingly:
 | DCAT SPARQL | `--type dcat --profile sparql` | SPARQL-backed DCAT-AP catalogs | data.europa.eu |
 | Project Open Data | `--type dcat --profile static_json` | Static DCAT-US `data.json` catalogs | data.va.gov, census.gov, justice.gov |
 | Socrata | `--type socrata` | Socrata Discovery API catalogs | data.cityofnewyork.us, data.wa.gov |
+| OpenDataSoft | `--type opendatasoft` | OpenDataSoft Explore API v2.1 catalogs | opendata.paris.fr, data.economie.gouv.fr |
 
-All clients stream page-by-page, preserve the complete source metadata for downstream use, and share the same sync machinery (incremental sync, content-hash delta detection, stale marking). Next up: OpenDataSoft and ArcGIS Hub ([v0.6.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones)).
+All clients stream page-by-page, preserve the complete source metadata for downstream use, and share the same sync machinery (incremental sync, content-hash delta detection, stale marking). Next up: ArcGIS Hub ([v0.6.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones)).
 
 ## The Open Data Index
 
@@ -101,6 +102,9 @@ cargo run --bin ceres -- harvest https://data.public.lu --type dcat --metadata-o
 
 # Socrata portal (no app token required for public reads)
 cargo run --bin ceres -- harvest https://data.cityofnewyork.us --type socrata --metadata-only
+
+# OpenDataSoft portal (no API key required for public reads)
+cargo run --bin ceres -- harvest https://opendata.paris.fr --type opendatasoft --metadata-only
 
 # All enabled portals from config
 cargo run --bin ceres -- harvest --config examples/portals.toml --metadata-only
@@ -184,6 +188,10 @@ Socrata public catalogs can be harvested without credentials. For higher
 Discovery API rate limits, set `SOCRATA_APP_TOKEN`; Ceres sends it through the
 `X-App-Token` header and never stores it in portal configuration.
 
+OpenDataSoft public catalogs also work anonymously. For higher Explore API
+quotas, set `ODS_API_KEY`; Ceres sends it as an `Authorization: Apikey ...`
+header and never stores it in portal configuration.
+
 ### Harvest resilience / HTTP tuning
 
 Harvesting is hardened for slow or rate-limiting portals: the CKAN client grows
@@ -226,6 +234,7 @@ ceres harvest https://data.public.lu --type dcat
 ceres harvest https://data.europa.eu --type dcat --profile sparql
 ceres harvest https://www.data.va.gov/data.json --type dcat --profile static_json --metadata-only
 ceres harvest https://data.cityofnewyork.us --type socrata --metadata-only
+ceres harvest https://opendata.paris.fr --type opendatasoft --metadata-only
 
 # Named portal from config
 ceres harvest --portal milano --config examples/portals.toml
@@ -348,7 +357,7 @@ Ceres ships with agent support in-repo:
 ## Roadmap
 
 - **Now (v0.5.0)** — trustable published index: versioned snapshot manifests, integrity checksums, coverage/quality reports, alias-aware duplicate semantics, snapshot changelogs; Socrata Discovery and static `data.json` harvest paths
-- **Next (v0.6.0)** — portal coverage expansion: OpenDataSoft and ArcGIS Hub clients, job-based harvesting for every supported client, newly validated portals at scale
+- **Next (v0.6.0)** — portal coverage expansion: OpenDataSoft Explore (shipped) and ArcGIS Hub clients, job-based harvesting for every supported client, newly validated portals at scale
 - **Later (v0.7.0)** — resource-level metadata depth ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
 
 ## Related Projects

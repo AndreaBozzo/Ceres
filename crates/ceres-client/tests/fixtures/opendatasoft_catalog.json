@@ -1,0 +1,96 @@
+{
+  "total_count": 2,
+  "results": [
+    {
+      "visibility": "domain",
+      "dataset_id": "arbres-remarquables",
+      "dataset_uid": "da_abc123",
+      "has_records": true,
+      "features": ["analyze", "geo"],
+      "attachments": [],
+      "alternative_exports": [],
+      "data_visible": true,
+      "fields": [
+        {
+          "name": "essence",
+          "description": null,
+          "annotations": { "facet": true, "facetsort": "alphanum" },
+          "label": "Essence",
+          "type": "text"
+        },
+        {
+          "name": "geo_point",
+          "description": null,
+          "annotations": {},
+          "label": "Coordonnées géo",
+          "type": "geo_point_2d"
+        }
+      ],
+      "metas": {
+        "dcat": {
+          "created": "2019-05-02T00:00:00+00:00",
+          "issued": null,
+          "creator": "Direction des Espaces Verts",
+          "contributor": null,
+          "accrualperiodicity": "annual",
+          "spatial": null,
+          "temporal": null
+        },
+        "default": {
+          "title": "Arbres remarquables",
+          "description": "<p>Inventaire des <b>arbres remarquables</b> avec localisation &amp; essences.</p>",
+          "theme": ["Environnement", "environnement"],
+          "keyword": ["arbres", "nature", "Arbres"],
+          "license": "Open Database License (ODbL)",
+          "license_url": "http://opendatacommons.org/licenses/odbl/",
+          "language": "fr",
+          "metadata_languages": ["fr"],
+          "timezone": null,
+          "modified": "2026-03-14T09:26:53+00:00",
+          "modified_updates_on_metadata_change": false,
+          "modified_updates_on_data_change": true,
+          "data_processed": "2026-03-14T09:26:53+00:00",
+          "metadata_processed": "2026-03-15T02:11:07+00:00",
+          "geographic_reference": ["fr"],
+          "publisher": "Ville Exemple",
+          "records_count": 187,
+          "attributions": null,
+          "source_domain": null,
+          "source_dataset": null,
+          "shared_catalog": null,
+          "federated": false,
+          "parent_domain": null
+        }
+      }
+    },
+    {
+      "visibility": "domain",
+      "dataset_id": "budget-2026",
+      "dataset_uid": "da_def456",
+      "has_records": true,
+      "features": ["analyze"],
+      "attachments": [],
+      "alternative_exports": [],
+      "data_visible": true,
+      "fields": [],
+      "metas": {
+        "dcat": {
+          "created": null,
+          "issued": null,
+          "creator": "Direction des Finances"
+        },
+        "default": {
+          "title": "   ",
+          "description": null,
+          "theme": null,
+          "keyword": null,
+          "license": null,
+          "language": "fr",
+          "modified": null,
+          "publisher": null,
+          "records_count": 12
+        }
+      }
+    }
+  ]
+}

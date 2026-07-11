@@ -115,7 +115,7 @@ pub struct PortalInfoResponse {
     pub name: String,
     /// Portal base URL
     pub url: String,
-    /// Portal type (ckan, socrata, dcat)
+    /// Portal type (ckan, socrata, dcat, opendatasoft)
     pub portal_type: String,
     /// DCAT profile (e.g., "sparql"), if applicable
     pub profile: Option<String>,

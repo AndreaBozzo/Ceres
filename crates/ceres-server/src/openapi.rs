@@ -18,7 +18,7 @@ use crate::handlers::{datasets, export, harvest, health, portals, search, stats}
         version = "1.0.0",
         description = "Semantic search engine for open data portals.
 
-Ceres indexes datasets from open data portals (CKAN, Socrata, DCAT) and provides
+Ceres indexes datasets from open data portals (CKAN, Socrata, DCAT, OpenDataSoft) and provides
 semantic search capabilities using vector embeddings.
 
 ## Features

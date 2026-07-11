@@ -1,6 +1,6 @@
 ---
 name: ceres
-description: Use when working with Ceres — a Rust harvest-first toolkit and public open data metadata index. Covers harvesting and synchronization, optional embedding and search, CKAN, DCAT udata, and SPARQL-backed DCAT portal support, Parquet snapshot manifests/reports/changelogs, Ollama or hosted providers, CLI commands, REST API endpoints, portal configuration, architecture, extending via traits, release workflow, and contributing to the Ceres codebase.
+description: Use when working with Ceres — a Rust harvest-first toolkit and public open data metadata index. Covers harvesting and synchronization, optional embedding and search, CKAN, DCAT udata, SPARQL-backed DCAT, Project Open Data data.json, Socrata Discovery, and OpenDataSoft Explore portal support, Parquet snapshot manifests/reports/changelogs, Ollama or hosted providers, CLI commands, REST API endpoints, portal configuration, architecture, extending via traits, release workflow, and contributing to the Ceres codebase.
 ---
 
 # Ceres — Harvest-First Toolkit for Open Data Portals
@@ -25,7 +25,7 @@ Harvesting and embedding are decoupled: `HarvestService` handles metadata, `Embe
 - Harvest first and keep metadata synchronized over time
 - Add embeddings later only if you want semantic retrieval
 - Prefer Ollama for local embedding, with Gemini and OpenAI still supported
-- Support CKAN, DCAT-AP udata REST, and SPARQL-backed DCAT portals in the current client factory
+- Support CKAN, DCAT-AP udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, Socrata Discovery, and OpenDataSoft Explore portals in the current client factory
 - Publish reproducible Parquet snapshots for the public Open Data Index
 - Expose search, export, and API workflows over the same harvested catalog
 
@@ -163,10 +163,10 @@ ceres stats
 - **crates.io package:** `ceres-search`
 - Harvesting and embedding are decoupled: `--metadata-only` harvests without API key, `embed` command generates embeddings separately
 - Ollama is the preferred local embedding path; Gemini and OpenAI remain available
-- Current portal client factory supports CKAN and DCAT (`udata_rest` default profile plus `sparql` profile)
+- Current portal client factory supports CKAN, Socrata, OpenDataSoft, and DCAT (`udata_rest` default profile plus `sparql` and `static_json` profiles)
 - Stale dataset detection: datasets removed from portals are soft-marked (`is_stale`) during full syncs
 - Supports Ollama, Gemini, and OpenAI embeddings
 - Parquet export publishes a portable snapshot: `all.parquet` (canonical), per-portal subsets, `identity.parquet`, a versioned snapshot manifest (`metadata.json` with `snapshot_id`, provenance, alias-aware duplicate metadata, and SHA-256 checksums), coverage/quality reports (`reports.json`, `report.md`), and snapshot changelogs (`changelog.json`, `changelog.md` when `--previous` is supplied)
-- v0.6.0 milestone focus: portal coverage expansion in priority order — DCAT profile cleanup, Project Open Data `data.json`, Socrata, OpenDataSoft, ArcGIS Hub
+- v0.6.0 milestone focus: portal coverage expansion — DCAT profile cleanup, Project Open Data `data.json`, Socrata, and OpenDataSoft have shipped; ArcGIS Hub remains
 - v0.7.0 milestone focus: resource-level metadata depth tracked in issue #68
 - HuggingFace dataset: `AndreaBozzo/ceres-open-data-index`
