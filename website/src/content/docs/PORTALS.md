@@ -7,7 +7,7 @@ description: The portal APIs Ceres can harvest today, how to configure each one,
 
 Ceres currently harvests **120+ portals** into a single synchronized catalog of
 **2M+ datasets** — national portals, EU aggregators, US federal agencies, and
-city open data sites. Five harvest paths are shipped today, and every one of
+city open data sites. Seven harvest paths are shipped today, and every one of
 them shares the same sync machinery: incremental sync, content-hash delta
 detection, streaming page-by-page processing, and stale dataset marking.
 
@@ -19,6 +19,7 @@ detection, streaming page-by-page processing, and stale dataset marking.
 | Project Open Data | `--type dcat --profile static_json` | Static DCAT-US `data.json` catalogs | data.va.gov, census.gov, justice.gov |
 | Socrata | `--type socrata` | Socrata Discovery API catalogs | data.cityofnewyork.us, data.wa.gov |
 | OpenDataSoft | `--type opendatasoft` | OpenDataSoft Explore API v2.1 catalogs | opendata.paris.fr, data.economie.gouv.fr |
+| ArcGIS Hub | `--type arcgis` | ArcGIS Hub Search API catalogs | opendata.dc.gov, opendata.gis.utah.gov |
 
 Every client preserves the complete source metadata payload, so downstream
 features like resource-schema extraction keep working no matter which portal a
@@ -44,6 +45,9 @@ ceres harvest https://data.cityofnewyork.us --type socrata --metadata-only
 
 # OpenDataSoft Explore API
 ceres harvest https://opendata.paris.fr --type opendatasoft --metadata-only
+
+# ArcGIS Hub Search API
+ceres harvest https://opendata.dc.gov --type arcgis --metadata-only
 ```
 
 Or configure them once in `portals.toml` and harvest in batch:
@@ -113,6 +117,15 @@ for a larger, curated configuration set.
 - Incremental sync filters server-side with an ODSQL `where=modified >= date'...'` clause
 - No credentials required for public reads; set `ODS_API_KEY` for higher quotas
 
+### ArcGIS Hub Search API
+
+- Harvests the paginated `/api/search/v1/collections/dataset/items` endpoint (100 items per page, the API maximum)
+- Normalizes title, description (falling back to the item snippet), categories, tags, license, publisher, and `modified`; the complete catalog feature, including geometry and service metadata, stays in the raw metadata
+- Catalog entries mix hosted services (Feature/Image/Map Services) and file items (CSV, shapefile): the normalized dataset URL is always the Hub landing page — a service endpoint is a queryable API, not a file download
+- Catalogs deeper than the API's 10,000-row result window are walked with a keyset cursor on `modified`; incremental sync filters server-side with `filter=modified >= <epoch millis>`
+- Hub sites with an empty `catalogV2` item scope are rejected because their search endpoint returns global ArcGIS content rather than datasets belonging to that portal
+- No credentials required for public reads
+
 ## The published index
 
 The catalog Ceres maintains is published as the
@@ -122,10 +135,10 @@ checksums, coverage/quality reports, and snapshot-to-snapshot changelogs.
 
 ## What's next
 
-Coverage keeps expanding. The [v0.6.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones)
-adds two more clients — **OpenDataSoft** and **ArcGIS Hub** — which will
-significantly grow both the portal count and the dataset total, plus job-based
-harvesting for every supported client.
+Coverage keeps expanding. With **OpenDataSoft** and **ArcGIS Hub** shipped, the
+[v0.6.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones) continues
+with job-based harvesting for every supported client and newly validated
+portals at scale.
 
 Want a portal that none of the current clients cover? The client layer is
 trait-based and designed for extension — see

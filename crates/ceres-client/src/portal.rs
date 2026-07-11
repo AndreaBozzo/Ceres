@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
+use crate::arcgis::{ArcGisClient, ArcGisDataset};
 use crate::ckan::{CkanClient, CkanDataset};
 use crate::datajson::{DataJsonClient, DataJsonDataset};
 use crate::dcat::{DcatClient, DcatDataset};
@@ -38,6 +39,8 @@ pub enum PortalDataEnum {
     Socrata(SocrataDataset),
     /// Data from an OpenDataSoft Explore API catalog.
     OpenDataSoft(OpenDataSoftDataset),
+    /// Data from an ArcGIS Hub Search API catalog.
+    ArcGis(ArcGisDataset),
 }
 
 /// Unified portal client that wraps concrete portal implementations.
@@ -58,6 +61,8 @@ pub enum PortalClientEnum {
     Socrata(SocrataClient),
     /// OpenDataSoft Explore API v2.1 client.
     OpenDataSoft(OpenDataSoftClient),
+    /// ArcGIS Hub Search API client.
+    ArcGis(ArcGisClient),
 }
 
 impl PortalClient for PortalClientEnum {
@@ -71,6 +76,7 @@ impl PortalClient for PortalClientEnum {
             Self::DataJson(c) => c.portal_type(),
             Self::Socrata(c) => c.portal_type(),
             Self::OpenDataSoft(c) => c.portal_type(),
+            Self::ArcGis(c) => c.portal_type(),
         }
     }
 
@@ -82,6 +88,7 @@ impl PortalClient for PortalClientEnum {
             Self::DataJson(c) => c.base_url(),
             Self::Socrata(c) => c.base_url(),
             Self::OpenDataSoft(c) => c.base_url(),
+            Self::ArcGis(c) => c.base_url(),
         }
     }
 
@@ -93,6 +100,7 @@ impl PortalClient for PortalClientEnum {
             Self::DataJson(c) => c.list_dataset_ids().await,
             Self::Socrata(c) => c.list_dataset_ids().await,
             Self::OpenDataSoft(c) => c.list_dataset_ids().await,
+            Self::ArcGis(c) => c.list_dataset_ids().await,
         }
     }
 
@@ -104,6 +112,7 @@ impl PortalClient for PortalClientEnum {
             Self::DataJson(c) => c.get_dataset(id).await.map(PortalDataEnum::DataJson),
             Self::Socrata(c) => c.get_dataset(id).await.map(PortalDataEnum::Socrata),
             Self::OpenDataSoft(c) => c.get_dataset(id).await.map(PortalDataEnum::OpenDataSoft),
+            Self::ArcGis(c) => c.get_dataset(id).await.map(PortalDataEnum::ArcGis),
         }
     }
 
@@ -128,6 +137,9 @@ impl PortalClient for PortalClientEnum {
             }
             PortalDataEnum::OpenDataSoft(data) => {
                 OpenDataSoftClient::into_new_dataset(data, portal_url, url_template, language)
+            }
+            PortalDataEnum::ArcGis(data) => {
+                ArcGisClient::into_new_dataset(data, portal_url, url_template, language)
             }
         }
     }
@@ -163,6 +175,10 @@ impl PortalClient for PortalClientEnum {
                     .map(PortalDataEnum::OpenDataSoft)
                     .collect()
             }),
+            Self::ArcGis(c) => c
+                .search_modified_since(since)
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::ArcGis).collect()),
         }
     }
 
@@ -194,6 +210,10 @@ impl PortalClient for PortalClientEnum {
                     .map(PortalDataEnum::OpenDataSoft)
                     .collect()
             }),
+            Self::ArcGis(c) => c
+                .search_all_datasets()
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::ArcGis).collect()),
         }
     }
 
@@ -239,6 +259,12 @@ impl PortalClient for PortalClientEnum {
                     })
                 },
             )),
+            Self::ArcGis(c) => Box::pin(StreamExt::map(
+                c.search_all_datasets_stream(),
+                |r: Result<Vec<ArcGisDataset>, AppError>| {
+                    r.map(|datasets| datasets.into_iter().map(PortalDataEnum::ArcGis).collect())
+                },
+            )),
         }
     }
 
@@ -255,6 +281,7 @@ impl PortalClient for PortalClientEnum {
             )),
             Self::Socrata(c) => c.dataset_count().await,
             Self::OpenDataSoft(c) => c.dataset_count().await,
+            Self::ArcGis(c) => c.dataset_count().await,
         }
     }
 }
@@ -336,6 +363,7 @@ impl PortalClientFactory for PortalClientFactoryEnum {
             PortalType::OpenDataSoft => Ok(PortalClientEnum::OpenDataSoft(
                 OpenDataSoftClient::new(portal_url)?,
             )),
+            PortalType::ArcGis => Ok(PortalClientEnum::ArcGis(ArcGisClient::new(portal_url)?)),
             PortalType::Dcat => match profile.unwrap_or_default() {
                 DcatProfile::UdataRest => Ok(PortalClientEnum::Dcat(DcatClient::new(
                     portal_url, language,
@@ -514,6 +542,37 @@ mod tests {
             None,
         );
         let err = result.err().expect("expected profile-on-ods error");
+        assert!(err.to_string().contains("only valid for 'dcat'"));
+    }
+
+    #[test]
+    fn test_factory_creates_arcgis_client() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory
+            .create(
+                "https://opendata.dc.gov",
+                PortalType::ArcGis,
+                "en",
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(matches!(client, PortalClientEnum::ArcGis(_)));
+        assert_eq!(client.portal_type(), "arcgis");
+        assert_eq!(client.base_url(), "https://opendata.dc.gov/");
+    }
+
+    #[test]
+    fn test_factory_rejects_profile_on_arcgis_portal() {
+        let factory = PortalClientFactoryEnum::new();
+        let result = factory.create(
+            "https://opendata.dc.gov",
+            PortalType::ArcGis,
+            "en",
+            Some(DcatProfile::Sparql),
+            None,
+        );
+        let err = result.err().expect("expected profile-on-arcgis error");
         assert!(err.to_string().contains("only valid for 'dcat'"));
     }
 

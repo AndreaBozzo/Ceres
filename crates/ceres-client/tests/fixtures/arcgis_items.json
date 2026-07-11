@@ -1,0 +1,116 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-77.12, 38.79],
+            [-76.9, 38.79],
+            [-76.9, 38.996],
+            [-77.12, 38.996],
+            [-77.12, 38.79]
+          ]
+        ]
+      },
+      "properties": {
+        "id": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+        "title": "Remarkable Trees",
+        "name": "Remarkable_Trees",
+        "type": "Feature Service",
+        "typeKeywords": ["ArcGIS Server", "Data", "Feature Service", "Service"],
+        "snippet": "Inventory of remarkable trees.",
+        "description": "<DIV STYLE=\"text-align:Left;\"><P><SPAN>Inventory of <B>remarkable trees</B> with location &amp; species.</SPAN></P></DIV>",
+        "tags": ["trees", "nature", "Trees"],
+        "categories": ["/Categories/Environment", "/Categories/environment"],
+        "license": "CC-BY-4.0",
+        "licenseInfo": "<P>Creative Commons Attribution 4.0</P>",
+        "access": "public",
+        "accessInformation": "City of Example",
+        "culture": "en-us",
+        "created": 1556755200000,
+        "modified": 1773480413000,
+        "owner": "ExampleGIS",
+        "orgId": "AbCdEfGhIjKlMnOp",
+        "source": "City of Example",
+        "url": "https://services.arcgis.com/AbCdEfGhIjKlMnOp/arcgis/rest/services/Remarkable_Trees/FeatureServer",
+        "size": -1,
+        "numViews": 4213,
+        "scoreCompleteness": 78,
+        "spatialReference": "102685"
+      },
+      "time": null,
+      "links": [
+        {
+          "rel": "self",
+          "type": "application/geo+json",
+          "title": "This document as GeoJSON",
+          "href": "https://hub.example.gov/api/search/v1/collections/dataset/items/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+        },
+        {
+          "rel": "collection",
+          "type": "application/json",
+          "title": "Data",
+          "href": "https://hub.example.gov/api/search/v1/collections/dataset/collections/dataset"
+        }
+      ]
+    },
+    {
+      "id": "f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5",
+        "title": "   ",
+        "name": "budget_lookup_2026.csv",
+        "type": "CSV",
+        "typeKeywords": ["CSV"],
+        "snippet": "Budget lookup table for 2026 survey results.",
+        "description": null,
+        "tags": [],
+        "categories": [],
+        "license": null,
+        "licenseInfo": null,
+        "access": "public",
+        "accessInformation": null,
+        "culture": null,
+        "created": 1503676584000,
+        "modified": null,
+        "owner": "finance_dept",
+        "orgId": "AbCdEfGhIjKlMnOp",
+        "source": null,
+        "url": null,
+        "size": 11744
+      },
+      "time": null,
+      "links": [
+        {
+          "rel": "self",
+          "type": "application/geo+json",
+          "title": "This document as GeoJSON",
+          "href": "https://hub.example.gov/api/search/v1/collections/dataset/items/f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5"
+        }
+      ]
+    }
+  ],
+  "timestamp": "2026-07-11T09:00:00.000Z",
+  "numberMatched": 2,
+  "numberReturned": 2,
+  "links": [
+    {
+      "rel": "self",
+      "type": "application/json",
+      "title": "This document as JSON",
+      "href": "https://hub.example.gov/api/search/v1/collections/dataset/items"
+    },
+    {
+      "rel": "collection",
+      "type": "application/json",
+      "title": "Data",
+      "href": "https://hub.example.gov/api/search/v1/collections/dataset"
+    }
+  ]
+}

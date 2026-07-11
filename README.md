@@ -30,7 +30,7 @@ Everything else is layered on top, and optional: local embeddings, semantic sear
 
 - **150+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, govdata.de, dados.gov.pt), cities (Milano, NYC), and agencies
 - **2M+ datasets** in the live catalog; 1.85M+ curated in the latest published snapshot
-- **6 harvest paths** shipped: CKAN, DCAT udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, Socrata Discovery, and OpenDataSoft Explore — with more clients landing on the [roadmap](#roadmap)
+- **7 harvest paths** shipped: CKAN, DCAT udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, Socrata Discovery, OpenDataSoft Explore, and ArcGIS Hub — with more clients landing on the [roadmap](#roadmap)
 - **Metadata-only by default** — no embedding provider, API key, or GPU required to build and maintain a catalog
 - **Local-first embeddings** via Ollama when you want semantic search; Gemini and OpenAI supported
 - **Reproducible exports** — Parquet snapshots with versioned manifests, SHA-256 checksums, coverage/quality reports, and changelogs
@@ -59,8 +59,9 @@ Ceres splits the system accordingly:
 | Project Open Data | `--type dcat --profile static_json` | Static DCAT-US `data.json` catalogs | data.va.gov, census.gov, justice.gov |
 | Socrata | `--type socrata` | Socrata Discovery API catalogs | data.cityofnewyork.us, data.wa.gov |
 | OpenDataSoft | `--type opendatasoft` | OpenDataSoft Explore API v2.1 catalogs | opendata.paris.fr, data.economie.gouv.fr |
+| ArcGIS Hub | `--type arcgis` | ArcGIS Hub Search API catalogs | opendata.dc.gov, opendata.gis.utah.gov |
 
-All clients stream page-by-page, preserve the complete source metadata for downstream use, and share the same sync machinery (incremental sync, content-hash delta detection, stale marking). Next up: ArcGIS Hub ([v0.6.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones)).
+All clients stream page-by-page, preserve the complete source metadata for downstream use, and share the same sync machinery (incremental sync, content-hash delta detection, stale marking).
 
 ## The Open Data Index
 
@@ -105,6 +106,9 @@ cargo run --bin ceres -- harvest https://data.cityofnewyork.us --type socrata --
 
 # OpenDataSoft portal (no API key required for public reads)
 cargo run --bin ceres -- harvest https://opendata.paris.fr --type opendatasoft --metadata-only
+
+# ArcGIS Hub portal (no credentials required)
+cargo run --bin ceres -- harvest https://opendata.dc.gov --type arcgis --metadata-only
 
 # All enabled portals from config
 cargo run --bin ceres -- harvest --config examples/portals.toml --metadata-only
@@ -235,6 +239,7 @@ ceres harvest https://data.europa.eu --type dcat --profile sparql
 ceres harvest https://www.data.va.gov/data.json --type dcat --profile static_json --metadata-only
 ceres harvest https://data.cityofnewyork.us --type socrata --metadata-only
 ceres harvest https://opendata.paris.fr --type opendatasoft --metadata-only
+ceres harvest https://opendata.dc.gov --type arcgis --metadata-only
 
 # Named portal from config
 ceres harvest --portal milano --config examples/portals.toml
@@ -357,7 +362,7 @@ Ceres ships with agent support in-repo:
 ## Roadmap
 
 - **Now (v0.5.0)** — trustable published index: versioned snapshot manifests, integrity checksums, coverage/quality reports, alias-aware duplicate semantics, snapshot changelogs; Socrata Discovery and static `data.json` harvest paths
-- **Next (v0.6.0)** — portal coverage expansion: OpenDataSoft Explore (shipped) and ArcGIS Hub clients, job-based harvesting for every supported client, newly validated portals at scale
+- **Next (v0.6.0)** — portal coverage expansion: OpenDataSoft Explore and ArcGIS Hub clients (both shipped), job-based harvesting for every supported client, newly validated portals at scale
 - **Later (v0.7.0)** — resource-level metadata depth ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
 
 ## Related Projects

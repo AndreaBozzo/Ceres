@@ -80,6 +80,7 @@ pub enum Command {
   ceres harvest https://data.europa.eu --type dcat --profile sparql  # Harvest SPARQL DCAT endpoint
   ceres harvest https://www.data.va.gov/data.json --type dcat --profile static_json
   ceres harvest https://opendata.paris.fr --type opendatasoft  # Harvest OpenDataSoft portal
+  ceres harvest https://opendata.dc.gov --type arcgis  # Harvest ArcGIS Hub portal
   ceres harvest --portal milano                       # Harvest portal by name from config
   ceres harvest --config ~/custom.toml                # Use custom config file
   ceres harvest --full-sync                           # Force full sync even if incremental is available")]

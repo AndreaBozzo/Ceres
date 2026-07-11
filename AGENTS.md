@@ -8,7 +8,7 @@ Parquet snapshot exports are optional layers on top.
 ## Project map
 
 - `crates/ceres-core`: domain models, harvesting pipeline, configuration, and traits (`PortalClient`, `EmbeddingProvider`, `DatasetStore`).
-- `crates/ceres-client`: portal clients (CKAN, DCAT udata REST, SPARQL DCAT, Project Open Data `data.json`, Socrata Discovery, OpenDataSoft Explore) and embedding providers (Ollama, Gemini, OpenAI).
+- `crates/ceres-client`: portal clients (CKAN, DCAT udata REST, SPARQL DCAT, Project Open Data `data.json`, Socrata Discovery, OpenDataSoft Explore, ArcGIS Hub) and embedding providers (Ollama, Gemini, OpenAI).
 - `crates/ceres-db`: PostgreSQL/pgvector persistence.
 - `crates/ceres-server`: Axum HTTP API and OpenAPI definitions.
 - `crates/ceres-cli`: command-line entry point (`harvest`, `embed`, `search`, `export`, `stats`).
