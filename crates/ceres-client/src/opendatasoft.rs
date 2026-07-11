@@ -314,8 +314,9 @@ impl OpenDataSoftClient {
                         // Restart within the window from the oldest timestamp
                         // seen so far. If no new datasets arrived since the
                         // last restart the cursor cannot advance (more equal
-                        // timestamps than the window holds); stop instead of
-                        // looping forever.
+                        // timestamps than the window holds). Fail the stream
+                        // rather than truncate: a partial full sync would
+                        // otherwise mark every unfetched dataset stale.
                         let stalled =
                             state.cursor.is_some() && state.seen_ids.len() == state.seen_at_cursor;
                         match (oldest_modified.or(state.cursor), stalled) {
@@ -325,14 +326,14 @@ impl OpenDataSoftClient {
                                 state.offset = 0;
                             }
                             _ => {
-                                tracing::warn!(
-                                    portal = %state.client.base_url,
-                                    unique_ids = state.seen_ids.len(),
-                                    total_count = page.total_count,
-                                    "OpenDataSoft modified-cursor cannot advance; ending dated walk early"
-                                );
-                                state.phase = WalkPhase::Undated;
-                                state.offset = 0;
+                                state.phase = WalkPhase::Finished;
+                                let error = AppError::Generic(format!(
+                                    "OpenDataSoft modified-cursor cannot advance past {} of {} datasets on {}; aborting so the partial harvest is not treated as complete",
+                                    state.seen_ids.len(),
+                                    page.total_count,
+                                    state.client.base_url
+                                ));
+                                return Some((Err(error), state));
                             }
                         }
                     } else {
@@ -343,12 +344,14 @@ impl OpenDataSoftClient {
                     if query_exhausted {
                         state.phase = WalkPhase::Finished;
                     } else if next_offset + state.client.page_size > state.client.offset_window {
-                        tracing::warn!(
-                            portal = %state.client.base_url,
-                            total_count = page.total_count,
-                            "OpenDataSoft catalog has more undated datasets than the pagination window; truncating"
-                        );
+                        // Same reasoning as the dated stall: never let a
+                        // truncated walk look like a clean full sync.
                         state.phase = WalkPhase::Finished;
+                        let error = AppError::Generic(format!(
+                            "OpenDataSoft catalog on {} has more undated datasets ({}) than the pagination window can reach; aborting so the partial harvest is not treated as complete",
+                            state.client.base_url, page.total_count
+                        ));
+                        return Some((Err(error), state));
                     } else {
                         state.offset = next_offset;
                     }
@@ -464,7 +467,7 @@ impl OpenDataSoftClient {
                                 .get("retry-after")
                                 .and_then(|value| value.to_str().ok())
                                 .and_then(|value| value.parse::<u64>().ok())
-                                .map(Duration::from_secs)
+                                .map(|seconds| Duration::from_secs(seconds).min(MAX_RETRY_DELAY))
                                 .unwrap_or_else(|| retry_delay(self.retry_base_delay, attempt));
                             tracing::warn!(
                                 attempt,
@@ -927,7 +930,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stalled_cursor_ends_the_walk_instead_of_looping() {
+    async fn stalled_cursor_fails_the_walk_instead_of_looping() {
         #[derive(Clone)]
         struct SameTimestampCatalog;
 
@@ -971,9 +974,54 @@ mod tests {
         let mut client = test_client(&server.uri());
         client.page_size = 1;
         client.offset_window = 2;
-        let datasets = client.search_all_datasets().await.unwrap();
-        // Two window passes (ids ds-0, ds-1 twice, deduplicated), then stop.
-        assert_eq!(datasets.len(), 2);
+        // Two window passes (ids ds-0, ds-1 twice, deduplicated), then the
+        // walk must fail rather than report a truncated catalog as complete.
+        let error = client.search_all_datasets().await.unwrap_err();
+        assert!(error.to_string().contains("cannot advance"));
+    }
+
+    #[tokio::test]
+    async fn undated_overflow_fails_instead_of_truncating() {
+        #[derive(Clone)]
+        struct ManyUndated;
+
+        impl Respond for ManyUndated {
+            fn respond(&self, request: &Request) -> ResponseTemplate {
+                let query = |key: &str| {
+                    request
+                        .url
+                        .query_pairs()
+                        .find(|(name, _)| name == key)
+                        .map(|(_, value)| value.into_owned())
+                        .unwrap_or_default()
+                };
+                if query("where") != "modified is null" {
+                    return ResponseTemplate::new(200)
+                        .set_body_json(json!({"total_count": 0, "results": []}));
+                }
+                let offset: usize = query("offset").parse().unwrap();
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "total_count": 10,
+                    "results": [{
+                        "dataset_id": format!("undated-{offset}"),
+                        "metas": {"default": {"title": "Undated"}}
+                    }]
+                }))
+            }
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/explore/v2.1/catalog/datasets"))
+            .respond_with(ManyUndated)
+            .mount(&server)
+            .await;
+
+        let mut client = test_client(&server.uri());
+        client.page_size = 1;
+        client.offset_window = 2;
+        let error = client.search_all_datasets().await.unwrap_err();
+        assert!(error.to_string().contains("undated"));
     }
 
     #[tokio::test]
