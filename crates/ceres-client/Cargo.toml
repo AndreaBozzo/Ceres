@@ -26,6 +26,7 @@ reqwest.workspace = true
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+html2text.workspace = true
 
 # Domain types
 url.workspace = true
@@ -39,3 +40,6 @@ chrono.workspace = true
 
 # Logging
 tracing.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true

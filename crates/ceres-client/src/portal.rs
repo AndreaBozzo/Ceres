@@ -21,6 +21,7 @@ use futures::stream::BoxStream;
 use crate::ckan::{CkanClient, CkanDataset};
 use crate::datajson::{DataJsonClient, DataJsonDataset};
 use crate::dcat::{DcatClient, DcatDataset};
+use crate::socrata::{SocrataClient, SocrataDataset};
 use crate::sparql::SparqlDcatClient;
 
 /// Portal-specific dataset data, wrapping concrete types from each portal client.
@@ -32,6 +33,8 @@ pub enum PortalDataEnum {
     Dcat(DcatDataset),
     /// Data from a static Project Open Data / DCAT-US catalog.
     DataJson(DataJsonDataset),
+    /// Data from a Socrata Discovery API catalog.
+    Socrata(SocrataDataset),
 }
 
 /// Unified portal client that wraps concrete portal implementations.
@@ -48,6 +51,8 @@ pub enum PortalClientEnum {
     SparqlDcat(SparqlDcatClient),
     /// Static Project Open Data / DCAT-US `data.json` client.
     DataJson(DataJsonClient),
+    /// Socrata Discovery API client.
+    Socrata(SocrataClient),
 }
 
 impl PortalClient for PortalClientEnum {
@@ -59,6 +64,7 @@ impl PortalClient for PortalClientEnum {
             Self::Dcat(c) => c.portal_type(),
             Self::SparqlDcat(c) => c.portal_type(),
             Self::DataJson(c) => c.portal_type(),
+            Self::Socrata(c) => c.portal_type(),
         }
     }
 
@@ -68,6 +74,7 @@ impl PortalClient for PortalClientEnum {
             Self::Dcat(c) => c.base_url(),
             Self::SparqlDcat(c) => c.base_url(),
             Self::DataJson(c) => c.base_url(),
+            Self::Socrata(c) => c.base_url(),
         }
     }
 
@@ -77,6 +84,7 @@ impl PortalClient for PortalClientEnum {
             Self::Dcat(c) => c.list_dataset_ids().await,
             Self::SparqlDcat(c) => c.list_dataset_ids().await,
             Self::DataJson(c) => c.list_dataset_ids().await,
+            Self::Socrata(c) => c.list_dataset_ids().await,
         }
     }
 
@@ -86,6 +94,7 @@ impl PortalClient for PortalClientEnum {
             Self::Dcat(c) => c.get_dataset(id).await.map(PortalDataEnum::Dcat),
             Self::SparqlDcat(c) => c.get_dataset(id).await.map(PortalDataEnum::Dcat),
             Self::DataJson(c) => c.get_dataset(id).await.map(PortalDataEnum::DataJson),
+            Self::Socrata(c) => c.get_dataset(id).await.map(PortalDataEnum::Socrata),
         }
     }
 
@@ -104,6 +113,9 @@ impl PortalClient for PortalClientEnum {
             }
             PortalDataEnum::DataJson(data) => {
                 DataJsonClient::into_new_dataset(data, portal_url, url_template, language)
+            }
+            PortalDataEnum::Socrata(data) => {
+                SocrataClient::into_new_dataset(data, portal_url, url_template, language)
             }
         }
     }
@@ -129,6 +141,10 @@ impl PortalClient for PortalClientEnum {
                 .search_modified_since(since)
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::DataJson).collect()),
+            Self::Socrata(c) => c
+                .search_modified_since(since)
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Socrata).collect()),
         }
     }
 
@@ -150,6 +166,10 @@ impl PortalClient for PortalClientEnum {
                 .search_all_datasets()
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::DataJson).collect()),
+            Self::Socrata(c) => c
+                .search_all_datasets()
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Socrata).collect()),
         }
     }
 
@@ -178,6 +198,12 @@ impl PortalClient for PortalClientEnum {
                     .await
                     .map(|datasets| datasets.into_iter().map(PortalDataEnum::DataJson).collect())
             })),
+            Self::Socrata(c) => Box::pin(StreamExt::map(
+                c.search_all_datasets_stream(),
+                |r: Result<Vec<SocrataDataset>, AppError>| {
+                    r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Socrata).collect())
+                },
+            )),
         }
     }
 
@@ -192,6 +218,7 @@ impl PortalClient for PortalClientEnum {
                 "dataset_count is not available without downloading the static data.json catalog"
                     .to_string(),
             )),
+            Self::Socrata(c) => c.dataset_count().await,
         }
     }
 }
@@ -269,6 +296,7 @@ impl PortalClientFactory for PortalClientFactoryEnum {
 
         match portal_type {
             PortalType::Ckan => Ok(PortalClientEnum::Ckan(ckan_client_for(portal_url)?)),
+            PortalType::Socrata => Ok(PortalClientEnum::Socrata(SocrataClient::new(portal_url)?)),
             PortalType::Dcat => match profile.unwrap_or_default() {
                 DcatProfile::UdataRest => Ok(PortalClientEnum::Dcat(DcatClient::new(
                     portal_url, language,
@@ -282,10 +310,6 @@ impl PortalClientFactory for PortalClientFactoryEnum {
                     portal_url, language,
                 )?)),
             },
-            other => Err(AppError::ConfigError(format!(
-                "Portal type '{}' is not yet supported.",
-                other
-            ))),
         }
     }
 }
@@ -424,15 +448,18 @@ mod tests {
     }
 
     #[test]
-    fn test_factory_rejects_unsupported_type() {
+    fn test_factory_creates_socrata_client() {
         let factory = PortalClientFactoryEnum::new();
-        let result = factory.create(
-            "https://data.cityofnewyork.us",
-            PortalType::Socrata,
-            "en",
-            None,
-            None,
-        );
-        assert!(result.is_err());
+        let client = factory
+            .create(
+                "https://data.cityofnewyork.us",
+                PortalType::Socrata,
+                "en",
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(matches!(client, PortalClientEnum::Socrata(_)));
+        assert_eq!(client.portal_type(), "socrata");
     }
 }

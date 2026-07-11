@@ -156,6 +156,21 @@ description = "Open Data NRW (Germany)"
 # description = "Australian Government Open Data (~109,000 datasets, English, very large)"
 
 # =============================================================================
+# Socrata Discovery API portals
+#
+# Public read-only harvests work without credentials. Set SOCRATA_APP_TOKEN in
+# the environment for higher rate limits; never put the token in this file.
+# =============================================================================
+
+[[portals]]
+name = "nyc-open-data"
+url = "https://data.cityofnewyork.us"
+type = "socrata"
+language = "en"
+enabled = false
+description = "NYC Open Data Socrata catalog (~2,400 dataset assets)"
+
+# =============================================================================
 # DCAT-AP portals (udata REST flavor)
 #
 # type = "dcat" portals select a transport via `profile`:

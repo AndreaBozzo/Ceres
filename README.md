@@ -75,8 +75,10 @@ Today, the shipped portal clients cover:
 - `dcat` for udata-flavored DCAT-AP portals such as `data.public.lu` and `data.gouv.fr` (profile `udata_rest`, the default)
 - `dcat` with `--profile sparql` for SPARQL-backed DCAT catalogs such as `data.europa.eu`
 - `dcat` with `--profile static_json` for Project Open Data / DCAT-US `data.json` catalogs
+- `socrata` for Socrata Discovery API catalogs such as NYC Open Data
 
-The codebase already models additional portal types such as `socrata`, but they are not yet implemented in the current client factory.
+Socrata harvests scope Discovery API results to the configured portal domain,
+keep the complete source result in metadata, and stream the catalog page-by-page.
 
 ## Quick Start
 
@@ -105,6 +107,9 @@ cargo run --bin ceres -- harvest https://dati.comune.milano.it --metadata-only
 
 # Single DCAT portal
 cargo run --bin ceres -- harvest https://data.public.lu --type dcat --metadata-only
+
+# Single Socrata portal (no app token required for public reads)
+cargo run --bin ceres -- harvest https://data.cityofnewyork.us --type socrata --metadata-only
 
 # All enabled portals from config
 cargo run --bin ceres -- harvest --config examples/portals.toml --metadata-only
@@ -178,6 +183,10 @@ enabled = false
 
 See `examples/portals.toml` for a larger configuration set.
 
+Socrata public catalogs can be harvested without credentials. For higher
+Discovery API rate limits, set `SOCRATA_APP_TOKEN`; Ceres sends it through the
+`X-App-Token` header and never stores it in portal configuration.
+
 ### Harvest resilience / HTTP tuning
 
 Harvesting is hardened for slow or rate-limiting portals: the CKAN client grows
@@ -225,6 +234,9 @@ ceres harvest https://data.europa.eu --type dcat --profile sparql
 
 # Harvest a static Project Open Data catalog
 ceres harvest https://www.data.va.gov/data.json --type dcat --profile static_json --metadata-only
+
+# Harvest a Socrata Discovery API catalog
+ceres harvest https://data.cityofnewyork.us --type socrata --metadata-only
 
 # Named portal from config
 ceres harvest --portal milano --config examples/portals.toml
