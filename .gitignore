@@ -32,7 +32,9 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
-.claude/
+# Local agent state stays ignored; the in-repo Claude skills are tracked
+.claude/*
+!.claude/skills/
 .codex/
 .ceres-harvest-runs/
 
