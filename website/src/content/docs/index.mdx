@@ -1,18 +1,22 @@
 ---
 title: Ceres
-description: Harvest-first toolkit for open data portals
+description: Harvest-first toolkit for open data portals — one synchronized catalog from 120+ portals and 2M+ datasets
 template: splash
 hero:
-  tagline: Harvest-first toolkit for open data portals
+  tagline: One synchronized catalog from 120+ open data portals. Harvest first — embed, search, and publish when you're ready.
   image:
     file: ../../assets/images/logo.png
   actions:
     - text: Get Started
-      link: /harvesting/
+      link: /portals/
       icon: right-arrow
       variant: primary
     - text: View on GitHub
       link: https://github.com/AndreaBozzo/Ceres
+      icon: external
+      variant: minimal
+    - text: Open Data Index
+      link: https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index
       icon: external
       variant: minimal
 ---
@@ -22,9 +26,16 @@ import Terminal from '../../components/Terminal.astro';
 import FeatureGrid from '../../components/FeatureGrid.astro';
 
 <div class="animate-fade-in-up">
-Ceres harvests metadata from open data portals and keeps a local catalog in sync over time. Embeddings, semantic search, and exports sit on top as optional layers.
+Open data is scattered across thousands of portals speaking different APIs. Ceres harvests CKAN, DCAT, SPARQL, `data.json`, and Socrata sources into one synchronized PostgreSQL catalog — then layers embeddings, semantic search, exports, and a public index on top, only when you want them.
 
 > *Named after the Roman goddess of harvest and agriculture.*
+</div>
+
+<div class="stat-band animate-fade-in-up animate-delay-1">
+  <div class="stat"><span class="stat-value">120+</span><span class="stat-label">portals in sync</span></div>
+  <div class="stat"><span class="stat-value">2M+</span><span class="stat-label">datasets harvested</span></div>
+  <div class="stat"><span class="stat-value">5</span><span class="stat-label">portal API families</span></div>
+  <div class="stat"><span class="stat-value">1.85M+</span><span class="stat-label">datasets in the published index</span></div>
 </div>
 
 ## Why Ceres
@@ -35,7 +46,7 @@ Ceres harvests metadata from open data portals and keeps a local catalog in sync
     Open data work usually breaks on synchronization, portal quirks, and stale records before search even starts.
   </Card>
   <Card title="Portals Are Fragmented" icon="error">
-    CKAN and DCAT portals expose different capabilities, languages, and reliability profiles.
+    CKAN, DCAT, SPARQL, static data.json, and Socrata portals expose different capabilities, languages, and reliability profiles. Ceres speaks all of them.
   </Card>
   <Card title="Embedding Should Be Optional" icon="magnifier">
     Many teams need a trustworthy harvested catalog first, then decide later whether to add local or hosted embeddings.
@@ -47,7 +58,7 @@ Ceres is designed around that order of work: harvest first, embed later if usefu
 <div align="center" style="margin-top: 2rem;">
   <img src="/images/open_data_galaxy.gif" alt="Open Data Galaxy — ML-generated visualization" />
   <br/>
-  <sub>The published Open Data Index is one downstream product of the pipeline: harvest and normalize first, then optionally embed, search, export, and visualize.</sub>
+  <sub>The published <a href="https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index">Open Data Index</a> is one downstream product of the pipeline: harvest and normalize first, then optionally embed, search, export, and visualize.</sub>
 </div>
 </div>
 
@@ -62,7 +73,7 @@ Ceres is designed around that order of work: harvest first, embed later if usefu
 <FeatureGrid>
   <div class="ceres-card animate-fade-in-up animate-delay-2">
     <h3>Harvest First</h3>
-    <p>Stream metadata from CKAN, DCAT udata, and SPARQL-backed DCAT portals into PostgreSQL, track sync history, detect stale datasets, and keep the catalog current even when embeddings are disabled.</p>
+    <p>Stream metadata from CKAN, DCAT (udata REST, SPARQL, static <code>data.json</code>), and Socrata portals into PostgreSQL, track sync history, detect stale datasets, and keep the catalog current even when embeddings are disabled.</p>
   </div>
   <div class="ceres-card animate-fade-in-up animate-delay-3">
     <h3>Decoupled Pipeline</h3>
@@ -78,7 +89,7 @@ Ceres is designed around that order of work: harvest first, embed later if usefu
       <li><strong>CLI:</strong> harvest, embed, search, export, stats</li>
       <li><strong>API:</strong> Axum server with Swagger UI</li>
       <li><strong>Jobs:</strong> database-backed harvest queue with retries</li>
-      <li><strong>Exports:</strong> JSON, JSONL, CSV, and curated Parquet</li>
+      <li><strong>Exports:</strong> JSON, JSONL, CSV, and curated Parquet snapshots with manifests, checksums, and changelogs</li>
     </ul>
   </div>
 </FeatureGrid>
@@ -101,8 +112,8 @@ Ceres is designed around that order of work: harvest first, embed later if usefu
     <p>Run <code>ceres embed</code> when you want vectors. Ollama is the preferred local option; hosted providers are still available for teams that want them.</p>
   </div>
   <div class="ceres-card animate-fade-in-up">
-    <h3>Step 3: Search Or Export</h3>
-    <p>Search, API access, HuggingFace exports, and downstream analytics all build on the same harvested catalog.</p>
+    <h3>Step 3: Search, Export, Publish</h3>
+    <p>Search, API access, Hugging Face snapshots, and downstream analytics all build on the same harvested catalog.</p>
   </div>
 </FeatureGrid>
 
@@ -110,15 +121,15 @@ Ceres is designed around that order of work: harvest first, embed later if usefu
 
 <FeatureGrid>
   <div class="ceres-card animate-fade-in-up">
-    <h3>Now (v0.4.2)</h3>
-    <p>Harvest-first operations across CKAN, DCAT udata, and SPARQL-backed DCAT portals, with resource-schema inspection in the API and a curated Parquet export path for the public Open Data Index.</p>
+    <h3>Now (v0.5.0)</h3>
+    <p>A trustable published index: versioned snapshot manifests, integrity checksums, coverage and quality reports, duplicate/source-alias semantics, and snapshot changelogs — plus new Socrata Discovery and static <code>data.json</code> harvest paths.</p>
   </div>
   <div class="ceres-card animate-fade-in-up">
-    <h3>Next (v0.5.0)</h3>
-    <p>Trust the Index: versioned snapshot manifests, integrity checks, coverage and quality reports, explicit duplicate/source-alias semantics, and snapshot-to-snapshot changelogs.</p>
+    <h3>Next (v0.6.0)</h3>
+    <p>Coverage expansion: OpenDataSoft and ArcGIS Hub clients, job-based harvesting for every supported portal client, and a significant jump in indexed portals and datasets.</p>
   </div>
   <div class="ceres-card animate-fade-in-up">
-    <h3>After (v0.6.0)</h3>
-    <p>Coverage foundations: static <code>data.json</code> DCAT catalogs, job-based harvesting for every supported portal client, and a small documented set of newly validated portals.</p>
+    <h3>Later (v0.7.0)</h3>
+    <p>Resource-level metadata depth: richer distribution and schema tracking across every harvest path.</p>
   </div>
 </FeatureGrid>
