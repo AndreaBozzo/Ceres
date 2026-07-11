@@ -1,0 +1,58 @@
+{
+  "results": [
+    {
+      "resource": {
+        "id": "abcd-1234",
+        "name": "Traffic counts",
+        "description": "<p>Daily <strong>traffic counts</strong> with details &amp; context.</p>",
+        "updatedAt": "2026-07-11T10:00:00Z",
+        "license": "Public Domain",
+        "attribution": "Transport Agency",
+        "columns_name": ["Count date", "Vehicles"],
+        "columns_datatype": ["Calendar date", "Number"]
+      },
+      "classification": {
+        "domain_category": "Transportation",
+        "domain_tags": ["traffic", "daily"],
+        "tags": ["Traffic", "roads"]
+      },
+      "metadata": {
+        "domain": "data.example.gov"
+      },
+      "link": "https://data.example.gov/Transportation/Traffic-Counts/abcd-1234",
+      "permalink": "https://data.example.gov/d/abcd-1234",
+      "owner": {
+        "display_name": "Portal Owner"
+      }
+    },
+    {
+      "resource": {
+        "id": "wxyz-9876",
+        "name": "Incident reports",
+        "metadata_updated_at": "2026-07-10T09:30:00Z"
+      },
+      "classification": {
+        "categories": ["Public Safety"]
+      },
+      "metadata": {
+        "domain": "data.example.gov"
+      },
+      "owner": {
+        "display_name": "Portal Owner"
+      }
+    },
+    {
+      "resource": {
+        "id": "missing-title"
+      },
+      "metadata": {
+        "domain": "data.example.gov"
+      }
+    }
+  ],
+  "resultSetSize": 3,
+  "timings": {
+    "serviceMillis": 2
+  },
+  "warnings": []
+}

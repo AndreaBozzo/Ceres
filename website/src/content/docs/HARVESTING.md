@@ -15,6 +15,31 @@ Today the shipping portal clients cover:
 - DCAT-AP portals that expose the udata REST JSON-LD catalog
 - SPARQL-backed DCAT catalogs (via `--profile sparql`, e.g. `data.europa.eu`)
 - Static Project Open Data / DCAT-US catalogs (via `--profile static_json`)
+- Socrata catalogs through the Discovery API (via `--type socrata`)
+
+## Socrata Discovery API
+
+Socrata portals are harvested from their paginated `/api/catalog/v1` endpoint,
+scoped to the portal hostname and limited to dataset assets. Ceres streams one
+page at a time, preserves each complete Discovery result in `metadata`, and
+uses `updatedAt` ordering for incremental synchronization. HTML descriptions
+are converted to plain text for search and embedding while the original HTML
+remains available in the raw metadata.
+
+Public read-only harvests require no credentials. Set `SOCRATA_APP_TOKEN` to
+send an optional `X-App-Token` header and receive higher rate limits:
+
+```bash
+SOCRATA_APP_TOKEN=... ceres harvest https://data.cityofnewyork.us \
+  --type socrata --metadata-only
+```
+
+Run the ignored live smoke check against NYC or another public portal:
+
+```bash
+CERES_SOCRATA_SMOKE_URL=https://data.cityofnewyork.us \
+  cargo test -p ceres-client socrata_smoke_catalog -- --ignored --nocapture
+```
 
 ## DCAT profiles
 

@@ -334,7 +334,8 @@ pub trait DatasetStore: Send + Sync + Clone {
     ///
     /// # Returns
     ///
-    /// The number of datasets newly marked as stale.
+    /// The number of datasets newly marked as stale. Implementations should
+    /// also restore any previously stale dataset that appears in `seen_ids`.
     fn mark_stale_by_exclusion(
         &self,
         portal_url: &str,

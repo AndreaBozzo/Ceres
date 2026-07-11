@@ -23,7 +23,7 @@
 //! | DCAT-AP (udata REST) | Supported | [DCAT-AP](https://joinup.ec.europa.eu/collection/semantic-interoperability-community-semic/solution/dcat-application-profile-data-portals-europe) |
 //! | DCAT-AP (SPARQL) | Supported | SPARQL endpoint with DCAT vocabulary |
 //! | DCAT-US (`data.json`) | Supported | Project Open Data static catalog |
-//! | Socrata | Planned | [Socrata API](https://dev.socrata.com/) |
+//! | Socrata | Supported | [Discovery API](https://dev.socrata.com/docs/other/discovery) |
 //!
 //! # Embedding Providers
 //!
@@ -45,6 +45,7 @@ pub mod ollama;
 pub mod openai;
 pub mod portal;
 pub mod provider;
+pub mod socrata;
 pub mod sparql;
 
 // Re-export main client types
@@ -58,4 +59,5 @@ pub use portal::{PortalClientEnum, PortalClientFactoryEnum, PortalDataEnum};
 #[cfg(feature = "test-support")]
 pub use provider::MockEmbeddingClient;
 pub use provider::{EmbeddingConfig, EmbeddingProviderEnum};
+pub use socrata::{SocrataClient, SocrataDataset};
 pub use sparql::SparqlDcatClient;
