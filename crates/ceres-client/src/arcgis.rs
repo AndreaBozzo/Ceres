@@ -449,8 +449,9 @@ impl ArcGisClient {
 
     async fn request_with_retry(&self, url: &Url) -> Result<reqwest::Response, AppError> {
         let mut last_error = AppError::Generic("No ArcGIS Hub request attempted".to_string());
+        let max_retries = self.max_retries.max(1);
 
-        for attempt in 1..=self.max_retries {
+        for attempt in 1..=max_retries {
             match self
                 .client
                 .get(url.clone())
