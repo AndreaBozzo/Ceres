@@ -27,7 +27,7 @@ import Terminal from '../../components/Terminal.astro';
 import FeatureGrid from '../../components/FeatureGrid.astro';
 
 <div class="animate-fade-in-up">
-Open data is scattered across thousands of portals speaking different APIs. Ceres harvests CKAN, DCAT, SPARQL, `data.json`, and Socrata sources into one synchronized PostgreSQL catalog — then layers embeddings, semantic search, exports, and a public index on top, only when you want them.
+Open data is scattered across thousands of portals speaking different APIs. Ceres harvests CKAN, DCAT, SPARQL, `data.json`, Socrata, and OpenDataSoft sources into one synchronized PostgreSQL catalog — then layers embeddings, semantic search, exports, and a public index on top, only when you want them.
 
 > *Named after the Roman goddess of harvest and agriculture.*
 </div>
@@ -47,7 +47,7 @@ Open data is scattered across thousands of portals speaking different APIs. Cere
     Open data work usually breaks on synchronization, portal quirks, and stale records before search even starts.
   </Card>
   <Card title="Portals Are Fragmented" icon="error">
-    CKAN, DCAT, SPARQL, static data.json, and Socrata portals expose different capabilities, languages, and reliability profiles. Ceres speaks all of them.
+    CKAN, DCAT, SPARQL, static data.json, Socrata, and OpenDataSoft portals expose different capabilities, languages, and reliability profiles. Ceres speaks all of them.
   </Card>
   <Card title="Embedding Should Be Optional" icon="magnifier">
     Many teams need a trustworthy harvested catalog first, then decide later whether to add local or hosted embeddings.
@@ -74,7 +74,7 @@ Ceres is designed around that order of work: harvest first, embed later if usefu
 <FeatureGrid>
   <div class="ceres-card animate-fade-in-up animate-delay-2">
     <h3>Harvest First</h3>
-    <p>Stream metadata from CKAN, DCAT (udata REST, SPARQL, static <code>data.json</code>), and Socrata portals into PostgreSQL, track sync history, detect stale datasets, and keep the catalog current even when embeddings are disabled.</p>
+    <p>Stream metadata from CKAN, DCAT (udata REST, SPARQL, static <code>data.json</code>), Socrata, and OpenDataSoft portals into PostgreSQL, track sync history, detect stale datasets, and keep the catalog current even when embeddings are disabled.</p>
   </div>
   <div class="ceres-card animate-fade-in-up animate-delay-3">
     <h3>Decoupled Pipeline</h3>
@@ -127,7 +127,7 @@ Ceres is designed around that order of work: harvest first, embed later if usefu
   </div>
   <div class="ceres-card animate-fade-in-up">
     <h3>Next (v0.6.0)</h3>
-    <p>Coverage expansion: OpenDataSoft and ArcGIS Hub clients, job-based harvesting for every supported portal client, and a significant jump in indexed portals and datasets.</p>
+    <p>Coverage expansion: OpenDataSoft Explore (shipped) and ArcGIS Hub clients, job-based harvesting for every supported portal client, and a significant jump in indexed portals and datasets.</p>
   </div>
   <div class="ceres-card animate-fade-in-up">
     <h3>Later (v0.7.0)</h3>

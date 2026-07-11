@@ -20,7 +20,7 @@ ceres harvest --dry-run                     # Preview without DB writes or embed
 | Flag | Short | Description |
 |---|---|---|
 | `<URL>` | | Single portal URL (positional, backward compatible) |
-| `--type <TYPE>` | | Portal type for ad-hoc URL (`ckan`, `dcat`; `socrata` parses but is not implemented in the factory yet) |
+| `--type <TYPE>` | | Portal type for ad-hoc URL (`ckan`, `dcat`, `socrata`, `opendatasoft`) |
 | `--profile <PROFILE>` | | DCAT profile for ad-hoc DCAT URLs, currently `sparql` for SPARQL-backed catalogs |
 | `--portal <NAME>` | `-p` | Named portal from config file |
 | `--config <PATH>` | `-c` | Custom portals.toml path |
@@ -229,7 +229,7 @@ Fields:
 |---|---|---|---|
 | `name` | Yes | | Portal identifier (used with `--portal` flag) |
 | `url` | Yes | | Portal API base URL |
-| `type` | No | `ckan` | Portal type (`ckan`, `dcat`; `socrata` is modeled but not implemented yet) |
+| `type` | No | `ckan` | Portal type (`ckan`, `dcat`, `socrata`, `opendatasoft`) |
 | `profile` | No | | DCAT profile selector, e.g. `sparql`; omitted DCAT defaults to udata REST |
 | `sparql_endpoint` | No | | Override SPARQL endpoint for `profile = "sparql"` portals |
 | `enabled` | No | `true` | Include in batch harvests |

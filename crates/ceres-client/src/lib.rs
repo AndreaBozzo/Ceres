@@ -24,6 +24,7 @@
 //! | DCAT-AP (SPARQL) | Supported | SPARQL endpoint with DCAT vocabulary |
 //! | DCAT-US (`data.json`) | Supported | Project Open Data static catalog |
 //! | Socrata | Supported | [Discovery API](https://dev.socrata.com/docs/other/discovery) |
+//! | OpenDataSoft | Supported | Explore API v2.1 (`/api/explore/v2.1/catalog/datasets`) |
 //!
 //! # Embedding Providers
 //!
@@ -43,6 +44,7 @@ pub mod dcat;
 pub mod gemini;
 pub mod ollama;
 pub mod openai;
+pub mod opendatasoft;
 pub mod portal;
 pub mod provider;
 pub mod socrata;
@@ -55,6 +57,7 @@ pub use dcat::DcatClient;
 pub use gemini::GeminiClient;
 pub use ollama::OllamaClient;
 pub use openai::OpenAIClient;
+pub use opendatasoft::{OpenDataSoftClient, OpenDataSoftDataset};
 pub use portal::{PortalClientEnum, PortalClientFactoryEnum, PortalDataEnum};
 #[cfg(feature = "test-support")]
 pub use provider::MockEmbeddingClient;

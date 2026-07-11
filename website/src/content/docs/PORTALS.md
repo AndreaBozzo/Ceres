@@ -18,6 +18,7 @@ detection, streaming page-by-page processing, and stale dataset marking.
 | DCAT SPARQL | `--type dcat --profile sparql` | SPARQL-backed DCAT-AP catalogs | data.europa.eu |
 | Project Open Data | `--type dcat --profile static_json` | Static DCAT-US `data.json` catalogs | data.va.gov, census.gov, justice.gov |
 | Socrata | `--type socrata` | Socrata Discovery API catalogs | data.cityofnewyork.us, data.wa.gov |
+| OpenDataSoft | `--type opendatasoft` | OpenDataSoft Explore API v2.1 catalogs | opendata.paris.fr, data.economie.gouv.fr |
 
 Every client preserves the complete source metadata payload, so downstream
 features like resource-schema extraction keep working no matter which portal a
@@ -40,6 +41,9 @@ ceres harvest https://www.data.va.gov/data.json --type dcat --profile static_jso
 
 # Socrata Discovery API
 ceres harvest https://data.cityofnewyork.us --type socrata --metadata-only
+
+# OpenDataSoft Explore API
+ceres harvest https://opendata.paris.fr --type opendatasoft --metadata-only
 ```
 
 Or configure them once in `portals.toml` and harvest in batch:
@@ -100,6 +104,14 @@ for a larger, curated configuration set.
 - Uses `updatedAt` ordering for incremental synchronization
 - HTML descriptions are converted to plain text for search and embedding; the original HTML stays in the raw metadata
 - No credentials required for public reads; set `SOCRATA_APP_TOKEN` for higher rate limits
+
+### OpenDataSoft Explore API
+
+- Harvests the paginated `/api/explore/v2.1/catalog/datasets` endpoint (100 datasets per page, the API maximum)
+- Normalizes title, description, themes, keywords, license, publisher, and `modified` from `metas.default`; the complete catalog entry, including `fields` schema hints, stays in the raw metadata
+- Catalogs deeper than the API's 10,000-row pagination window (e.g. the `data.opendatasoft.com` federation hub) are walked with a keyset cursor on `modified`
+- Incremental sync filters server-side with an ODSQL `where=modified >= date'...'` clause
+- No credentials required for public reads; set `ODS_API_KEY` for higher quotas
 
 ## The published index
 

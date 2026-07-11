@@ -33,7 +33,7 @@ Key methods:
 
 The streaming pipeline processes datasets in batches without loading the entire portal into memory, supporting 100k+ dataset portals with a constant memory footprint. After a successful full sync with zero failures, stale detection marks removed datasets via `mark_stale_by_exclusion()`.
 
-Current client-factory support covers CKAN and DCAT profiles: `udata_rest` by default and `sparql` for SPARQL-backed catalogs such as `data.europa.eu`. The `PortalType` enum also models additional future portal families such as Socrata.
+Current client-factory support covers CKAN (`ckan`), Socrata Discovery (`socrata`), OpenDataSoft Explore v2.1 (`opendatasoft`), and DCAT (`dcat`) with profiles: `udata_rest` by default, `sparql` for SPARQL-backed catalogs such as `data.europa.eu`, and `static_json` for Project Open Data `data.json` catalogs.
 
 ### EmbeddingService
 

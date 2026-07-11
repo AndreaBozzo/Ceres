@@ -171,6 +171,79 @@ enabled = false
 description = "NYC Open Data Socrata catalog (~2,400 dataset assets)"
 
 # =============================================================================
+# OpenDataSoft Explore API v2.1 portals
+#
+# Public read-only harvests work without credentials. Set ODS_API_KEY in the
+# environment for higher API quotas; never put the key in this file.
+# =============================================================================
+
+[[portals]]
+name = "paris"
+url = "https://opendata.paris.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Ville de Paris open data (OpenDataSoft, ~490 datasets)"
+
+[[portals]]
+name = "france-economie"
+url = "https://data.economie.gouv.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "French Ministry of the Economy open data (OpenDataSoft, ~600 datasets)"
+
+[[portals]]
+name = "toulouse"
+url = "https://data.toulouse-metropole.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Toulouse Métropole open data (OpenDataSoft, ~840 datasets)"
+
+[[portals]]
+name = "bordeaux"
+url = "https://opendata.bordeaux-metropole.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Bordeaux Métropole open data (OpenDataSoft, ~560 datasets)"
+
+[[portals]]
+name = "ile-de-france"
+url = "https://data.iledefrance.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Région Île-de-France open data (OpenDataSoft, ~1,030 datasets)"
+
+[[portals]]
+name = "rennes"
+url = "https://data.rennesmetropole.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Rennes Métropole open data (OpenDataSoft, ~680 datasets)"
+
+[[portals]]
+name = "sncf"
+url = "https://data.sncf.com"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "SNCF (French railways) open data (OpenDataSoft, ~170 datasets)"
+
+# The OpenDataSoft federation hub aggregates datasets from many ODS portals
+# (ids carry an @domain suffix). Very large; harvest deliberately.
+# [[portals]]
+# name = "ods-hub"
+# url = "https://data.opendatasoft.com"
+# type = "opendatasoft"
+# language = "en"
+# enabled = false
+# description = "OpenDataSoft federation hub (~94,000 datasets, very large)"
+
+# =============================================================================
 # DCAT-AP portals (udata REST flavor)
 #
 # type = "dcat" portals select a transport via `profile`:

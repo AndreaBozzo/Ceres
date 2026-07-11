@@ -16,6 +16,7 @@ Today the shipping portal clients cover:
 - SPARQL-backed DCAT catalogs (via `--profile sparql`, e.g. `data.europa.eu`)
 - Static Project Open Data / DCAT-US catalogs (via `--profile static_json`)
 - Socrata catalogs through the Discovery API (via `--type socrata`)
+- OpenDataSoft catalogs through the Explore API v2.1 (via `--type opendatasoft`)
 
 See [Supported portals](/portals/) for per-portal configuration, examples, and
 current coverage numbers.
@@ -42,6 +43,40 @@ Run the ignored live smoke check against NYC or another public portal:
 ```bash
 CERES_SOCRATA_SMOKE_URL=https://data.cityofnewyork.us \
   cargo test -p ceres-client socrata_smoke_catalog -- --ignored --nocapture
+```
+
+## OpenDataSoft Explore API
+
+OpenDataSoft portals are harvested from their paginated
+`/api/explore/v2.1/catalog/datasets` endpoint. Ceres streams one page at a
+time (100 datasets per page, the API maximum) and preserves each complete
+catalog entry — including the `fields` schema hints — in `metadata`. Titles,
+descriptions, themes, keywords, license, publisher, and the `modified`
+timestamp are normalized from `metas.default`; HTML descriptions are converted
+to plain text for search and embedding while the original HTML remains in the
+raw metadata.
+
+The Explore API rejects requests where `limit + offset` reaches 10,000. Small
+catalogs are walked with plain offset pagination; deeper catalogs (such as the
+`data.opendatasoft.com` federation hub, ~94k datasets) are walked newest-first
+with a keyset cursor on the `modified` timestamp, followed by a final sweep
+for datasets without one. Incremental sync filters server-side with
+`where=modified >= date'...'` and falls back to a full sync when more datasets
+changed than the pagination window can reach.
+
+Public read-only harvests require no credentials. Set `ODS_API_KEY` to send an
+`Authorization: Apikey ...` header and receive higher quotas:
+
+```bash
+ODS_API_KEY=... ceres harvest https://opendata.paris.fr \
+  --type opendatasoft --metadata-only
+```
+
+Run the ignored live smoke check against Paris or another public portal:
+
+```bash
+CERES_ODS_SMOKE_URL=https://opendata.paris.fr \
+  cargo test -p ceres-client opendatasoft_smoke_catalog -- --ignored --nocapture
 ```
 
 ## DCAT profiles

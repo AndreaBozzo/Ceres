@@ -389,6 +389,8 @@ pub enum PortalType {
     Socrata,
     /// DCAT-AP / SPARQL endpoint (EU portals, data.europa.eu).
     Dcat,
+    /// OpenDataSoft portal (Explore API v2.1; common in European and municipal portals).
+    OpenDataSoft,
 }
 
 impl fmt::Display for PortalType {
@@ -397,6 +399,7 @@ impl fmt::Display for PortalType {
             Self::Ckan => write!(f, "ckan"),
             Self::Socrata => write!(f, "socrata"),
             Self::Dcat => write!(f, "dcat"),
+            Self::OpenDataSoft => write!(f, "opendatasoft"),
         }
     }
 }
@@ -409,8 +412,9 @@ impl FromStr for PortalType {
             "ckan" => Ok(Self::Ckan),
             "socrata" => Ok(Self::Socrata),
             "dcat" => Ok(Self::Dcat),
+            "opendatasoft" => Ok(Self::OpenDataSoft),
             _ => Err(AppError::ConfigError(format!(
-                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat",
+                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat, opendatasoft",
                 s
             ))),
         }
@@ -1121,6 +1125,32 @@ type = "dcat"
         let err = "spqarql".parse::<DcatProfile>().unwrap_err();
         assert!(err.to_string().contains("spqarql"));
         assert!(err.to_string().contains("udata_rest"));
+    }
+
+    #[test]
+    fn test_portal_type_opendatasoft_parse_display_deserialize() {
+        assert_eq!(
+            "opendatasoft".parse::<PortalType>().unwrap(),
+            PortalType::OpenDataSoft
+        );
+        assert_eq!(
+            "OpenDataSoft".parse::<PortalType>().unwrap(),
+            PortalType::OpenDataSoft
+        );
+        assert_eq!(PortalType::OpenDataSoft.to_string(), "opendatasoft");
+
+        let toml = r#"
+[[portals]]
+name = "paris"
+url = "https://opendata.paris.fr"
+type = "opendatasoft"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.portals[0].portal_type, PortalType::OpenDataSoft);
+        assert!(config.portals[0].validate().is_ok());
+
+        let err = "odsx".parse::<PortalType>().unwrap_err();
+        assert!(err.to_string().contains("opendatasoft"));
     }
 
     #[test]
