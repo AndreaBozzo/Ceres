@@ -175,7 +175,9 @@ description = "Latvian Open Data Portal (~1,500 datasets)"
 
 [[portals]]
 name = "japan"
-url = "https://www.data.go.jp/data"
+# www.data.go.jp 301-redirects here; harvest the canonical host directly
+# (through the redirect, package_search ignores rows/start pagination).
+url = "https://data.e-gov.go.jp/data"
 type = "ckan"
 language = "ja"
 enabled = false
@@ -421,13 +423,55 @@ description = "Ville de Namur open data (OpenDataSoft, ~300 datasets)"
 
 # The OpenDataSoft federation hub aggregates datasets from many ODS portals
 # (ids carry an @domain suffix). Very large; harvest deliberately.
-# [[portals]]
-# name = "ods-hub"
-# url = "https://data.opendatasoft.com"
-# type = "opendatasoft"
-# language = "en"
-# enabled = false
-# description = "OpenDataSoft federation hub (~94,000 datasets, very large)"
+[[portals]]
+name = "ods-hub"
+url = "https://data.opendatasoft.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "OpenDataSoft federation hub (~94,000 datasets, very large)"
+
+# US state and city Socrata portals (verified Jul 2026)
+
+[[portals]]
+name = "pennsylvania"
+url = "https://data.pa.gov"
+type = "socrata"
+language = "en"
+enabled = false
+description = "Pennsylvania open data (Socrata, ~370 dataset assets)"
+
+[[portals]]
+name = "vermont"
+url = "https://data.vermont.gov"
+type = "socrata"
+language = "en"
+enabled = false
+description = "Vermont open data (Socrata, ~170 dataset assets)"
+
+[[portals]]
+name = "providence"
+url = "https://data.providenceri.gov"
+type = "socrata"
+language = "en"
+enabled = false
+description = "City of Providence open data (Socrata, ~120 dataset assets)"
+
+[[portals]]
+name = "cambridge-ma"
+url = "https://data.cambridgema.gov"
+type = "socrata"
+language = "en"
+enabled = false
+description = "City of Cambridge, MA open data (Socrata, ~280 dataset assets)"
+
+[[portals]]
+name = "somerville-ma"
+url = "https://data.somervillema.gov"
+type = "socrata"
+language = "en"
+enabled = false
+description = "City of Somerville, MA open data (Socrata, ~30 dataset assets)"
 
 # =============================================================================
 # DCAT-AP portals (udata REST flavor)
