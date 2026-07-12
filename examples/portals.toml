@@ -594,3 +594,27 @@ profile = "sparql"
 language = "cs"
 enabled = false
 description = "Czech National Open Data Catalog (SPARQL endpoint)"
+
+# =============================================================================
+# ArcGIS Hub portals (Hub Search API)
+#
+# Catalog entries mix hosted services (Feature/Image/Map Services) with file
+# items (CSV, shapefile). The normalized dataset URL is always the Hub landing
+# page; raw service endpoints stay in the preserved metadata.
+# =============================================================================
+
+[[portals]]
+name = "washington-dc"
+url = "https://opendata.dc.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Open Data DC (ArcGIS Hub, ~1,500 datasets)"
+
+[[portals]]
+name = "utah-gis"
+url = "https://opendata.gis.utah.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Utah Geospatial Resource Center (ArcGIS Hub, ~530 datasets)"

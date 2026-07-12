@@ -139,7 +139,7 @@ This converges faster than halving (5 vs 8 iterations) and handles portals with 
 
 `HarvestService::batch_harvest_with_progress()` processes all enabled portals from `portals.toml` sequentially, producing a `BatchHarvestSummary` with per-portal results. The CLI and server both use this for bulk harvesting.
 
-Current production-facing portal support in the factory is CKAN, DCAT udata REST, and SPARQL-backed DCAT. For ad-hoc SPARQL DCAT harvests, use `--type dcat --profile sparql`; for config-driven harvests, set `profile = "sparql"` and optionally `sparql_endpoint`.
+Current production-facing portal support in the factory is CKAN, DCAT udata REST, SPARQL-backed DCAT, static Project Open Data `data.json`, Socrata, OpenDataSoft, and ArcGIS Hub. For ad-hoc SPARQL DCAT harvests, use `--type dcat --profile sparql`; for config-driven harvests, set `profile = "sparql"` and optionally `sparql_endpoint`. ArcGIS Hub sites whose injected `catalogV2` has an empty item scope are rejected because their search endpoint returns global ArcGIS content instead of datasets belonging to that portal.
 
 ## Graceful Shutdown
 

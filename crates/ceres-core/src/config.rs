@@ -391,6 +391,8 @@ pub enum PortalType {
     Dcat,
     /// OpenDataSoft portal (Explore API v2.1; common in European and municipal portals).
     OpenDataSoft,
+    /// ArcGIS Hub portal (Hub Search API; geospatial-heavy local and regional governments).
+    ArcGis,
 }
 
 impl fmt::Display for PortalType {
@@ -400,6 +402,7 @@ impl fmt::Display for PortalType {
             Self::Socrata => write!(f, "socrata"),
             Self::Dcat => write!(f, "dcat"),
             Self::OpenDataSoft => write!(f, "opendatasoft"),
+            Self::ArcGis => write!(f, "arcgis"),
         }
     }
 }
@@ -413,8 +416,9 @@ impl FromStr for PortalType {
             "socrata" => Ok(Self::Socrata),
             "dcat" => Ok(Self::Dcat),
             "opendatasoft" => Ok(Self::OpenDataSoft),
+            "arcgis" => Ok(Self::ArcGis),
             _ => Err(AppError::ConfigError(format!(
-                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat, opendatasoft",
+                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat, opendatasoft, arcgis",
                 s
             ))),
         }
@@ -1151,6 +1155,26 @@ type = "opendatasoft"
 
         let err = "odsx".parse::<PortalType>().unwrap_err();
         assert!(err.to_string().contains("opendatasoft"));
+    }
+
+    #[test]
+    fn test_portal_type_arcgis_parse_display_deserialize() {
+        assert_eq!("arcgis".parse::<PortalType>().unwrap(), PortalType::ArcGis);
+        assert_eq!("ArcGIS".parse::<PortalType>().unwrap(), PortalType::ArcGis);
+        assert_eq!(PortalType::ArcGis.to_string(), "arcgis");
+
+        let toml = r#"
+[[portals]]
+name = "dc"
+url = "https://opendata.dc.gov"
+type = "arcgis"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.portals[0].portal_type, PortalType::ArcGis);
+        assert!(config.portals[0].validate().is_ok());
+
+        let err = "arcgishub".parse::<PortalType>().unwrap_err();
+        assert!(err.to_string().contains("arcgis"));
     }
 
     #[test]

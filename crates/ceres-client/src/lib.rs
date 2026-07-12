@@ -25,6 +25,7 @@
 //! | DCAT-US (`data.json`) | Supported | Project Open Data static catalog |
 //! | Socrata | Supported | [Discovery API](https://dev.socrata.com/docs/other/discovery) |
 //! | OpenDataSoft | Supported | Explore API v2.1 (`/api/explore/v2.1/catalog/datasets`) |
+//! | ArcGIS Hub | Supported | Hub Search API (`/api/search/v1/collections/dataset/items`) |
 //!
 //! # Embedding Providers
 //!
@@ -38,6 +39,7 @@
 //! | Ollama | nomic-embed-text | 768 |
 //! | Ollama | mxbai-embed-large | 1024 |
 
+pub mod arcgis;
 pub mod ckan;
 pub mod datajson;
 pub mod dcat;
@@ -51,6 +53,7 @@ pub mod socrata;
 pub mod sparql;
 
 // Re-export main client types
+pub use arcgis::{ArcGisClient, ArcGisDataset};
 pub use ckan::{CkanClient, CkanClientFactory};
 pub use datajson::{DataJsonClient, DataJsonDataset};
 pub use dcat::DcatClient;

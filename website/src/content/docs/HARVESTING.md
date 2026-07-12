@@ -17,6 +17,7 @@ Today the shipping portal clients cover:
 - Static Project Open Data / DCAT-US catalogs (via `--profile static_json`)
 - Socrata catalogs through the Discovery API (via `--type socrata`)
 - OpenDataSoft catalogs through the Explore API v2.1 (via `--type opendatasoft`)
+- ArcGIS Hub catalogs through the Hub Search API (via `--type arcgis`)
 
 See [Supported portals](/portals/) for per-portal configuration, examples, and
 current coverage numbers.
