@@ -111,7 +111,7 @@ pub struct Dataset {
 /// # Examples
 ///
 /// ```
-/// use ceres_core::NewDataset;
+/// use ceres_core::{CatalogRecordKind, NewDataset};
 /// use serde_json::json;
 ///
 /// let title = "My Dataset";
@@ -127,6 +127,7 @@ pub struct Dataset {
 ///     embedding: None,
 ///     metadata: json!({"tags": ["open-data", "italy"]}),
 ///     content_hash,
+///     record_kind: CatalogRecordKind::Dataset,
 /// };
 ///
 /// assert_eq!(dataset.title, "My Dataset");
@@ -144,6 +145,7 @@ pub struct Dataset {
 /// * `embedding` - Optional vector of floats for semantic search
 /// * `metadata` - Additional metadata as JSON
 /// * `content_hash` - SHA-256 hash of title + description for delta detection
+/// * `record_kind` - Kind of catalogue record (dataset, series, service, ...)
 #[derive(Debug, Serialize, Clone)]
 pub struct NewDataset {
     /// Original identifier from the source portal

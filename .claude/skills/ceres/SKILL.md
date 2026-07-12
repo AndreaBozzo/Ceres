@@ -63,7 +63,7 @@ pub trait PortalClient: Send + Sync + Clone {
 
 pub trait PortalClientFactory: Send + Sync + Clone {
     type Client: PortalClient;
-    fn create(&self, portal_url: &str, portal_type: PortalType, language: &str, profile: Option<DcatProfile>, sparql_endpoint: Option<&str>) -> Result<Self::Client, AppError>;
+    fn create(&self, portal_url: &str, portal_type: PortalType, language: &str, profile: Option<DcatProfile>, sparql_endpoint: Option<&str>, ogc_endpoint: Option<&str>) -> Result<Self::Client, AppError>;
 }
 // DcatProfile (ceres_core::config): typed DCAT profile enum — UdataRest (canonical
 // "udata_rest", alias "udata", default) and Sparql ("sparql"). Since PR #171 it is
@@ -103,7 +103,7 @@ pub trait DatasetStore: Send + Sync + Clone {
 | `SyncStats` | `ceres_core::sync` | created, updated, unchanged, failed, skipped counts |
 | `SyncOutcome` | `ceres_core::sync` | Per-dataset outcome: Created, Updated, Unchanged, Failed, Skipped |
 | `BatchHarvestSummary` | `ceres_core::sync` | Aggregated results from batch harvesting multiple portals |
-| `PortalEntry` | `ceres_core::config` | Portal config: name, url, type, enabled, url_template, language, profile, sparql_endpoint |
+| `PortalEntry` | `ceres_core::config` | Portal config: name, url, type, enabled, url_template, language, profile, sparql_endpoint, ogc_endpoint |
 | `AppError` | `ceres_core::error` | Error enum with `is_retryable()` and `should_trip_circuit()` |
 | `EmbeddingStats` | `ceres_core::embedding` | embedded, failed, skipped, total counts from an embedding run |
 | `HarvestPipeline` | `ceres_core::pipeline` | Composes HarvestService + EmbeddingService for combined harvest-then-embed |

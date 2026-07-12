@@ -209,6 +209,7 @@ impl PortalClientFactory for MockPortalClientFactory {
         _language: &str,
         _profile: Option<ceres_core::config::DcatProfile>,
         _sparql_endpoint: Option<&str>,
+        _ogc_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         Ok(MockPortalClient::new(portal_url, self.datasets.clone()))
     }

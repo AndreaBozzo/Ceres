@@ -171,6 +171,8 @@ pub struct SyncOptions<'a> {
     pub profile: Option<DcatProfile>,
     /// Optional SPARQL endpoint override for SPARQL-backed DCAT portals.
     pub sparql_endpoint: Option<&'a str>,
+    /// Optional CSW service URL override for OGC Records portals.
+    pub ogc_endpoint: Option<&'a str>,
 }
 
 /// Service for harvesting dataset metadata from open data portals.
@@ -316,6 +318,7 @@ where
             PortalType::default(),
             None,
             None,
+            None,
         )
         .await
     }
@@ -340,6 +343,7 @@ where
         portal_type: PortalType,
         profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
+        ogc_endpoint: Option<&str>,
     ) -> Result<SyncStats, AppError> {
         let result = self
             .sync_portal_with_progress_cancellable_internal(
@@ -351,6 +355,7 @@ where
                     portal_type,
                     profile,
                     sparql_endpoint,
+                    ogc_endpoint,
                 },
                 reporter,
                 CancellationToken::new(), // never cancelled
@@ -491,6 +496,7 @@ where
                 portal_type: PortalType::default(),
                 profile: None,
                 sparql_endpoint: None,
+                ogc_endpoint: None,
             },
             &SilentReporter,
             cancel_token,
@@ -510,6 +516,7 @@ where
         portal_type: PortalType,
         profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
+        ogc_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         self.sync_portal_with_progress_cancellable_internal(
             SyncOptions {
@@ -520,6 +527,7 @@ where
                 portal_type,
                 profile,
                 sparql_endpoint,
+                ogc_endpoint,
             },
             reporter,
             cancel_token,
@@ -541,6 +549,7 @@ where
         portal_type: PortalType,
         profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
+        ogc_endpoint: Option<&str>,
     ) -> Result<SyncResult, AppError> {
         let force_full_sync = self.config.force_full_sync || force_full_sync;
         self.sync_portal_with_progress_cancellable_internal(
@@ -552,6 +561,7 @@ where
                 portal_type,
                 profile,
                 sparql_endpoint,
+                ogc_endpoint,
             },
             reporter,
             cancel_token,
@@ -573,6 +583,7 @@ where
             portal_type,
             profile,
             sparql_endpoint,
+            ogc_endpoint,
         } = options;
 
         let sync_start = Utc::now();
@@ -595,6 +606,7 @@ where
             language,
             profile,
             sparql_endpoint,
+            ogc_endpoint,
         )?;
 
         // Determine sync plan (IDs for full sync, datasets for incremental)
@@ -1296,7 +1308,8 @@ where
                     cancel_token.clone(),
                     portal.portal_type,
                     portal.profile(),
-                    portal.sparql_endpoint().or(portal.ogc_endpoint()),
+                    portal.sparql_endpoint(),
+                    portal.ogc_endpoint(),
                 )
                 .await
             {

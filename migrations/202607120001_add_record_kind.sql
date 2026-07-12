@@ -11,3 +11,9 @@ CREATE INDEX idx_datasets_searchable_embedding
       AND record_kind IN ('dataset', 'series');
 
 ALTER TABLE harvest_jobs ADD COLUMN ogc_endpoint TEXT;
+
+-- The inline CHECK from 202603270001 predates the OpenDataSoft, ArcGIS, and
+-- OGC Records portal types and would reject their harvest jobs.
+ALTER TABLE harvest_jobs DROP CONSTRAINT harvest_jobs_portal_type_check;
+ALTER TABLE harvest_jobs ADD CONSTRAINT harvest_jobs_portal_type_check
+    CHECK (portal_type IN ('ckan', 'dcat', 'socrata', 'opendatasoft', 'arcgis', 'ogc_records'));

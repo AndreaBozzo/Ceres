@@ -386,13 +386,40 @@ fn parse_record(
         })
         .unwrap_or_default();
     let record_kind = classify_kind(&scope);
-    let online_resources: Vec<Value> = node.descendants().filter(|n| local(*n) == "CI_OnlineResource").map(|n| {
-        let url = n.descendants().find(|x| local(*x) == "URL").and_then(node_value);
-        let protocol = n.descendants().find(|x| local(*x) == "protocol").and_then(node_value);
-        let function = n.descendants().find(|x| local(*x) == "CI_OnLineFunctionCode").and_then(|x| x.attribute("codeListValue").map(str::to_owned).or_else(|| node_value(x)));
-        let downloadable = protocol.as_deref().is_some_and(|p| { let p=p.to_ascii_lowercase(); p.contains("download") || p.contains("wfs") || p.contains("file") }) || function.as_deref().is_some_and(|f| f.eq_ignore_ascii_case("download"));
-        json!({"url": url, "protocol": protocol, "function": function, "downloadable": downloadable})
-    }).collect();
+    let online_resources: Vec<Value> = node
+        .descendants()
+        .filter(|n| local(*n) == "CI_OnlineResource")
+        .map(|n| {
+            let url = n
+                .descendants()
+                .find(|x| local(*x) == "URL")
+                .and_then(node_value);
+            let protocol = n
+                .descendants()
+                .find(|x| local(*x) == "protocol")
+                .and_then(node_value);
+            let function = n
+                .descendants()
+                .find(|x| local(*x) == "CI_OnLineFunctionCode")
+                .and_then(|x| {
+                    x.attribute("codeListValue")
+                        .map(str::to_owned)
+                        .or_else(|| node_value(x))
+                });
+            let downloadable = protocol.as_deref().is_some_and(|p| {
+                let p = p.to_ascii_lowercase();
+                p.contains("download") || p.contains("wfs") || p.contains("file")
+            }) || function
+                .as_deref()
+                .is_some_and(|f| f.eq_ignore_ascii_case("download"));
+            json!({
+                "url": url,
+                "protocol": protocol,
+                "function": function,
+                "downloadable": downloadable,
+            })
+        })
+        .collect();
     let landing_page = online_resources
         .iter()
         .find_map(|r| r.get("url").and_then(Value::as_str))
@@ -407,10 +434,15 @@ fn parse_record(
         modified,
         record_kind,
         metadata: json!({
-            "catalog_record_kind": record_kind, "source_format": "application/xml", "source_xml": raw_xml,
-            "scope": scope, "keywords": values(&["keyword", "subject"]), "publisher": first(&["organisationName", "publisher"]),
-            "license": first(&["useLimitation", "accessConstraints", "license"]), "modified": modified_text,
-            "online_resources": online_resources
+            "catalog_record_kind": record_kind,
+            "source_format": "application/xml",
+            "source_xml": raw_xml,
+            "scope": scope,
+            "keywords": values(&["keyword", "subject"]),
+            "publisher": first(&["organisationName", "publisher"]),
+            "license": first(&["useLimitation", "accessConstraints", "license"]),
+            "modified": modified_text,
+            "online_resources": online_resources,
         }),
     })
 }
@@ -462,6 +494,76 @@ fn csw_exception(doc: &Document<'_>) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const FIXTURE: &str = include_str!("../tests/fixtures/csw_get_records.xml");
+
+    #[test]
+    fn parses_get_records_fixture_page() {
+        let page = parse_get_records(FIXTURE, "https://catalog.example.test", "en").unwrap();
+        assert_eq!(page.matched, 3);
+        assert_eq!(page.next_record, 0);
+
+        let kinds: Vec<CatalogRecordKind> = page.records.iter().map(|r| r.record_kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                CatalogRecordKind::Dataset,
+                CatalogRecordKind::Series,
+                CatalogRecordKind::Service,
+            ]
+        );
+
+        let dataset = &page.records[0];
+        assert_eq!(
+            dataset.identifier,
+            "b1a7e9c2-0d43-4f6a-9a21-demo-dataset-001"
+        );
+        assert_eq!(dataset.title, "Mean sea surface temperature 2000-2025");
+        assert!(
+            dataset
+                .description
+                .as_deref()
+                .unwrap()
+                .contains("sea surface temperature")
+        );
+        // Landing page comes from the first online resource.
+        assert_eq!(
+            dataset.landing_page,
+            "https://catalog.example.test/download/sst-2000-2025.nc"
+        );
+        assert_eq!(
+            dataset.modified.unwrap().date_naive().to_string(),
+            "2026-05-14"
+        );
+
+        // Records without online resources fall back to the portal URL.
+        assert_eq!(page.records[1].landing_page, "https://catalog.example.test");
+    }
+
+    #[test]
+    fn fixture_dataset_metadata_preserves_source_details() {
+        let page = parse_get_records(FIXTURE, "https://catalog.example.test", "en").unwrap();
+        let metadata = &page.records[0].metadata;
+
+        assert_eq!(metadata["publisher"], "European Marine Observation Network");
+        assert_eq!(metadata["license"], "CC-BY 4.0");
+        assert_eq!(metadata["keywords"], json!(["oceanography", "temperature"]));
+        assert_eq!(metadata["scope"], "dataset");
+        assert_eq!(metadata["source_format"], "application/xml");
+        assert!(
+            metadata["source_xml"]
+                .as_str()
+                .unwrap()
+                .contains("MD_Metadata")
+        );
+
+        let resources = metadata["online_resources"].as_array().unwrap();
+        assert_eq!(resources.len(), 2);
+        assert_eq!(resources[0]["downloadable"], true);
+        assert_eq!(resources[0]["protocol"], "WWW:DOWNLOAD-1.0-http--download");
+        assert_eq!(resources[1]["downloadable"], false);
+    }
+
     #[test]
     fn parses_iso_record_and_preserves_xml() {
         let xml = r#"<csw:GetRecordsResponse xmlns:csw="http://www.opengis.net/cat/csw/2.0.2" xmlns:gmd="http://www.isotc211.org/2005/gmd" xmlns:gco="http://www.isotc211.org/2005/gco"><csw:SearchResults numberOfRecordsMatched="1" numberOfRecordsReturned="1" nextRecord="0"><gmd:MD_Metadata><gmd:fileIdentifier><gco:CharacterString>abc</gco:CharacterString></gmd:fileIdentifier><gmd:hierarchyLevel><gmd:MD_ScopeCode codeListValue="service"/></gmd:hierarchyLevel><gmd:title><gco:CharacterString>Marine service</gco:CharacterString></gmd:title><gmd:abstract><gco:CharacterString>Description</gco:CharacterString></gmd:abstract></gmd:MD_Metadata></csw:SearchResults></csw:GetRecordsResponse>"#;

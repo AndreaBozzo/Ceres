@@ -227,7 +227,10 @@ pub trait PortalClientFactory: Send + Sync + Clone {
     /// * `language` - Preferred language for multilingual portals (e.g. "en", "fr")
     /// * `profile` - Optional DCAT profile for sub-dispatch; defaults to
     ///   [`DcatProfile::UdataRest`] for DCAT portals, must be `None` otherwise
-    /// * `sparql_endpoint` - Optional custom SPARQL endpoint URL (overrides `{url}/sparql`)
+    /// * `sparql_endpoint` - Optional custom SPARQL endpoint URL (overrides `{url}/sparql`);
+    ///   only valid for SPARQL-profile DCAT portals
+    /// * `ogc_endpoint` - Optional CSW service URL (overrides the portal URL);
+    ///   only valid for OGC Records portals
     fn create(
         &self,
         portal_url: &str,
@@ -235,6 +238,7 @@ pub trait PortalClientFactory: Send + Sync + Clone {
         language: &str,
         profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
+        ogc_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError>;
 }
 

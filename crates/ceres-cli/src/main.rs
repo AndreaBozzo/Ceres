@@ -209,6 +209,7 @@ async fn handle_harvest(
                     ad_hoc_portal_type,
                     ad_hoc_profile,
                     None,
+                    None,
                 )
                 .await?;
             print_single_portal_summary(&url, &stats);
@@ -246,7 +247,8 @@ async fn handle_harvest(
                     &reporter,
                     portal.portal_type,
                     portal.profile(),
-                    portal.sparql_endpoint().or(portal.ogc_endpoint()),
+                    portal.sparql_endpoint(),
+                    portal.ogc_endpoint(),
                 )
                 .await?;
             print_single_portal_summary(&portal.url, &stats);

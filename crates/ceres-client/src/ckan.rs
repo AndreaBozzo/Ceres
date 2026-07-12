@@ -1306,6 +1306,7 @@ impl ceres_core::traits::PortalClientFactory for CkanClientFactory {
         _language: &str,
         _profile: Option<ceres_core::config::DcatProfile>,
         _sparql_endpoint: Option<&str>,
+        _ogc_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         match portal_type {
             ceres_core::config::PortalType::Ckan => CkanClient::new(portal_url),
