@@ -25,6 +25,7 @@ async fn setup_test_datasets(store: &MockDatasetStore, count: usize) -> Vec<Mock
 
     for data in &datasets {
         let new_dataset = NewDataset {
+            record_kind: ceres_core::CatalogRecordKind::Dataset,
             original_id: data.id.clone(),
             source_portal: TEST_PORTAL_URL.to_string(),
             url: format!("{}/dataset/{}", TEST_PORTAL_URL, data.id),
@@ -215,6 +216,7 @@ async fn test_export_csv_empty_store() {
 async fn test_parquet_export_writes_versioned_snapshot_manifest() {
     let store = MockDatasetStore::new();
     let dataset = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: "transport-routes".to_string(),
         source_portal: TEST_PORTAL_URL.to_string(),
         url: format!("{TEST_PORTAL_URL}/dataset/transport-routes"),
@@ -240,6 +242,7 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
             language: None,
             profile: None,
             sparql_endpoint: None,
+            ogc_endpoint: None,
             aliases: Vec::new(),
         }],
     };
@@ -313,6 +316,7 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     let store = MockDatasetStore::new();
     // Two datasets: one fully populated, one missing license/org/tags/modified.
     let rich = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: "rich".to_string(),
         source_portal: TEST_PORTAL_URL.to_string(),
         url: format!("{TEST_PORTAL_URL}/dataset/rich"),
@@ -331,6 +335,7 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
         ),
     };
     let sparse = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: "sparse".to_string(),
         source_portal: TEST_PORTAL_URL.to_string(),
         url: format!("{TEST_PORTAL_URL}/dataset/sparse"),
@@ -357,6 +362,7 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
             language: Some("en".to_string()),
             profile: None,
             sparql_endpoint: None,
+            ogc_endpoint: None,
             aliases: Vec::new(),
         }],
     };
@@ -424,6 +430,7 @@ fn portal_entry(name: &str, url: &str, aliases: Vec<String>) -> PortalEntry {
         language: Some("en".to_string()),
         profile: None,
         sparql_endpoint: None,
+        ogc_endpoint: None,
         aliases,
     }
 }
@@ -437,6 +444,7 @@ async fn upsert_dataset(
     description: &str,
 ) {
     let dataset = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: id.to_string(),
         source_portal: portal.to_string(),
         url: format!("{portal}/dataset/{id}"),
@@ -674,6 +682,7 @@ async fn test_export_csv_escapes_special_characters() {
 
     // Create a dataset with special characters in description
     let dataset = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: "special-chars".to_string(),
         source_portal: TEST_PORTAL_URL.to_string(),
         url: format!("{}/dataset/special-chars", TEST_PORTAL_URL),
@@ -748,6 +757,7 @@ async fn test_export_with_portal_filter() {
 
     // Create datasets from two different portals
     let dataset1 = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: "dataset-a".to_string(),
         source_portal: "https://portal-a.example.com".to_string(),
         url: "https://portal-a.example.com/dataset/dataset-a".to_string(),
@@ -759,6 +769,7 @@ async fn test_export_with_portal_filter() {
     };
 
     let dataset2 = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: "dataset-b".to_string(),
         source_portal: "https://portal-b.example.com".to_string(),
         url: "https://portal-b.example.com/dataset/dataset-b".to_string(),
@@ -808,6 +819,7 @@ async fn test_export_with_filter_and_limit() {
     // Create 5 datasets from same portal
     for i in 0..5 {
         let dataset = NewDataset {
+            record_kind: ceres_core::CatalogRecordKind::Dataset,
             original_id: format!("dataset-{}", i),
             source_portal: TEST_PORTAL_URL.to_string(),
             url: format!("{}/dataset/dataset-{}", TEST_PORTAL_URL, i),

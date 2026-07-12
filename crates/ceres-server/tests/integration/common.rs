@@ -29,6 +29,7 @@ const MIGRATIONS: &[&str] = &[
         url VARCHAR NOT NULL,
         title TEXT NOT NULL,
         description TEXT,
+        record_kind VARCHAR(16) NOT NULL DEFAULT 'dataset',
         embedding vector(768),
         metadata JSONB DEFAULT '{}'::jsonb,
         first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -69,9 +70,10 @@ const MIGRATIONS: &[&str] = &[
         url_template TEXT,
         language TEXT,
         portal_type TEXT NOT NULL DEFAULT 'ckan'
-            CHECK (portal_type IN ('ckan', 'dcat', 'socrata')),
+            CHECK (portal_type IN ('ckan', 'dcat', 'socrata', 'opendatasoft', 'arcgis', 'ogc_records')),
         profile TEXT,
         sparql_endpoint TEXT,
+        ogc_endpoint TEXT,
         CONSTRAINT chk_harvest_jobs_status CHECK (
             status IN ('pending', 'running', 'completed', 'failed', 'cancelled')
         )

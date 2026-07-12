@@ -81,7 +81,7 @@ Key design notes:
 - `search_modified_since` enables incremental sync. Return `Err` if the portal doesn't support it — Ceres will fall back to full sync.
 - `search_all_datasets` is an optimization for bulk fetch. Default returns an error, falling back to `list_dataset_ids()` + `get_dataset()`.
 
-**Built-in:** `CkanClient`, `DcatClient`, `SparqlDcatClient`, `DataJsonClient`, `SocrataClient`, and `OpenDataSoftClient`.
+**Built-in:** `CkanClient`, `DcatClient`, `SparqlDcatClient`, `DataJsonClient`, `SocrataClient`, `OpenDataSoftClient`, `ArcGisClient`, and `OgcRecordsClient`.
 
 ### PortalClientFactory
 
@@ -90,7 +90,7 @@ Separate factory trait for creating portal clients:
 ```rust
 pub trait PortalClientFactory: Send + Sync + Clone {
     type Client: PortalClient;
-    fn create(&self, portal_url: &str, portal_type: PortalType, language: &str) -> Result<Self::Client, AppError>;
+    fn create(&self, portal_url: &str, portal_type: PortalType, language: &str, profile: Option<DcatProfile>, sparql_endpoint: Option<&str>, ogc_endpoint: Option<&str>) -> Result<Self::Client, AppError>;
 }
 ```
 

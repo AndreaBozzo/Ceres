@@ -385,6 +385,7 @@ impl ArcGisClient {
             language,
         );
         NewDataset {
+            record_kind: ceres_core::CatalogRecordKind::Dataset,
             original_id: data.id,
             source_portal: portal_url.to_string(),
             url: data.landing_page,

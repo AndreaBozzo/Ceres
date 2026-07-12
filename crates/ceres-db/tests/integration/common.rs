@@ -21,6 +21,7 @@ const MIGRATIONS: &[&str] = &[
         url VARCHAR NOT NULL,
         title TEXT NOT NULL,
         description TEXT,
+        record_kind VARCHAR(16) NOT NULL DEFAULT 'dataset',
         embedding vector(768),
         metadata JSONB DEFAULT '{}'::jsonb,
         first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -118,6 +119,7 @@ pub fn sample_new_dataset(id: &str, portal: &str) -> NewDataset {
     let embedding_vec: Vec<f32> = (0..768).map(|i| i as f32 / 768.0).collect();
 
     NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: id.to_string(),
         source_portal: portal.to_string(),
         url: format!("{}/dataset/{}", portal, id),

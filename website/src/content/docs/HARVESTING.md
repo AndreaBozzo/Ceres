@@ -18,6 +18,11 @@ Today the shipping portal clients cover:
 - Socrata catalogs through the Discovery API (via `--type socrata`)
 - OpenDataSoft catalogs through the Explore API v2.1 (via `--type opendatasoft`)
 - ArcGIS Hub catalogs through the Hub Search API (via `--type arcgis`)
+- OGC CSW 2.0.2 catalogues (via `--type ogc_records`)
+
+OGC catalogues are capability-driven: Ceres reads `GetCapabilities`, follows
+the advertised record bindings, and streams bounded result windows. Configure
+`ogc_endpoint` when the CSW service differs from the logical portal URL.
 
 See [Supported portals](/portals/) for per-portal configuration, examples, and
 current coverage numbers.

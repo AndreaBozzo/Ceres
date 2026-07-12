@@ -358,6 +358,7 @@ where
                             }
                         };
                         NewDataset {
+                            record_kind: crate::CatalogRecordKind::Dataset,
                             original_id: d.original_id.clone(),
                             source_portal: d.source_portal.clone(),
                             url: d.url.clone(),

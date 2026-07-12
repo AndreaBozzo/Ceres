@@ -106,6 +106,7 @@ where
                 PortalType::default(),
                 None,
                 None,
+                None,
             )
             .await?;
         Ok(result.stats)
@@ -122,6 +123,7 @@ where
         portal_type: PortalType,
         profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
+        ogc_endpoint: Option<&str>,
     ) -> Result<(SyncResult, EmbeddingStats), AppError> {
         self.sync_portal_with_progress_cancellable_with_options(
             portal_url,
@@ -133,6 +135,7 @@ where
             portal_type,
             profile,
             sparql_endpoint,
+            ogc_endpoint,
         )
         .await
     }
@@ -150,6 +153,7 @@ where
         portal_type: PortalType,
         profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
+        ogc_endpoint: Option<&str>,
     ) -> Result<(SyncResult, EmbeddingStats), AppError> {
         // Step 1: Harvest metadata
         let sync_result = self
@@ -164,6 +168,7 @@ where
                 portal_type,
                 profile,
                 sparql_endpoint,
+                ogc_endpoint,
             )
             .await?;
 

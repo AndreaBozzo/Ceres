@@ -87,6 +87,8 @@ pub struct SearchResultDto {
     pub url: String,
     /// Source portal URL
     pub source_portal: String,
+    /// Catalog record kind.
+    pub record_kind: String,
     /// Similarity score (0.0 to 1.0)
     pub similarity_score: f32,
 }
@@ -99,6 +101,7 @@ impl From<SearchResult> for SearchResultDto {
             description: r.dataset.description,
             url: r.dataset.url,
             source_portal: r.dataset.source_portal,
+            record_kind: r.dataset.record_kind.to_string(),
             similarity_score: r.similarity_score,
         }
     }
@@ -121,6 +124,8 @@ pub struct PortalInfoResponse {
     pub profile: Option<String>,
     /// Custom SPARQL endpoint URL, if applicable
     pub sparql_endpoint: Option<String>,
+    /// Custom OGC CSW endpoint URL, if applicable.
+    pub ogc_endpoint: Option<String>,
     /// Whether the portal is enabled for harvesting
     pub enabled: bool,
     /// Portal description
@@ -253,6 +258,8 @@ pub struct DatasetResponse {
     pub title: String,
     /// Dataset description
     pub description: Option<String>,
+    /// Catalog record kind.
+    pub record_kind: String,
     /// Additional metadata
     pub metadata: serde_json::Value,
     /// First indexed timestamp
@@ -270,6 +277,7 @@ impl From<ceres_core::Dataset> for DatasetResponse {
             url: d.url,
             title: d.title,
             description: d.description,
+            record_kind: d.record_kind.to_string(),
             metadata: d.metadata,
             first_seen_at: d.first_seen_at,
             last_updated_at: d.last_updated_at,

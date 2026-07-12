@@ -393,6 +393,9 @@ pub enum PortalType {
     OpenDataSoft,
     /// ArcGIS Hub portal (Hub Search API; geospatial-heavy local and regional governments).
     ArcGis,
+    /// OGC catalogue records exposed through CSW 2.0.2.
+    #[serde(rename = "ogc_records")]
+    OgcRecords,
 }
 
 impl fmt::Display for PortalType {
@@ -403,6 +406,7 @@ impl fmt::Display for PortalType {
             Self::Dcat => write!(f, "dcat"),
             Self::OpenDataSoft => write!(f, "opendatasoft"),
             Self::ArcGis => write!(f, "arcgis"),
+            Self::OgcRecords => write!(f, "ogc_records"),
         }
     }
 }
@@ -417,8 +421,9 @@ impl FromStr for PortalType {
             "dcat" => Ok(Self::Dcat),
             "opendatasoft" => Ok(Self::OpenDataSoft),
             "arcgis" => Ok(Self::ArcGis),
+            "ogc_records" | "csw" => Ok(Self::OgcRecords),
             _ => Err(AppError::ConfigError(format!(
-                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat, opendatasoft, arcgis",
+                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat, opendatasoft, arcgis, ogc_records",
                 s
             ))),
         }
@@ -619,6 +624,10 @@ pub struct PortalEntry {
     #[serde(default)]
     pub sparql_endpoint: Option<String>,
 
+    /// Optional CSW service endpoint for `ogc_records` portals.
+    #[serde(default)]
+    pub ogc_endpoint: Option<String>,
+
     /// Alternate or mirror base URLs that are the *same logical portal* as `url`.
     ///
     /// Datasets harvested under any of these URLs are folded onto `url` for
@@ -646,6 +655,11 @@ impl PortalEntry {
         self.sparql_endpoint.as_deref()
     }
 
+    /// Returns the custom OGC CSW endpoint URL, if set.
+    pub fn ogc_endpoint(&self) -> Option<&str> {
+        self.ogc_endpoint.as_deref()
+    }
+
     /// Returns the declared alias/mirror base URLs for this portal.
     pub fn aliases(&self) -> &[String] {
         &self.aliases
@@ -666,6 +680,12 @@ impl PortalEntry {
         if self.sparql_endpoint.is_some() && self.profile != Some(DcatProfile::Sparql) {
             return Err(AppError::ConfigError(format!(
                 "Portal '{}': 'sparql_endpoint' is only valid with profile = \"sparql\"",
+                self.name
+            )));
+        }
+        if self.ogc_endpoint.is_some() && self.portal_type != PortalType::OgcRecords {
+            return Err(AppError::ConfigError(format!(
+                "Portal '{}': 'ogc_endpoint' is only valid with type = \"ogc_records\"",
                 self.name
             )));
         }

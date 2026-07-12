@@ -48,6 +48,7 @@ pub async fn list_portals(
                 portal_type: portal.portal_type.to_string(),
                 profile: portal.profile.map(|p| p.to_string()),
                 sparql_endpoint: portal.sparql_endpoint.clone(),
+                ogc_endpoint: portal.ogc_endpoint.clone(),
                 enabled: portal.enabled,
                 description: portal.description.clone(),
                 last_sync: sync_status.as_ref().and_then(|s| s.last_successful_sync),

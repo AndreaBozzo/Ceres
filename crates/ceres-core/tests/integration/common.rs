@@ -153,6 +153,7 @@ impl PortalClient for MockPortalClient {
         };
 
         NewDataset {
+            record_kind: ceres_core::CatalogRecordKind::Dataset,
             original_id: data.id.clone(),
             source_portal: portal_url.to_string(),
             url,
@@ -208,6 +209,7 @@ impl PortalClientFactory for MockPortalClientFactory {
         _language: &str,
         _profile: Option<ceres_core::config::DcatProfile>,
         _sparql_endpoint: Option<&str>,
+        _ogc_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         Ok(MockPortalClient::new(portal_url, self.datasets.clone()))
     }
@@ -297,6 +299,7 @@ impl DatasetStore for MockDatasetStore {
         for stored in datasets.values() {
             if stored.id == id {
                 return Ok(Some(Dataset {
+                    record_kind: ceres_core::CatalogRecordKind::Dataset,
                     id: stored.id,
                     original_id: stored.dataset.original_id.clone(),
                     source_portal: stored.dataset.source_portal.clone(),
@@ -411,6 +414,7 @@ impl DatasetStore for MockDatasetStore {
                 // Create a minimal Dataset for SearchResult
                 SearchResult {
                     dataset: ceres_core::Dataset {
+                        record_kind: ceres_core::CatalogRecordKind::Dataset,
                         id: stored.id,
                         original_id: stored.dataset.original_id.clone(),
                         source_portal: stored.dataset.source_portal.clone(),
@@ -444,6 +448,7 @@ impl DatasetStore for MockDatasetStore {
             .take(limit.unwrap_or(usize::MAX))
             .map(|((_, _), stored)| {
                 Ok(Dataset {
+                    record_kind: ceres_core::CatalogRecordKind::Dataset,
                     id: stored.id,
                     original_id: stored.dataset.original_id.clone(),
                     source_portal: stored.dataset.source_portal.clone(),
@@ -529,6 +534,7 @@ impl DatasetStore for MockDatasetStore {
             })
             .take(limit.unwrap_or(usize::MAX))
             .map(|((_, _), stored)| Dataset {
+                record_kind: ceres_core::CatalogRecordKind::Dataset,
                 id: stored.id,
                 original_id: stored.dataset.original_id.clone(),
                 source_portal: stored.dataset.source_portal.clone(),
@@ -617,6 +623,7 @@ impl MockJobQueue {
             language: None,
             profile: None,
             sparql_endpoint: None,
+            ogc_endpoint: None,
         };
         self.jobs.lock().unwrap().insert(id, job);
         (self, id)
@@ -670,6 +677,7 @@ impl JobQueue for MockJobQueue {
             language: request.language,
             profile: request.profile,
             sparql_endpoint: request.sparql_endpoint,
+            ogc_endpoint: request.ogc_endpoint,
         };
         self.jobs.lock().unwrap().insert(id, job.clone());
         Ok(job)

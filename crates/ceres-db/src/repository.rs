@@ -14,13 +14,13 @@ use uuid::Uuid;
 
 /// Column list for SELECT queries. Must remain a const literal to ensure SQL safety
 /// since format!() bypasses sqlx compile-time validation.
-const DATASET_COLUMNS: &str = "id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale";
+const DATASET_COLUMNS: &str = "id, original_id, source_portal, url, title, description, record_kind, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale";
 
 // Static queries for list_all_stream to avoid lifetime issues with BoxStream
-const LIST_ALL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets ORDER BY last_updated_at DESC";
-const LIST_ALL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets ORDER BY last_updated_at DESC LIMIT $1";
-const LIST_ALL_PORTAL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC";
-const LIST_ALL_PORTAL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2";
+const LIST_ALL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, record_kind, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets ORDER BY last_updated_at DESC";
+const LIST_ALL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, record_kind, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets ORDER BY last_updated_at DESC LIMIT $1";
+const LIST_ALL_PORTAL_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, record_kind, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC";
+const LIST_ALL_PORTAL_LIMIT_QUERY: &str = "SELECT id, original_id, source_portal, url, title, description, record_kind, embedding, metadata, first_seen_at, last_updated_at, content_hash, is_stale FROM datasets WHERE source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2";
 
 /// Repository for dataset persistence in PostgreSQL with pgvector.
 ///
@@ -67,16 +67,18 @@ impl DatasetRepository {
                 url,
                 title,
                 description,
+                record_kind,
                 embedding,
                 metadata,
                 content_hash,
                 last_updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
             ON CONFLICT (source_portal, original_id)
             DO UPDATE SET
                 title = EXCLUDED.title,
                 description = EXCLUDED.description,
+                record_kind = EXCLUDED.record_kind,
                 url = EXCLUDED.url,
                 embedding = COALESCE(EXCLUDED.embedding, datasets.embedding),
                 metadata = EXCLUDED.metadata,
@@ -91,6 +93,7 @@ impl DatasetRepository {
         .bind(&new_data.url)
         .bind(&new_data.title)
         .bind(&new_data.description)
+        .bind(new_data.record_kind.as_str())
         .bind(embedding_vector)
         .bind(serde_json::to_value(&new_data.metadata)?)
         .bind(&new_data.content_hash)
@@ -124,6 +127,7 @@ impl DatasetRepository {
         let mut urls: Vec<String> = Vec::with_capacity(datasets.len());
         let mut titles: Vec<String> = Vec::with_capacity(datasets.len());
         let mut descriptions: Vec<Option<String>> = Vec::with_capacity(datasets.len());
+        let mut record_kinds: Vec<&str> = Vec::with_capacity(datasets.len());
         let mut embeddings: Vec<Option<Vector>> = Vec::with_capacity(datasets.len());
         let mut metadatas: Vec<serde_json::Value> = Vec::with_capacity(datasets.len());
         let mut content_hashes: Vec<String> = Vec::with_capacity(datasets.len());
@@ -134,6 +138,7 @@ impl DatasetRepository {
             urls.push(d.url.clone());
             titles.push(d.title.clone());
             descriptions.push(d.description.clone());
+            record_kinds.push(d.record_kind.as_str());
             embeddings.push(d.embedding.as_ref().map(|v| Vector::from(v.clone())));
             metadatas.push(d.metadata.clone());
             content_hashes.push(d.content_hash.clone());
@@ -147,6 +152,7 @@ impl DatasetRepository {
                 url,
                 title,
                 description,
+                record_kind,
                 embedding,
                 metadata,
                 content_hash,
@@ -158,15 +164,17 @@ impl DatasetRepository {
                 $3::varchar[],
                 $4::text[],
                 $5::text[],
-                $6::vector[],
-                $7::jsonb[],
-                $8::varchar[],
-                (SELECT array_agg(NOW()) FROM generate_series(1, $9))::timestamptz[]
+                $6::varchar[],
+                $7::vector[],
+                $8::jsonb[],
+                $9::varchar[],
+                (SELECT array_agg(NOW()) FROM generate_series(1, $10))::timestamptz[]
             )
             ON CONFLICT (source_portal, original_id)
             DO UPDATE SET
                 title = EXCLUDED.title,
                 description = EXCLUDED.description,
+                record_kind = EXCLUDED.record_kind,
                 url = EXCLUDED.url,
                 embedding = COALESCE(EXCLUDED.embedding, datasets.embedding),
                 metadata = EXCLUDED.metadata,
@@ -181,6 +189,7 @@ impl DatasetRepository {
         .bind(&urls)
         .bind(&titles)
         .bind(&descriptions)
+        .bind(&record_kinds)
         .bind(&embeddings)
         .bind(&metadatas)
         .bind(&content_hashes)
@@ -399,7 +408,7 @@ impl DatasetRepository {
             .unwrap_or(40);
 
         let query = format!(
-            "SELECT {}, 1 - (embedding <=> $1) as similarity_score FROM datasets WHERE embedding IS NOT NULL AND NOT is_stale ORDER BY embedding <=> $1 LIMIT $2",
+            "SELECT {}, 1 - (embedding <=> $1) as similarity_score FROM datasets WHERE embedding IS NOT NULL AND NOT is_stale AND record_kind IN ('dataset', 'series') ORDER BY embedding <=> $1 LIMIT $2",
             DATASET_COLUMNS
         );
 
@@ -443,6 +452,7 @@ impl DatasetRepository {
                     url: row.url,
                     title: row.title,
                     description: row.description,
+                    record_kind: row.record_kind.parse().unwrap_or_default(),
                     embedding: row.embedding.map(|v| v.to_vec()),
                     metadata: row.metadata.0,
                     first_seen_at: row.first_seen_at,
@@ -758,7 +768,7 @@ impl DatasetRepository {
         let rows = if let Some(portal) = portal_filter {
             if let Some(lim) = limit {
                 let query = format!(
-                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2",
+                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND record_kind IN ('dataset', 'series') AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1 ORDER BY last_updated_at DESC LIMIT $2",
                     DATASET_COLUMNS
                 );
                 sqlx::query_as::<_, DatasetRow>(&query)
@@ -768,7 +778,7 @@ impl DatasetRepository {
                     .await
             } else {
                 let query = format!(
-                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1 ORDER BY last_updated_at DESC",
+                    "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND record_kind IN ('dataset', 'series') AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' AND source_portal = $1 ORDER BY last_updated_at DESC",
                     DATASET_COLUMNS
                 );
                 sqlx::query_as::<_, DatasetRow>(&query)
@@ -778,7 +788,7 @@ impl DatasetRepository {
             }
         } else if let Some(lim) = limit {
             let query = format!(
-                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' ORDER BY last_updated_at DESC LIMIT $1",
+                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND record_kind IN ('dataset', 'series') AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' ORDER BY last_updated_at DESC LIMIT $1",
                 DATASET_COLUMNS
             );
             sqlx::query_as::<_, DatasetRow>(&query)
@@ -787,7 +797,7 @@ impl DatasetRepository {
                 .await
         } else {
             let query = format!(
-                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' ORDER BY last_updated_at DESC",
+                "SELECT {} FROM datasets WHERE embedding IS NULL AND NOT is_stale AND record_kind IN ('dataset', 'series') AND TRIM(CONCAT(title, ' ', COALESCE(description, ''))) != '' ORDER BY last_updated_at DESC",
                 DATASET_COLUMNS
             );
             sqlx::query_as::<_, DatasetRow>(&query)
@@ -897,6 +907,7 @@ struct DatasetRow {
     url: String,
     title: String,
     description: Option<String>,
+    record_kind: String,
     embedding: Option<Vector>,
     metadata: Json<serde_json::Value>,
     first_seen_at: DateTime<Utc>,
@@ -914,6 +925,7 @@ impl From<DatasetRow> for Dataset {
             url: row.url,
             title: row.title,
             description: row.description,
+            record_kind: row.record_kind.parse().unwrap_or_default(),
             embedding: row.embedding.map(|v| v.to_vec()),
             metadata: row.metadata.0,
             first_seen_at: row.first_seen_at,
@@ -949,6 +961,7 @@ struct SearchResultRow {
     url: String,
     title: String,
     description: Option<String>,
+    record_kind: String,
     embedding: Option<Vector>,
     metadata: Json<serde_json::Value>,
     first_seen_at: DateTime<Utc>,
@@ -1121,6 +1134,7 @@ mod tests {
         let content_hash = NewDataset::compute_content_hash(title, description.as_deref());
 
         let new_dataset = NewDataset {
+            record_kind: ceres_core::CatalogRecordKind::Dataset,
             original_id: "test-id".to_string(),
             source_portal: "https://example.com".to_string(),
             url: "https://example.com/dataset/test".to_string(),

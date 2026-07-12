@@ -307,6 +307,7 @@ where
                 job.portal_type,
                 job.profile,
                 job.sparql_endpoint.as_deref(),
+                job.ogc_endpoint.as_deref(),
             )
             .await;
 

@@ -114,6 +114,7 @@ async fn test_batch_harvest_cancellable() {
             language: None,
             profile: None,
             sparql_endpoint: None,
+            ogc_endpoint: None,
             aliases: Vec::new(),
         },
         ceres_core::PortalEntry {
@@ -126,6 +127,7 @@ async fn test_batch_harvest_cancellable() {
             language: None,
             profile: None,
             sparql_endpoint: None,
+            ogc_endpoint: None,
             aliases: Vec::new(),
         },
     ];

@@ -22,6 +22,7 @@ use crate::arcgis::{ArcGisClient, ArcGisDataset};
 use crate::ckan::{CkanClient, CkanDataset};
 use crate::datajson::{DataJsonClient, DataJsonDataset};
 use crate::dcat::{DcatClient, DcatDataset};
+use crate::ogc_records::{OgcRecord, OgcRecordsClient};
 use crate::opendatasoft::{OpenDataSoftClient, OpenDataSoftDataset};
 use crate::socrata::{SocrataClient, SocrataDataset};
 use crate::sparql::SparqlDcatClient;
@@ -41,6 +42,8 @@ pub enum PortalDataEnum {
     OpenDataSoft(OpenDataSoftDataset),
     /// Data from an ArcGIS Hub Search API catalog.
     ArcGis(ArcGisDataset),
+    /// Data from an OGC CSW catalogue.
+    OgcRecords(OgcRecord),
 }
 
 /// Unified portal client that wraps concrete portal implementations.
@@ -63,6 +66,8 @@ pub enum PortalClientEnum {
     OpenDataSoft(OpenDataSoftClient),
     /// ArcGIS Hub Search API client.
     ArcGis(ArcGisClient),
+    /// OGC CSW 2.0.2 catalogue client.
+    OgcRecords(OgcRecordsClient),
 }
 
 impl PortalClient for PortalClientEnum {
@@ -77,6 +82,7 @@ impl PortalClient for PortalClientEnum {
             Self::Socrata(c) => c.portal_type(),
             Self::OpenDataSoft(c) => c.portal_type(),
             Self::ArcGis(c) => c.portal_type(),
+            Self::OgcRecords(c) => c.portal_type(),
         }
     }
 
@@ -89,6 +95,7 @@ impl PortalClient for PortalClientEnum {
             Self::Socrata(c) => c.base_url(),
             Self::OpenDataSoft(c) => c.base_url(),
             Self::ArcGis(c) => c.base_url(),
+            Self::OgcRecords(c) => c.base_url(),
         }
     }
 
@@ -101,6 +108,7 @@ impl PortalClient for PortalClientEnum {
             Self::Socrata(c) => c.list_dataset_ids().await,
             Self::OpenDataSoft(c) => c.list_dataset_ids().await,
             Self::ArcGis(c) => c.list_dataset_ids().await,
+            Self::OgcRecords(c) => c.list_dataset_ids().await,
         }
     }
 
@@ -113,6 +121,7 @@ impl PortalClient for PortalClientEnum {
             Self::Socrata(c) => c.get_dataset(id).await.map(PortalDataEnum::Socrata),
             Self::OpenDataSoft(c) => c.get_dataset(id).await.map(PortalDataEnum::OpenDataSoft),
             Self::ArcGis(c) => c.get_dataset(id).await.map(PortalDataEnum::ArcGis),
+            Self::OgcRecords(c) => c.get_dataset(id).await.map(PortalDataEnum::OgcRecords),
         }
     }
 
@@ -140,6 +149,9 @@ impl PortalClient for PortalClientEnum {
             }
             PortalDataEnum::ArcGis(data) => {
                 ArcGisClient::into_new_dataset(data, portal_url, url_template, language)
+            }
+            PortalDataEnum::OgcRecords(data) => {
+                OgcRecordsClient::into_new_dataset(data, portal_url, url_template, language)
             }
         }
     }
@@ -179,6 +191,12 @@ impl PortalClient for PortalClientEnum {
                 .search_modified_since(since)
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::ArcGis).collect()),
+            Self::OgcRecords(c) => c.search_modified_since(since).await.map(|datasets| {
+                datasets
+                    .into_iter()
+                    .map(PortalDataEnum::OgcRecords)
+                    .collect()
+            }),
         }
     }
 
@@ -214,6 +232,12 @@ impl PortalClient for PortalClientEnum {
                 .search_all_datasets()
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::ArcGis).collect()),
+            Self::OgcRecords(c) => c.search_all_datasets().await.map(|datasets| {
+                datasets
+                    .into_iter()
+                    .map(PortalDataEnum::OgcRecords)
+                    .collect()
+            }),
         }
     }
 
@@ -265,6 +289,14 @@ impl PortalClient for PortalClientEnum {
                     r.map(|datasets| datasets.into_iter().map(PortalDataEnum::ArcGis).collect())
                 },
             )),
+            Self::OgcRecords(c) => Box::pin(StreamExt::map(c.paginate_stream(), |r| {
+                r.map(|datasets| {
+                    datasets
+                        .into_iter()
+                        .map(PortalDataEnum::OgcRecords)
+                        .collect()
+                })
+            })),
         }
     }
 
@@ -282,6 +314,9 @@ impl PortalClient for PortalClientEnum {
             Self::Socrata(c) => c.dataset_count().await,
             Self::OpenDataSoft(c) => c.dataset_count().await,
             Self::ArcGis(c) => c.dataset_count().await,
+            Self::OgcRecords(_) => Err(AppError::Generic(
+                "dataset_count is not supported for OGC CSW catalogues".into(),
+            )),
         }
     }
 }
@@ -345,6 +380,7 @@ impl PortalClientFactory for PortalClientFactoryEnum {
         language: &str,
         profile: Option<DcatProfile>,
         sparql_endpoint: Option<&str>,
+        ogc_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
         if profile.is_some() && portal_type != PortalType::Dcat {
             return Err(AppError::ConfigError(format!(
@@ -356,6 +392,11 @@ impl PortalClientFactory for PortalClientFactoryEnum {
                 "A SPARQL endpoint was specified for portal '{portal_url}', but its profile is not 'sparql'."
             )));
         }
+        if ogc_endpoint.is_some() && portal_type != PortalType::OgcRecords {
+            return Err(AppError::ConfigError(format!(
+                "An OGC endpoint was specified for portal '{portal_url}', but its type is '{portal_type}'. OGC endpoints are only valid for 'ogc_records' portals."
+            )));
+        }
 
         match portal_type {
             PortalType::Ckan => Ok(PortalClientEnum::Ckan(ckan_client_for(portal_url)?)),
@@ -364,6 +405,11 @@ impl PortalClientFactory for PortalClientFactoryEnum {
                 OpenDataSoftClient::new(portal_url)?,
             )),
             PortalType::ArcGis => Ok(PortalClientEnum::ArcGis(ArcGisClient::new(portal_url)?)),
+            PortalType::OgcRecords => Ok(PortalClientEnum::OgcRecords(OgcRecordsClient::new(
+                portal_url,
+                language,
+                ogc_endpoint,
+            )?)),
             PortalType::Dcat => match profile.unwrap_or_default() {
                 DcatProfile::UdataRest => Ok(PortalClientEnum::Dcat(DcatClient::new(
                     portal_url, language,
@@ -394,6 +440,7 @@ mod tests {
             "en",
             None,
             None,
+            None,
         );
         assert!(client.is_ok());
         let client = client.unwrap();
@@ -404,7 +451,14 @@ mod tests {
     #[test]
     fn test_factory_creates_dcat_client() {
         let factory = PortalClientFactoryEnum::new();
-        let client = factory.create("https://data.public.lu", PortalType::Dcat, "fr", None, None);
+        let client = factory.create(
+            "https://data.public.lu",
+            PortalType::Dcat,
+            "fr",
+            None,
+            None,
+            None,
+        );
         assert!(client.is_ok());
         let client = client.unwrap();
         assert_eq!(client.portal_type(), "dcat");
@@ -419,6 +473,7 @@ mod tests {
             PortalType::Dcat,
             "en",
             Some(DcatProfile::Sparql),
+            None,
             None,
         );
         assert!(client.is_ok());
@@ -437,6 +492,7 @@ mod tests {
             "nb",
             Some(DcatProfile::Sparql),
             Some("https://sparql.fellesdatakatalog.digdir.no"),
+            None,
         );
         assert!(client.is_ok());
         let client = client.unwrap();
@@ -449,7 +505,14 @@ mod tests {
     fn test_factory_dcat_default_profile_is_udata_rest() {
         let factory = PortalClientFactoryEnum::new();
         let client = factory
-            .create("https://data.public.lu", PortalType::Dcat, "fr", None, None)
+            .create(
+                "https://data.public.lu",
+                PortalType::Dcat,
+                "fr",
+                None,
+                None,
+                None,
+            )
             .unwrap();
         assert!(matches!(client, PortalClientEnum::Dcat(_)));
     }
@@ -463,6 +526,7 @@ mod tests {
                 PortalType::Dcat,
                 "fr",
                 Some(DcatProfile::UdataRest),
+                None,
                 None,
             )
             .unwrap();
@@ -479,6 +543,7 @@ mod tests {
                 "en",
                 Some(DcatProfile::StaticJson),
                 None,
+                None,
             )
             .unwrap();
         assert!(matches!(client, PortalClientEnum::DataJson(_)));
@@ -492,6 +557,7 @@ mod tests {
             PortalType::Ckan,
             "en",
             Some(DcatProfile::Sparql),
+            None,
             None,
         );
         let err = result.err().expect("expected profile-on-ckan error");
@@ -507,6 +573,7 @@ mod tests {
             "fr",
             Some(DcatProfile::UdataRest),
             Some("https://example.org/sparql"),
+            None,
         );
         let err = result
             .err()
@@ -522,6 +589,7 @@ mod tests {
                 "https://opendata.paris.fr",
                 PortalType::OpenDataSoft,
                 "fr",
+                None,
                 None,
                 None,
             )
@@ -540,6 +608,7 @@ mod tests {
             "fr",
             Some(DcatProfile::Sparql),
             None,
+            None,
         );
         let err = result.err().expect("expected profile-on-ods error");
         assert!(err.to_string().contains("only valid for 'dcat'"));
@@ -553,6 +622,7 @@ mod tests {
                 "https://opendata.dc.gov",
                 PortalType::ArcGis,
                 "en",
+                None,
                 None,
                 None,
             )
@@ -571,6 +641,7 @@ mod tests {
             "en",
             Some(DcatProfile::Sparql),
             None,
+            None,
         );
         let err = result.err().expect("expected profile-on-arcgis error");
         assert!(err.to_string().contains("only valid for 'dcat'"));
@@ -586,9 +657,58 @@ mod tests {
                 "en",
                 None,
                 None,
+                None,
             )
             .unwrap();
         assert!(matches!(client, PortalClientEnum::Socrata(_)));
         assert_eq!(client.portal_type(), "socrata");
+    }
+
+    #[test]
+    fn test_factory_creates_ogc_records_client_with_custom_endpoint() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory
+            .create(
+                "https://emodnet.ec.europa.eu",
+                PortalType::OgcRecords,
+                "en",
+                None,
+                None,
+                Some("https://emodnet.ec.europa.eu/geonetwork/emodnet/eng/csw"),
+            )
+            .unwrap();
+        assert!(matches!(client, PortalClientEnum::OgcRecords(_)));
+        assert_eq!(client.portal_type(), "ogc_records");
+        assert_eq!(client.base_url(), "https://emodnet.ec.europa.eu/");
+    }
+
+    #[test]
+    fn test_factory_rejects_ogc_endpoint_on_non_ogc_portal() {
+        let factory = PortalClientFactoryEnum::new();
+        let result = factory.create(
+            "https://dati.comune.milano.it",
+            PortalType::Ckan,
+            "en",
+            None,
+            None,
+            Some("https://example.org/csw"),
+        );
+        let err = result.err().expect("expected ogc-endpoint-on-ckan error");
+        assert!(err.to_string().contains("only valid for 'ogc_records'"));
+    }
+
+    #[test]
+    fn test_factory_rejects_sparql_endpoint_on_ogc_portal() {
+        let factory = PortalClientFactoryEnum::new();
+        let result = factory.create(
+            "https://emodnet.ec.europa.eu",
+            PortalType::OgcRecords,
+            "en",
+            None,
+            Some("https://example.org/sparql"),
+            None,
+        );
+        let err = result.err().expect("expected sparql-endpoint-on-ogc error");
+        assert!(err.to_string().contains("not 'sparql'"));
     }
 }
