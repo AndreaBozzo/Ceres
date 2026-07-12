@@ -1,10 +1,3 @@
----
-title: Code of Conduct
-description: Code of Conduct for Ceres contributors and community
----
-
-<!-- Mirror of /CODE_OF_CONDUCT.md at the repository root (the GitHub-facing copy). Keep both in sync. -->
-
 # Code of Conduct
 
 ## Our Pledge

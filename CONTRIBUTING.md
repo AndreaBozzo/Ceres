@@ -1,10 +1,3 @@
----
-title: Contributing
-description: Guidelines for contributing to the Ceres project
----
-
-<!-- Mirror of /CONTRIBUTING.md at the repository root (the GitHub-facing copy). Keep both in sync. -->
-
 # Contributing to Ceres
 
 Thank you for considering contributing to Ceres! This document provides guidelines for contributing to the project.
@@ -113,4 +106,4 @@ Feel free to open an issue for questions or discussions about contributing.
 
 ## Code of Conduct
 
-This project follows a [Code of Conduct](/code_of_conduct/). Please be respectful and constructive in all interactions. We want Ceres to be a welcoming project for all contributors.
+This project follows a [Code of Conduct](CODE_OF_CONDUCT.md). Please be respectful and constructive in all interactions. We want Ceres to be a welcoming project for all contributors.

@@ -1,10 +1,3 @@
----
-title: Security
-description: Security policy and practices for Ceres
----
-
-<!-- Mirror of /SECURITY.md at the repository root (the GitHub-facing copy). Keep both in sync. -->
-
 # Security Policy
 
 ## Supported Versions
@@ -39,10 +32,3 @@ When using Ceres:
 - **Database**: Use strong passwords for PostgreSQL and restrict network access
 - **Input Validation**: Be cautious when harvesting from untrusted data portals
 - **Dependencies**: Keep Rust dependencies updated with `cargo update`; run `cargo deny check` for audits
-
-## Disclosure Policy
-
-Once a security issue is fixed, we will:
-1. Release a patch
-2. Publish a security advisory
-3. Credit the reporter (unless they prefer anonymity)

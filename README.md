@@ -372,7 +372,7 @@ Ceres ships with agent support in-repo:
 
 ## Contributing
 
-See [CONTRIBUTING](website/src/content/docs/CONTRIBUTING.md), [`AGENTS.md`](AGENTS.md), and the crate-level docs for development setup, tests, and release workflow. Come talk to us on [Discord](https://discord.gg/fztdKSPXSz).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [`AGENTS.md`](AGENTS.md), and the crate-level docs for development setup, tests, and release workflow. This project follows a [Code of Conduct](CODE_OF_CONDUCT.md); security issues are handled per the [security policy](SECURITY.md). Come talk to us on [Discord](https://discord.gg/fztdKSPXSz).
 
 ## License
 
