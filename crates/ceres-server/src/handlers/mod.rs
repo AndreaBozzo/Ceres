@@ -33,6 +33,9 @@ pub(crate) fn build_harvest_job_request(
     if let Some(ref sparql_endpoint) = portal.sparql_endpoint {
         request = request.with_sparql_endpoint(sparql_endpoint.as_str());
     }
+    if let Some(ref endpoint) = portal.ogc_endpoint {
+        request = request.with_ogc_endpoint(endpoint.as_str());
+    }
 
     if force_full_sync {
         request = request.with_full_sync();

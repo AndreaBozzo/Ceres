@@ -29,6 +29,7 @@ const MIGRATIONS: &[&str] = &[
         url VARCHAR NOT NULL,
         title TEXT NOT NULL,
         description TEXT,
+        record_kind VARCHAR(16) NOT NULL DEFAULT 'dataset',
         embedding vector(768),
         metadata JSONB DEFAULT '{}'::jsonb,
         first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

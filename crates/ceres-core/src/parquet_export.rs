@@ -354,6 +354,7 @@ struct FlatRecord {
     url: String,
     title: String,
     description: String,
+    record_kind: String,
     tags: String,
     organization: String,
     license: String,
@@ -832,6 +833,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 .entry(portal_key.clone())
                 .or_default()
                 .push(FlatRecord {
+                    record_kind: dataset.record_kind.to_string(),
                     original_id: record.original_id.clone(),
                     source_portal: record.source_portal.clone(),
                     portal_name: record.portal_name.clone(),
@@ -1032,6 +1034,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
             url: dataset.url.clone(),
             title: dataset.title.clone(),
             description: dataset.description.clone().unwrap_or_default(),
+            record_kind: dataset.record_kind.to_string(),
             tags: extract_tags(metadata),
             organization: extract_organization(metadata),
             license: extract_license(metadata),
@@ -1057,6 +1060,7 @@ fn arrow_schema() -> Arc<Schema> {
         Field::new("url", DataType::Utf8, false),
         Field::new("title", DataType::Utf8, false),
         Field::new("description", DataType::Utf8, true),
+        Field::new("record_kind", DataType::Utf8, false),
         Field::new("tags", DataType::Utf8, true),
         Field::new("organization", DataType::Utf8, true),
         Field::new("license", DataType::Utf8, true),
@@ -1137,6 +1141,7 @@ fn build_record_batch(
     let mut url = StringBuilder::with_capacity(len, len * 128);
     let mut title = StringBuilder::with_capacity(len, len * 64);
     let mut description = StringBuilder::with_capacity(len, len * 256);
+    let mut record_kind = StringBuilder::with_capacity(len, len * 12);
     let mut tags = StringBuilder::with_capacity(len, len * 64);
     let mut organization = StringBuilder::with_capacity(len, len * 48);
     let mut license = StringBuilder::with_capacity(len, len * 32);
@@ -1153,6 +1158,7 @@ fn build_record_batch(
         url.append_value(&r.url);
         title.append_value(&r.title);
         description.append_value(&r.description);
+        record_kind.append_value(&r.record_kind);
         tags.append_value(&r.tags);
         organization.append_value(&r.organization);
         license.append_value(&r.license);
@@ -1172,6 +1178,7 @@ fn build_record_batch(
             Arc::new(url.finish()),
             Arc::new(title.finish()),
             Arc::new(description.finish()),
+            Arc::new(record_kind.finish()),
             Arc::new(tags.finish()),
             Arc::new(organization.finish()),
             Arc::new(license.finish()),
@@ -1810,6 +1817,7 @@ mod tests {
     fn test_build_record_batch() {
         let schema = arrow_schema();
         let records = vec![FlatRecord {
+            record_kind: "dataset".to_string(),
             original_id: "test-1".to_string(),
             source_portal: "https://example.com".to_string(),
             portal_name: "example".to_string(),
@@ -1828,6 +1836,6 @@ mod tests {
 
         let batch = build_record_batch(&records, &schema).unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 14);
+        assert_eq!(batch.num_columns(), 15);
     }
 }

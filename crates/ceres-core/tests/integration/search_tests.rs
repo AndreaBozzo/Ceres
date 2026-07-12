@@ -144,6 +144,7 @@ impl DatasetStore for FailingDatasetStore {
 async fn seeded_store() -> MockDatasetStore {
     let store = MockDatasetStore::new();
     let dataset = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: "d1".to_string(),
         source_portal: "https://test.example.com".to_string(),
         url: "https://test.example.com/dataset/d1".to_string(),
@@ -189,6 +190,7 @@ async fn test_search_respects_limit() {
     // Insert multiple datasets
     for i in 0..5 {
         let dataset = NewDataset {
+            record_kind: ceres_core::CatalogRecordKind::Dataset,
             original_id: format!("d{}", i),
             source_portal: "https://test.example.com".to_string(),
             url: format!("https://test.example.com/dataset/d{}", i),

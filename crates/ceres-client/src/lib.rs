@@ -26,6 +26,7 @@
 //! | Socrata | Supported | [Discovery API](https://dev.socrata.com/docs/other/discovery) |
 //! | OpenDataSoft | Supported | Explore API v2.1 (`/api/explore/v2.1/catalog/datasets`) |
 //! | ArcGIS Hub | Supported | Hub Search API (`/api/search/v1/collections/dataset/items`) |
+//! | OGC Records | Supported | CSW 2.0.2 catalog service |
 //!
 //! # Embedding Providers
 //!
@@ -44,6 +45,7 @@ pub mod ckan;
 pub mod datajson;
 pub mod dcat;
 pub mod gemini;
+pub mod ogc_records;
 pub mod ollama;
 pub mod openai;
 pub mod opendatasoft;
@@ -58,6 +60,7 @@ pub use ckan::{CkanClient, CkanClientFactory};
 pub use datajson::{DataJsonClient, DataJsonDataset};
 pub use dcat::DcatClient;
 pub use gemini::GeminiClient;
+pub use ogc_records::{OgcRecord, OgcRecordsClient};
 pub use ollama::OllamaClient;
 pub use openai::OpenAIClient;
 pub use opendatasoft::{OpenDataSoftClient, OpenDataSoftDataset};

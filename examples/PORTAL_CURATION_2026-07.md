@@ -137,3 +137,34 @@ already present, adding roughly 9,535 titles. Data Vlaanderen returned only
 three of six declared DCAT resources and blocked partition queries with HTTP
 403; the EU Publications Office endpoint exposed RDF application profiles
 rather than harvestable open-data records. Both were rejected.
+
+## OGC CSW implementation harvest pass
+
+The new capability-driven CSW 2.0.2 client was exercised against independent
+live catalogs before promotion. Five catalogs completed full metadata-only
+harvests with no final record failures and preserved raw source XML:
+
+- EMODnet central catalogue: 7,167 records processed (7,164 unique stored IDs)
+- Copernicus Marine: 307 records
+- Marine Regions / VLIZ: 831 records
+- EEA marine SDI: 73 records
+- French Géoplateforme: 314 records
+
+The live session exposed two interoperability cases now covered by the client:
+pretty-printed ISO XML with leading whitespace before `CharacterString` values,
+and legacy ISO records without citation titles. The latter are retained using
+their stable identifiers as display fallbacks. BGS was removed because its
+documented GeoNetwork endpoint returned HTTP 404; Italy's RNDT exposed live
+capabilities but rejected the client's ISO `GetRecords` query shape.
+
+The same session added four reliable missing catalogs through existing clients:
+Western Pennsylvania CKAN (369), U.S. Treasury `data.json` (233), Rouen
+Métropole OpenDataSoft (107), and Arizona AZGeo ArcGIS Hub (703). Socrata probes
+for Seattle and Austin returned zero dataset-scoped records and were rejected.
+The EU Publications Office SPARQL endpoint advertised DCAT resources but yielded
+zero records through Ceres' normalized metadata query, confirming the earlier
+decision not to curate it.
+
+Overall the session added 10,101 stored rows and nine logical portal sources,
+raising the local index from 2,232,257 rows / 373 sources to 2,242,358 rows /
+382 sources.

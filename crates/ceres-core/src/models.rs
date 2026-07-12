@@ -1,7 +1,55 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::{fmt, str::FromStr};
 use uuid::Uuid;
+
+/// Semantic kind of a harvested catalog record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogRecordKind {
+    #[default]
+    Dataset,
+    Series,
+    Service,
+    Map,
+    Other,
+}
+
+impl CatalogRecordKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dataset => "dataset",
+            Self::Series => "series",
+            Self::Service => "service",
+            Self::Map => "map",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl fmt::Display for CatalogRecordKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for CatalogRecordKind {
+    type Err = crate::AppError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "dataset" => Ok(Self::Dataset),
+            "series" => Ok(Self::Series),
+            "service" => Ok(Self::Service),
+            "map" => Ok(Self::Map),
+            "other" => Ok(Self::Other),
+            _ => Err(crate::AppError::ConfigError(format!(
+                "Unknown catalog record kind: '{value}'"
+            ))),
+        }
+    }
+}
 
 /// Complete representation of a row from the 'datasets' table.
 ///
@@ -35,6 +83,8 @@ pub struct Dataset {
     pub title: String,
     /// Optional detailed description
     pub description: Option<String>,
+    /// Semantic catalog record kind.
+    pub record_kind: CatalogRecordKind,
 
     /// Optional embedding vector for semantic search
     pub embedding: Option<Vec<f32>>,
@@ -106,6 +156,8 @@ pub struct NewDataset {
     pub title: String,
     /// Optional detailed description
     pub description: Option<String>,
+    /// Semantic catalog record kind.
+    pub record_kind: CatalogRecordKind,
     /// Optional embedding vector for semantic search
     pub embedding: Option<Vec<f32>>,
     /// Additional metadata as JSON
@@ -209,6 +261,7 @@ mod tests {
         let content_hash = NewDataset::compute_content_hash(title, description.as_deref());
 
         let dataset = NewDataset {
+            record_kind: CatalogRecordKind::Dataset,
             original_id: "test-123".to_string(),
             source_portal: "https://example.com".to_string(),
             url: "https://example.com/dataset/test".to_string(),

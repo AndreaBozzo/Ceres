@@ -216,6 +216,8 @@ pub struct HarvestJob {
 
     /// Optional SPARQL endpoint override for DCAT harvests.
     pub sparql_endpoint: Option<String>,
+    /// Optional OGC CSW endpoint override.
+    pub ogc_endpoint: Option<String>,
 }
 
 impl HarvestJob {
@@ -260,6 +262,8 @@ pub struct CreateJobRequest {
 
     /// Optional SPARQL endpoint override for DCAT harvests.
     pub sparql_endpoint: Option<String>,
+    /// Optional OGC CSW endpoint override.
+    pub ogc_endpoint: Option<String>,
 }
 
 impl CreateJobRequest {
@@ -275,6 +279,7 @@ impl CreateJobRequest {
             portal_type: PortalType::default(),
             profile: None,
             sparql_endpoint: None,
+            ogc_endpoint: None,
         }
     }
 
@@ -323,6 +328,11 @@ impl CreateJobRequest {
     /// Set the SPARQL endpoint override for DCAT harvests.
     pub fn with_sparql_endpoint(mut self, sparql_endpoint: impl Into<String>) -> Self {
         self.sparql_endpoint = Some(sparql_endpoint.into());
+        self
+    }
+
+    pub fn with_ogc_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.ogc_endpoint = Some(endpoint.into());
         self
     }
 }
@@ -482,6 +492,7 @@ mod tests {
             language: None,
             profile: None,
             sparql_endpoint: None,
+            ogc_endpoint: None,
         };
 
         assert!(job.can_retry());

@@ -130,6 +130,7 @@ impl DataJsonClient {
             language,
         );
         NewDataset {
+            record_kind: ceres_core::CatalogRecordKind::Dataset,
             original_id: data.identifier,
             source_portal: portal_url.to_string(),
             url: data.landing_page,

@@ -20,6 +20,7 @@ detection, streaming page-by-page processing, and stale dataset marking.
 | Socrata | `--type socrata` | Socrata Discovery API catalogs | data.cityofnewyork.us, data.wa.gov |
 | OpenDataSoft | `--type opendatasoft` | OpenDataSoft Explore API v2.1 catalogs | opendata.paris.fr, data.economie.gouv.fr |
 | ArcGIS Hub | `--type arcgis` | ArcGIS Hub Search API catalogs | opendata.dc.gov, opendata.gis.utah.gov |
+| OGC Records | `--type ogc_records` | CSW 2.0.2 / GeoNetwork catalogues | EMODnet, British Geological Survey |
 
 Every client preserves the complete source metadata payload, so downstream
 features like resource-schema extraction keep working no matter which portal a
@@ -48,6 +49,9 @@ ceres harvest https://opendata.paris.fr --type opendatasoft --metadata-only
 
 # ArcGIS Hub Search API
 ceres harvest https://opendata.dc.gov --type arcgis --metadata-only
+
+# OGC CSW 2.0.2
+ceres harvest https://emodnet.ec.europa.eu/geonetwork/emodnet/eng/csw --type ogc_records --metadata-only
 ```
 
 Or configure them once in `portals.toml` and harvest in batch:

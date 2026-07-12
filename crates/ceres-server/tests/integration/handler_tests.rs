@@ -182,6 +182,7 @@ async fn test_harvest_all_creates_jobs_for_supported_portal_configs() {
                 language: Some("it".to_string()),
                 profile: None,
                 sparql_endpoint: None,
+                ogc_endpoint: None,
                 aliases: vec![],
             },
             PortalEntry {
@@ -194,6 +195,7 @@ async fn test_harvest_all_creates_jobs_for_supported_portal_configs() {
                 language: Some("fr".to_string()),
                 profile: None,
                 sparql_endpoint: None,
+                ogc_endpoint: None,
                 aliases: vec![],
             },
             PortalEntry {
@@ -206,6 +208,7 @@ async fn test_harvest_all_creates_jobs_for_supported_portal_configs() {
                 language: Some("en".to_string()),
                 profile: Some(DcatProfile::Sparql),
                 sparql_endpoint: Some("https://sparql.example.org/query".to_string()),
+                ogc_endpoint: None,
                 aliases: vec![],
             },
             PortalEntry {
@@ -218,6 +221,7 @@ async fn test_harvest_all_creates_jobs_for_supported_portal_configs() {
                 language: Some("en".to_string()),
                 profile: Some(DcatProfile::Sparql),
                 sparql_endpoint: Some("https://disabled.example.org/sparql".to_string()),
+                ogc_endpoint: None,
                 aliases: vec![],
             },
         ],

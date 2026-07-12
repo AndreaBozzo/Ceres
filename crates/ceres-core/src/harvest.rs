@@ -1296,7 +1296,7 @@ where
                     cancel_token.clone(),
                     portal.portal_type,
                     portal.profile(),
-                    portal.sparql_endpoint(),
+                    portal.sparql_endpoint().or(portal.ogc_endpoint()),
                 )
                 .await
             {

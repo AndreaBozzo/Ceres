@@ -59,6 +59,7 @@ async fn test_upsert_updates_existing_dataset() {
 
     // Update with same (portal, original_id) but different content
     let updated = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: "test-123".to_string(),
         source_portal: "https://example.com".to_string(),
         url: "https://example.com/dataset/test-updated".to_string(),

@@ -1,6 +1,6 @@
 ---
 name: ceres
-description: Use when working with Ceres — a Rust harvest-first toolkit and public open data metadata index. Covers harvesting and synchronization, optional embedding and search, CKAN, DCAT udata, SPARQL-backed DCAT, Project Open Data data.json, Socrata Discovery, OpenDataSoft Explore, and ArcGIS Hub portal support, Parquet snapshot manifests/reports/changelogs, Ollama or hosted providers, CLI commands, REST API endpoints, portal configuration, architecture, extending via traits, release workflow, and contributing to the Ceres codebase.
+description: Use when working with Ceres — a Rust harvest-first toolkit and public open data metadata index. Covers harvesting and synchronization, optional embedding and search, CKAN, DCAT udata, SPARQL-backed DCAT, Project Open Data data.json, Socrata Discovery, OpenDataSoft Explore, ArcGIS Hub, and OGC CSW portal support, Parquet snapshot manifests/reports/changelogs, Ollama or hosted providers, CLI commands, REST API endpoints, portal configuration, architecture, extending via traits, release workflow, and contributing to the Ceres codebase.
 ---
 
 # Ceres — Harvest-First Toolkit for Open Data Portals

@@ -862,6 +862,7 @@ impl CkanClient {
         );
 
         NewDataset {
+            record_kind: ceres_core::CatalogRecordKind::Dataset,
             original_id: dataset.id,
             source_portal: portal_url.to_string(),
             url: landing_page,

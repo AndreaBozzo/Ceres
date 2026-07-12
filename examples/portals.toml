@@ -3,6 +3,8 @@
 # This file defines CKAN portals to harvest.
 # Copy this file to ~/.config/ceres/portals.toml to use it.
 #
+# OGC CSW catalogues are configured with type = "ogc_records" and may keep a
+# separate logical portal URL by specifying an explicit ogc_endpoint.
 # Usage:
 #   ceres harvest                 # Harvest all enabled portals
 #   ceres harvest --portal milano # Harvest specific portal by name
@@ -1263,3 +1265,81 @@ type = "arcgis"
 language = "en"
 enabled = false
 description = "Missouri Spatial Data Information Service (ArcGIS Hub, ~140 datasets)"
+
+[[portals]]
+name = "emodnet-csw"
+url = "https://emodnet.ec.europa.eu"
+type = "ogc_records"
+language = "en"
+enabled = false
+ogc_endpoint = "https://emodnet.ec.europa.eu/geonetwork/emodnet/eng/csw"
+description = "EMODnet central GeoNetwork catalogue via CSW 2.0.2"
+
+[[portals]]
+name = "copernicus-marine-csw"
+url = "https://marine.copernicus.eu"
+type = "ogc_records"
+language = "en"
+enabled = false
+ogc_endpoint = "https://csw.marine.copernicus.eu/geonetwork/csw-MYOCEAN-CORE-PRODUCTS/eng/csw"
+description = "Copernicus Marine product catalogue via CSW 2.0.2"
+
+[[portals]]
+name = "marine-regions-csw"
+url = "https://www.marineregions.org"
+type = "ogc_records"
+language = "en"
+enabled = false
+ogc_endpoint = "http://geonetwork.vliz.be/geonetwork/srv/eng/csw"
+description = "Marine Regions GeoNetwork catalogue via CSW 2.0.2"
+
+[[portals]]
+name = "eea-marine-csw"
+url = "https://sdi.eea.europa.eu"
+type = "ogc_records"
+language = "en"
+enabled = false
+ogc_endpoint = "https://sdi.eea.europa.eu/catalogue/marine/eng/csw"
+description = "European Environment Agency marine catalogue via CSW 2.0.2"
+
+[[portals]]
+name = "geoplateforme-csw"
+url = "https://cartes.gouv.fr"
+type = "ogc_records"
+language = "fr"
+enabled = false
+ogc_endpoint = "https://data.geopf.fr/csw"
+description = "French Géoplateforme metadata catalogue via CSW ISO AP 2.0.2"
+
+[[portals]]
+name = "western-pennsylvania"
+url = "https://data.wprdc.org"
+type = "ckan"
+language = "en"
+enabled = false
+description = "Western Pennsylvania Regional Data Center CKAN catalogue"
+
+[[portals]]
+name = "us-treasury-data-json"
+url = "https://www.treasury.gov/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "United States Department of the Treasury Project Open Data catalog"
+
+[[portals]]
+name = "rouen-metropole"
+url = "https://data.metropole-rouen-normandie.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Métropole Rouen Normandie OpenDataSoft catalogue"
+
+[[portals]]
+name = "arizona-geo"
+url = "https://azgeo-open-data-agic.hub.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Arizona Geographic Information Council ArcGIS Hub catalogue"
