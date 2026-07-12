@@ -1,0 +1,27 @@
+{
+  "@context": "https://www.w3.org/ns/dcat.jsonld",
+  "@graph": [
+    {
+      "@id": "https://data.example.org/datasets/air-quality/",
+      "@type": "Dataset",
+      "identifier": "air-quality",
+      "title": [
+        { "@language": "fr", "@value": "Qualité de l'air" },
+        { "@language": "en", "@value": "Air quality" }
+      ],
+      "description": { "@language": "en", "@value": "Hourly monitoring observations." },
+      "keyword": ["environment", "health"]
+    },
+    {
+      "@id": "https://data.example.org/datasets/population/",
+      "@type": "dcat:Dataset",
+      "dct:identifier": { "@value": "population" },
+      "dct:title": { "@language": "en", "@value": "Population" },
+      "dct:description": { "@language": "en", "@value": "Annual population estimates." }
+    },
+    {
+      "@type": "hydra:PartialCollectionView",
+      "hydra:next": "https://data.example.org/api/1/datasets/?page=2&page_size=100"
+    }
+  ]
+}

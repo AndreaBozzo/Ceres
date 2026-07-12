@@ -1617,23 +1617,7 @@ mod tests {
     // ---- SPARQL response parsing -------------------------------------------
 
     fn sample_sparql_json() -> &'static str {
-        r#"{
-            "head": { "vars": ["dataset", "title", "description", "identifier", "modified"] },
-            "results": {
-                "bindings": [
-                    {
-                        "dataset": { "type": "uri", "value": "https://data.europa.eu/dataset/1234" },
-                        "title": { "type": "literal", "value": "Air Quality Data", "xml:lang": "en" },
-                        "description": { "type": "literal", "value": "Air quality measurements", "xml:lang": "en" },
-                        "identifier": { "type": "literal", "value": "air-quality-1234" }
-                    },
-                    {
-                        "dataset": { "type": "uri", "value": "https://data.europa.eu/dataset/5678" },
-                        "title": { "type": "literal", "value": "Population Census", "xml:lang": "en" }
-                    }
-                ]
-            }
-        }"#
+        include_str!("../tests/fixtures/sparql_results.json")
     }
 
     #[test]

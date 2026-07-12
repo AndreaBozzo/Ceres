@@ -671,6 +671,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const UDATA_CATALOG_FIXTURE: &[u8] =
+        include_bytes!("../tests/fixtures/dcat_udata_catalog.jsonld");
+
     // ---- resolve_jsonld_text ------------------------------------------------
 
     #[test]
@@ -816,6 +819,26 @@ mod tests {
     }
 
     // ---- extract_dataset ---------------------------------------------------
+
+    #[test]
+    fn extract_udata_catalog_fixture() {
+        let document: Value = serde_json::from_slice(UDATA_CATALOG_FIXTURE).unwrap();
+        let graph = document["@graph"].as_array().unwrap();
+        let datasets: Vec<_> = graph
+            .iter()
+            .filter(|node| is_dataset_node(node))
+            .filter_map(|node| extract_dataset(node, "en"))
+            .collect();
+
+        assert_eq!(datasets.len(), 2);
+        assert_eq!(datasets[0].identifier, "air-quality");
+        assert_eq!(datasets[0].title, "Air quality");
+        assert_eq!(datasets[1].identifier, "population");
+        assert_eq!(
+            extract_hydra_next(graph),
+            Some("https://data.example.org/api/1/datasets/?page=2&page_size=100".to_string())
+        );
+    }
 
     #[test]
     fn extract_dataset_basic() {

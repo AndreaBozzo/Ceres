@@ -1,0 +1,36 @@
+{
+  "success": true,
+  "result": {
+    "count": 2,
+    "results": [
+      {
+        "id": "air-quality-2025",
+        "name": "air-quality-measurements",
+        "title": "Air quality measurements",
+        "notes": "Hourly observations from the monitoring network.",
+        "organization": { "name": "environment-agency" },
+        "tags": [{ "name": "air-quality" }],
+        "resources": [
+          {
+            "id": "resource-csv",
+            "format": "CSV",
+            "url": "https://example.org/data/air-quality.csv"
+          }
+        ]
+      },
+      {
+        "id": "population-2024",
+        "name": "population-by-municipality",
+        "title": {
+          "en": "Population by municipality",
+          "it": "Popolazione per comune"
+        },
+        "notes": {
+          "en": "Annual population estimates.",
+          "it": "Stime annuali della popolazione."
+        },
+        "organization": { "name": "statistics-office" }
+      }
+    ]
+  }
+}

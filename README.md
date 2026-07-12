@@ -1,7 +1,7 @@
 <div align="center">
   <img src="website/src/assets/images/logo.png" alt="Ceres Logo" width="800" height="auto"/>
   <h1>Ceres</h1>
-  <p><strong>Harvest-first toolkit for open data portals — one synchronized catalog from 150+ portals and 2M+ datasets</strong></p>
+  <p><strong>Harvest-first toolkit for open data portals — one synchronized catalog from 300+ portals and 2M+ datasets</strong></p>
   <p>
     <a href="https://crates.io/crates/ceres-search"><img src="https://img.shields.io/crates/v/ceres-search.svg" alt="crates.io"></a>
     <a href="https://github.com/AndreaBozzo/Ceres/actions"><img src="https://github.com/AndreaBozzo/Ceres/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -28,7 +28,7 @@ Everything else is layered on top, and optional: local embeddings, semantic sear
 
 ## At a Glance
 
-- **150+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, govdata.de, dados.gov.pt), cities (Milano, NYC), and agencies
+- **300+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, data.slovensko.sk, govdata.de), cities (Milano, NYC, Zurich), and agencies
 - **2M+ datasets** in the live catalog; 1.85M+ curated in the latest published snapshot
 - **7 harvest paths** shipped: CKAN, DCAT udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, Socrata Discovery, OpenDataSoft Explore, and ArcGIS Hub — with more clients landing on the [roadmap](#roadmap)
 - **Metadata-only by default** — no embedding provider, API key, or GPU required to build and maintain a catalog
@@ -53,9 +53,9 @@ Ceres splits the system accordingly:
 
 | Type | Flag | Serves | Examples |
 |---|---|---|---|
-| CKAN | `--type ckan` | CKAN action API portals | dati.comune.milano.it, catalog.data.gov, dati.gov.it |
+| CKAN | `--type ckan` | CKAN action API portals | dati.comune.milano.it, data.ontario.ca, data.gov.kg |
 | DCAT udata REST | `--type dcat` (default profile) | udata-flavored DCAT-AP portals | data.gouv.fr, data.public.lu |
-| DCAT SPARQL | `--type dcat --profile sparql` | SPARQL-backed DCAT-AP catalogs | data.europa.eu |
+| DCAT SPARQL | `--type dcat --profile sparql` | SPARQL-backed DCAT-AP catalogs | data.europa.eu, data.slovensko.sk |
 | Project Open Data | `--type dcat --profile static_json` | Static DCAT-US `data.json` catalogs | data.va.gov, census.gov, justice.gov |
 | Socrata | `--type socrata` | Socrata Discovery API catalogs | data.cityofnewyork.us, data.wa.gov |
 | OpenDataSoft | `--type opendatasoft` | OpenDataSoft Explore API v2.1 catalogs | opendata.paris.fr, data.economie.gouv.fr |

@@ -207,6 +207,97 @@ language = "en"
 enabled = false
 description = "City of Boston open data (~230 datasets)"
 
+[[portals]]
+name = "ann-arbor"
+url = "https://ckan.a2gov.org"
+type = "ckan"
+language = "en"
+url_template = "https://data.a2gov.org/dataset/{name}"
+enabled = false
+description = "City of Ann Arbor open data (95 datasets; CKAN backend for data.a2gov.org)"
+
+[[portals]]
+name = "northern-ireland"
+url = "https://admin.opendatani.gov.uk"
+type = "ckan"
+language = "en"
+url_template = "https://www.opendatani.gov.uk/dataset/{name}"
+enabled = false
+description = "Northern Ireland public-sector open data (~1,100 datasets)"
+
+[[portals]]
+name = "ssen"
+url = "https://data-api.ssen.co.uk"
+type = "ckan"
+language = "en"
+url_template = "https://data.ssen.co.uk/dataset/{name}"
+enabled = false
+description = "SSEN Distribution energy-network open data (35 datasets)"
+
+[[portals]]
+name = "ontario"
+url = "https://data.ontario.ca"
+type = "ckan"
+language = "en"
+enabled = false
+description = "Government of Ontario Data Catalogue (~2,950 datasets)"
+
+[[portals]]
+name = "northern-territory"
+url = "https://data.nt.gov.au"
+type = "ckan"
+language = "en"
+enabled = false
+description = "Northern Territory Government Open Data Portal (~1,070 datasets)"
+
+[[portals]]
+name = "mauritius"
+url = "https://data.govmu.org"
+type = "ckan"
+language = "en"
+enabled = false
+description = "Mauritius Government Open Data Portal (~850 datasets)"
+
+[[portals]]
+name = "kyrgyzstan"
+url = "https://data.gov.kg"
+type = "ckan"
+language = "ky"
+enabled = false
+description = "Kyrgyz Republic Open Data Portal (~1,400 datasets)"
+
+[[portals]]
+name = "nhsbsa"
+url = "https://opendata.nhsbsa.net"
+type = "ckan"
+language = "en"
+enabled = false
+description = "NHS Business Services Authority Open Data Portal (~2,200 datasets)"
+
+[[portals]]
+name = "gifu"
+url = "https://gifu-opendata.pref.gifu.lg.jp"
+type = "ckan"
+language = "ja"
+enabled = false
+description = "Gifu Prefecture Open Data Catalogue (~1,880 datasets)"
+
+[[portals]]
+name = "zurich"
+url = "https://data.stadt-zuerich.ch"
+type = "ckan"
+language = "de"
+enabled = false
+description = "City of Zurich Open Data Catalogue (~930 datasets)"
+
+[[portals]]
+name = "cioos-pacific"
+url = "https://catalogue.cioos.ca"
+type = "ckan"
+language = "en"
+enabled = false
+description = "Canadian Integrated Ocean Observing System Pacific catalogue (~3,500 datasets)"
+
 # =============================================================================
 # Socrata Discovery API portals
 #
@@ -431,6 +522,229 @@ language = "en"
 enabled = false
 description = "OpenDataSoft federation hub (~94,000 datasets, very large)"
 
+# Curated OpenDataSoft portals verified with full + incremental metadata-only
+# harvests in July 2026. These broaden geographic coverage without adding
+# known aliases of portals already listed above.
+
+[[portals]]
+name = "jersey-city"
+url = "https://data.jerseycitynj.gov"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "Jersey City open data (OpenDataSoft, ~1,535 datasets)"
+
+[[portals]]
+name = "bologna"
+url = "https://opendata.comune.bologna.it"
+type = "opendatasoft"
+language = "it"
+enabled = false
+description = "Comune di Bologna open data (OpenDataSoft, ~700 datasets)"
+
+[[portals]]
+name = "leicester"
+url = "https://data.leicester.gov.uk"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "Leicester City Council open data (OpenDataSoft, ~390 datasets)"
+
+[[portals]]
+name = "umea"
+url = "https://opendata.umea.se"
+type = "opendatasoft"
+language = "sv"
+enabled = false
+description = "Umeå kommun open data (OpenDataSoft, ~335 datasets)"
+
+[[portals]]
+name = "ghent"
+url = "https://data.stad.gent"
+type = "opendatasoft"
+language = "nl"
+enabled = false
+description = "Stad Gent open data (OpenDataSoft, ~305 datasets)"
+
+[[portals]]
+name = "tours"
+url = "https://toursmetropole.opendatasoft.com"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Tours Métropole open data (OpenDataSoft, ~220 datasets)"
+
+[[portals]]
+name = "vancouver"
+url = "https://opendata.vancouver.ca"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "City of Vancouver open data (OpenDataSoft, ~200 datasets)"
+
+[[portals]]
+name = "wuerzburg"
+url = "https://opendata.wuerzburg.de"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "Stadt Würzburg open data (OpenDataSoft, ~180 datasets)"
+
+[[portals]]
+name = "eindhoven"
+url = "https://data.eindhoven.nl"
+type = "opendatasoft"
+language = "nl"
+enabled = false
+description = "Gemeente Eindhoven open data (OpenDataSoft, ~140 datasets)"
+
+[[portals]]
+name = "salinas"
+url = "https://cityofsalinas.opendatasoft.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "City of Salinas open data (OpenDataSoft, ~130 datasets)"
+
+[[portals]]
+name = "potsdam"
+url = "https://opendata.potsdam.de"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "Landeshauptstadt Potsdam open data (OpenDataSoft, ~110 datasets)"
+
+[[portals]]
+name = "cary"
+url = "https://data.townofcary.org"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "Town of Cary open data (OpenDataSoft, ~80 datasets)"
+
+[[portals]]
+name = "greater-geelong"
+url = "https://www.geelongdataexchange.com.au"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "City of Greater Geelong data exchange (OpenDataSoft, ~60 datasets)"
+
+[[portals]]
+name = "maitland"
+url = "https://data.maitland.nsw.gov.au"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "Maitland City Council open data (OpenDataSoft, ~30 datasets)"
+
+[[portals]]
+name = "lake-macquarie"
+url = "https://data.lakemac.com.au"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "Lake Macquarie City Council open data (OpenDataSoft, ~15 datasets)"
+
+# Additional institutional OpenDataSoft portals discovered through the public
+# federation catalog and verified with full metadata-only harvests.
+
+[[portals]]
+name = "rotterdam"
+url = "https://rotterdam-opendata.opendatasoft.com"
+type = "opendatasoft"
+language = "nl"
+enabled = false
+description = "Rotterdam open data (OpenDataSoft, ~1,440 datasets)"
+
+[[portals]]
+name = "kapsarc"
+url = "https://datasource.kapsarc.org"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "KAPSARC Data Portal (OpenDataSoft, ~1,320 datasets)"
+
+[[portals]]
+name = "wallonia-brussels"
+url = "https://www.odwb.be"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Open Data Wallonie-Bruxelles (OpenDataSoft, ~1,270 datasets)"
+
+[[portals]]
+name = "dortmund"
+url = "https://open-data.dortmund.de"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "Stadt Dortmund open data (OpenDataSoft, ~820 datasets)"
+
+[[portals]]
+name = "birmingham-observatory"
+url = "https://cityobservatory.birmingham.gov.uk"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "Birmingham City Observatory (OpenDataSoft, ~700 datasets)"
+
+[[portals]]
+name = "bahrain"
+url = "https://www.data.gov.bh"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "Bahrain national open data portal (OpenDataSoft, ~510 datasets)"
+
+[[portals]]
+name = "brisbane"
+url = "https://data.brisbane.qld.gov.au"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "Brisbane City Council open data (OpenDataSoft, ~440 datasets)"
+
+[[portals]]
+name = "new-caledonia"
+url = "https://data.gouv.nc"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "New Caledonia open data portal (OpenDataSoft, ~380 datasets)"
+
+[[portals]]
+name = "schwyz"
+url = "https://data.sz.ch"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "Kanton Schwyz data portal (OpenDataSoft, ~360 datasets)"
+
+[[portals]]
+name = "france-education"
+url = "https://data.education.gouv.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "French Ministry of Education open data (OpenDataSoft, ~305 datasets)"
+
+[[portals]]
+name = "reunion"
+url = "https://data.regionreunion.com"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Région Réunion open data (OpenDataSoft, ~275 datasets)"
+
+[[portals]]
+name = "melbourne"
+url = "https://data.melbourne.vic.gov.au"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "City of Melbourne open data (OpenDataSoft, ~240 datasets)"
+
 # US state and city Socrata portals (verified Jul 2026)
 
 [[portals]]
@@ -543,6 +857,33 @@ language = "en"
 enabled = false
 description = "US Department of Justice Project Open Data catalog (~3,273 datasets)"
 
+[[portals]]
+name = "us-national-archives"
+url = "https://www.archives.gov/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "US National Archives catalog (84 datasets; 34 titles absent from catalog.data.gov)"
+
+[[portals]]
+name = "us-medicaid"
+url = "https://data.medicaid.gov/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "Medicaid.gov DKAN catalog through its Project Open Data feed (~540 datasets)"
+
+[[portals]]
+name = "dompu"
+url = "https://satudata.dompukab.go.id/data.json"
+type = "dcat"
+profile = "static_json"
+language = "id"
+enabled = false
+description = "Dompu Satu Data DKAN catalog through its Project Open Data feed (~25 datasets)"
+
 # =============================================================================
 # DCAT-AP portals (SPARQL endpoint)
 # =============================================================================
@@ -595,6 +936,16 @@ language = "cs"
 enabled = false
 description = "Czech National Open Data Catalog (SPARQL endpoint)"
 
+[[portals]]
+name = "slovakia"
+url = "https://data.slovensko.sk"
+type = "dcat"
+profile = "sparql"
+language = "sk"
+sparql_endpoint = "https://data.slovensko.sk/api/sparql"
+enabled = false
+description = "Slovak National Open Data Catalogue (SPARQL endpoint, ~22,450 datasets)"
+
 # =============================================================================
 # ArcGIS Hub portals (Hub Search API)
 #
@@ -618,3 +969,297 @@ type = "arcgis"
 language = "en"
 enabled = false
 description = "Utah Geospatial Resource Center (ArcGIS Hub, ~530 datasets)"
+
+# Curated ArcGIS Hub catalogs verified in July 2026. The list deliberately
+# favors broad institutional catalogs over project microsites, demos, beta
+# sites, and child catalogs substantially duplicated by a broader portal.
+
+[[portals]]
+name = "us-fish-wildlife"
+url = "https://gis-fws.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "US Fish and Wildlife Service open data (ArcGIS Hub, ~1,365 datasets)"
+
+[[portals]]
+name = "alaska-geoportal"
+url = "https://gis.data.alaska.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "State of Alaska Geoportal canonical domain (ArcGIS Hub, ~990 datasets)"
+
+[[portals]]
+name = "philadelphia"
+url = "https://open-phl.hub.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Open Philadelphia (ArcGIS Hub, ~610 datasets)"
+
+[[portals]]
+name = "thames-data"
+url = "https://www.thamesdataexplorer.co.uk"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Thames Integrated Data Explorer (ArcGIS Hub, ~445 datasets)"
+
+[[portals]]
+name = "tempe"
+url = "https://open.tempe.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Tempe open data (ArcGIS Hub, ~290 datasets)"
+
+[[portals]]
+name = "minneapolis"
+url = "https://data.minneapolismn.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Minneapolis open data (ArcGIS Hub, ~240 datasets)"
+
+[[portals]]
+name = "saint-john"
+url = "https://catalogue-SaintJohn.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Saint John open data catalogue (ArcGIS Hub, ~230 datasets)"
+
+[[portals]]
+name = "connecticut-geodata"
+url = "https://geodata.ct.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Connecticut Geodata Portal (ArcGIS Hub, ~230 datasets)"
+
+[[portals]]
+name = "brno"
+url = "https://data.brno.cz"
+type = "arcgis"
+language = "cs"
+enabled = false
+description = "City of Brno data portal (ArcGIS Hub, ~200 datasets)"
+
+[[portals]]
+name = "new-york-gis"
+url = "https://data.gis.ny.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "New York State GIS Clearinghouse (ArcGIS Hub, ~185 datasets)"
+
+[[portals]]
+name = "florida-geodata"
+url = "https://geodata.floridagio.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Florida Geospatial Open Data Portal (ArcGIS Hub, ~180 datasets)"
+
+[[portals]]
+name = "prince-george"
+url = "https://data-CityofPG.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Prince George open data (ArcGIS Hub, ~175 datasets)"
+
+[[portals]]
+name = "nebraska-map"
+url = "https://www.nebraskamap.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "NebraskaMap geospatial catalog (ArcGIS Hub, ~170 datasets)"
+
+[[portals]]
+name = "scag"
+url = "https://hub.scag.ca.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Southern California Association of Governments data platform (ArcGIS Hub, ~145 datasets)"
+
+[[portals]]
+name = "sioux-falls"
+url = "https://opendata-cityofsfgis.hub.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Sioux Falls DataWorks (ArcGIS Hub, ~140 datasets)"
+
+[[portals]]
+name = "fema"
+url = "https://gis-fema.hub.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "FEMA Geospatial Resource Center (ArcGIS Hub, ~135 datasets)"
+
+[[portals]]
+name = "bay-of-plenty"
+url = "https://maps.boprc.govt.nz"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Bay of Plenty Regional Council BayMaps (ArcGIS Hub, ~115 datasets)"
+
+[[portals]]
+name = "japan-environment"
+url = "https://geoportal.env.go.jp"
+type = "arcgis"
+language = "ja"
+enabled = false
+description = "Japan Ministry of the Environment geoportal (ArcGIS Hub, ~95 datasets)"
+
+[[portals]]
+name = "hilversum"
+url = "https://open.hilversum.nl"
+type = "arcgis"
+language = "nl"
+enabled = false
+description = "Gemeente Hilversum open data (ArcGIS Hub, ~70 datasets)"
+
+[[portals]]
+name = "faa-ais"
+url = "https://adds-faa.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "US Federal Aviation Administration AIS data (ArcGIS Hub, ~70 datasets)"
+
+[[portals]]
+name = "tourism-portugal"
+url = "https://dadosabertos.turismodeportugal.pt"
+type = "arcgis"
+language = "pt"
+enabled = false
+description = "Turismo de Portugal open data (ArcGIS Hub, ~45 datasets)"
+
+[[portals]]
+name = "medicine-hat"
+url = "https://opendata.medicinehat.ca"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Medicine Hat open data (ArcGIS Hub, ~40 datasets)"
+
+[[portals]]
+name = "chattanooga"
+url = "https://data.chattanooga.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Chattanooga data hub (ArcGIS Hub, ~40 datasets)"
+
+[[portals]]
+name = "south-moravia"
+url = "https://data.jmk.cz"
+type = "arcgis"
+language = "cs"
+enabled = false
+description = "South Moravian Region data portal (ArcGIS Hub, ~35 datasets)"
+
+[[portals]]
+name = "auckland-transport"
+url = "https://data-ATgis.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Auckland Transport open GIS data (ArcGIS Hub, ~15 datasets)"
+
+# Additional broad ArcGIS catalogs from the second discovery tranche.
+
+[[portals]]
+name = "uk-open-geography"
+url = "https://geoportal.statistics.gov.uk"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "UK Office for National Statistics Open Geography Portal (ArcGIS Hub, ~3,030 datasets)"
+
+[[portals]]
+name = "virginia-vgin"
+url = "https://vgin.vdem.virginia.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Virginia Geographic Information Network (ArcGIS Hub, ~820 datasets)"
+
+[[portals]]
+name = "western-australia-main-roads"
+url = "https://portal-mainroads.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Main Roads Western Australia open data (ArcGIS Hub, ~685 datasets)"
+
+[[portals]]
+name = "stirling"
+url = "https://data.stirling.gov.uk"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Stirling Council open data (ArcGIS Hub, ~465 datasets)"
+
+[[portals]]
+name = "digital-atlas-australia"
+url = "https://digital.atlas.gov.au"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Digital Atlas of Australia (ArcGIS Hub, ~420 datasets)"
+
+[[portals]]
+name = "kentucky-gis"
+url = "https://opendata-kygeonet.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Kentucky KyGovMaps open data (ArcGIS Hub, ~400 datasets)"
+
+[[portals]]
+name = "colorado-geodata"
+url = "https://geodata.colorado.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Colorado Geospatial Portal (ArcGIS Hub, ~240 datasets)"
+
+[[portals]]
+name = "kingston"
+url = "https://opendatakingston.cityofkingston.ca"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Kingston open data (ArcGIS Hub, ~200 datasets)"
+
+[[portals]]
+name = "cape-town"
+url = "https://odp-cctegis.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Cape Town geospatial open data (ArcGIS Hub, ~190 datasets)"
+
+[[portals]]
+name = "natural-england"
+url = "https://naturalengland-defra.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Natural England open data geoportal (ArcGIS Hub, ~185 datasets)"
+
+[[portals]]
+name = "missouri-spatial"
+url = "https://data-MSDIS.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Missouri Spatial Data Information Service (ArcGIS Hub, ~140 datasets)"

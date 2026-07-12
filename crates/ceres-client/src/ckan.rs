@@ -888,6 +888,9 @@ fn ensure_trailing_slash(mut url: Url) -> Url {
 mod tests {
     use super::*;
 
+    const PACKAGE_SEARCH_FIXTURE: &[u8] =
+        include_bytes!("../tests/fixtures/ckan_package_search.json");
+
     #[test]
     fn test_new_with_valid_url() {
         let result = CkanClient::new("https://dati.gov.it");
@@ -1073,6 +1076,25 @@ mod tests {
         let response: CkanResponse<Vec<String>> = serde_json::from_str(json).unwrap();
         assert!(response.success);
         assert_eq!(response.result.len(), 3);
+    }
+
+    #[test]
+    fn test_package_search_fixture_deserialization() {
+        let response: CkanResponse<PackageSearchResult> =
+            serde_json::from_slice(PACKAGE_SEARCH_FIXTURE).unwrap();
+
+        assert!(response.success);
+        assert_eq!(response.result.count, 2);
+        assert_eq!(response.result.results.len(), 2);
+        assert_eq!(
+            response.result.results[0].title.resolve("en"),
+            "Air quality measurements"
+        );
+        assert_eq!(
+            response.result.results[1].title.resolve("it"),
+            "Popolazione per comune"
+        );
+        assert!(response.result.results[0].extras.contains_key("resources"));
     }
 
     #[test]
