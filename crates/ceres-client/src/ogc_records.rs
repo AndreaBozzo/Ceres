@@ -431,18 +431,28 @@ fn parse_record(
         })
         .unwrap_or(portal_url)
         .to_string();
-    let number = |name: &str| first(&[name]).and_then(|value| value.parse::<f64>().ok());
-    let spatial_bbox = match (
-        number("westBoundLongitude"),
-        number("southBoundLatitude"),
-        number("eastBoundLongitude"),
-        number("northBoundLatitude"),
-    ) {
-        (Some(west), Some(south), Some(east), Some(north)) => {
-            Some(json!([west, south, east, north]))
-        }
-        _ => None,
-    };
+    let spatial_bbox = node
+        .descendants()
+        .filter(|candidate| local(*candidate) == "EX_GeographicBoundingBox")
+        .find_map(|bbox| {
+            let number = |name: &str| {
+                bbox.descendants()
+                    .find(|candidate| local(*candidate) == name)
+                    .and_then(node_value)
+                    .and_then(|value| value.parse::<f64>().ok())
+            };
+            match (
+                number("westBoundLongitude"),
+                number("southBoundLatitude"),
+                number("eastBoundLongitude"),
+                number("northBoundLatitude"),
+            ) {
+                (Some(west), Some(south), Some(east), Some(north)) => {
+                    Some(json!([west, south, east, north]))
+                }
+                _ => None,
+            }
+        });
     let contacts: Vec<Value> = node
         .descendants()
         .filter(|candidate| local(*candidate) == "CI_ResponsibleParty")
@@ -682,6 +692,16 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("MD_Metadata")
+        );
+    }
+
+    #[test]
+    fn bbox_coordinates_are_taken_from_one_complete_extent() {
+        let xml = r#"<csw:GetRecordsResponse xmlns:csw="http://www.opengis.net/cat/csw/2.0.2" xmlns:gmd="http://www.isotc211.org/2005/gmd" xmlns:gco="http://www.isotc211.org/2005/gco"><csw:SearchResults numberOfRecordsMatched="1" numberOfRecordsReturned="1" nextRecord="0"><gmd:MD_Metadata><gmd:fileIdentifier><gco:CharacterString>multi-extent</gco:CharacterString></gmd:fileIdentifier><gmd:title><gco:CharacterString>Multiple extents</gco:CharacterString></gmd:title><gmd:EX_GeographicBoundingBox><gmd:westBoundLongitude><gco:Decimal>-20</gco:Decimal></gmd:westBoundLongitude><gmd:eastBoundLongitude><gco:Decimal>20</gco:Decimal></gmd:eastBoundLongitude></gmd:EX_GeographicBoundingBox><gmd:EX_GeographicBoundingBox><gmd:westBoundLongitude><gco:Decimal>-5</gco:Decimal></gmd:westBoundLongitude><gmd:southBoundLatitude><gco:Decimal>40</gco:Decimal></gmd:southBoundLatitude><gmd:eastBoundLongitude><gco:Decimal>10</gco:Decimal></gmd:eastBoundLongitude><gmd:northBoundLatitude><gco:Decimal>52</gco:Decimal></gmd:northBoundLatitude></gmd:EX_GeographicBoundingBox></gmd:MD_Metadata></csw:SearchResults></csw:GetRecordsResponse>"#;
+        let page = parse_get_records(xml, "https://example.test", "en").unwrap();
+        assert_eq!(
+            page.records[0].metadata["spatial"]["bbox"],
+            json!([-5.0, 40.0, 10.0, 52.0])
         );
     }
 

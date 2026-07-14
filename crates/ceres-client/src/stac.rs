@@ -353,7 +353,15 @@ fn find_link(document: &Value, base: &Url, rel: &str) -> Result<Option<Url>, App
         .get("href")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::ClientError(format!("STAC rel={rel} link is missing href")))?;
-    let url = base
+    let mut resolution_base = base.clone();
+    if (href.starts_with("./") || href.starts_with("../")) && !resolution_base.path().ends_with('/')
+    {
+        resolution_base
+            .path_segments_mut()
+            .map_err(|_| AppError::ClientError("STAC base URL cannot resolve paths".into()))?
+            .push("");
+    }
+    let url = resolution_base
         .join(href)
         .map_err(|error| AppError::ClientError(format!("Invalid STAC rel={rel} URL: {error}")))?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -427,6 +435,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(page.collections[0].id, "landsat-c2-l2");
+        assert_eq!(
+            page.collections[0].landing_page,
+            "https://catalog.test/collections/landsat-c2-l2"
+        );
         assert_eq!(
             page.collections[0]
                 .modified
