@@ -359,7 +359,7 @@ fn parse_record(
     node: Node<'_, '_>,
     xml: &str,
     portal_url: &str,
-    _language: &str,
+    language: &str,
 ) -> Option<OgcRecord> {
     let values = |names: &[&str]| -> Vec<String> {
         node.descendants()
@@ -372,8 +372,8 @@ fn parse_record(
     // Some legacy ISO records are structurally present but omit the citation
     // title. Preserve them using their stable identifier as the display
     // fallback instead of silently dropping the complete source record.
-    let title = first(&["title"]).unwrap_or_else(|| identifier.clone());
-    let description = first(&["abstract", "description"]);
+    let title = localized_field(node, &["title"], language).unwrap_or_else(|| identifier.clone());
+    let description = localized_field(node, &["abstract", "description"], language);
     let modified_text = first(&["dateStamp", "modified"]);
     let modified = modified_text.as_deref().and_then(parse_date);
     let scope = node
@@ -422,9 +422,54 @@ fn parse_record(
         .collect();
     let landing_page = online_resources
         .iter()
-        .find_map(|r| r.get("url").and_then(Value::as_str))
+        .filter(|resource| resource.get("downloadable") != Some(&Value::Bool(true)))
+        .find_map(|resource| resource.get("url").and_then(Value::as_str))
+        .or_else(|| {
+            online_resources
+                .iter()
+                .find_map(|resource| resource.get("url").and_then(Value::as_str))
+        })
         .unwrap_or(portal_url)
         .to_string();
+    let number = |name: &str| first(&[name]).and_then(|value| value.parse::<f64>().ok());
+    let spatial_bbox = match (
+        number("westBoundLongitude"),
+        number("southBoundLatitude"),
+        number("eastBoundLongitude"),
+        number("northBoundLatitude"),
+    ) {
+        (Some(west), Some(south), Some(east), Some(north)) => {
+            Some(json!([west, south, east, north]))
+        }
+        _ => None,
+    };
+    let contacts: Vec<Value> = node
+        .descendants()
+        .filter(|candidate| local(*candidate) == "CI_ResponsibleParty")
+        .map(|contact| {
+            let contact_value = |name: &str| {
+                contact
+                    .descendants()
+                    .find(|candidate| local(*candidate) == name)
+                    .and_then(node_value)
+            };
+            let role = contact
+                .descendants()
+                .find(|candidate| local(*candidate) == "CI_RoleCode")
+                .and_then(|candidate| {
+                    candidate
+                        .attribute("codeListValue")
+                        .map(str::to_owned)
+                        .or_else(|| node_value(candidate))
+                });
+            json!({
+                "individual": contact_value("individualName"),
+                "organization": contact_value("organisationName"),
+                "email": contact_value("electronicMailAddress"),
+                "role": role,
+            })
+        })
+        .collect();
     let raw_xml = xml.get(node.range()).unwrap_or_default();
     Some(OgcRecord {
         identifier,
@@ -440,11 +485,56 @@ fn parse_record(
             "scope": scope,
             "keywords": values(&["keyword", "subject"]),
             "publisher": first(&["organisationName", "publisher"]),
-            "license": first(&["useLimitation", "accessConstraints", "license"]),
+            "license": first(&["useLimitation", "license"]),
+            "access_constraints": values(&["accessConstraints", "otherConstraints"]),
             "modified": modified_text,
+            "spatial": {"bbox": spatial_bbox},
+            "temporal": {
+                "start": first(&["beginPosition"]),
+                "end": first(&["endPosition"]),
+            },
+            "contacts": contacts,
             "online_resources": online_resources,
         }),
     })
+}
+
+fn localized_field(node: Node<'_, '_>, names: &[&str], language: &str) -> Option<String> {
+    let requested = language
+        .split(['-', '_'])
+        .next()
+        .unwrap_or(language)
+        .trim_start_matches('#')
+        .to_ascii_lowercase();
+    let fields: Vec<Node<'_, '_>> = node
+        .descendants()
+        .filter(|candidate| names.contains(&local(*candidate)))
+        .collect();
+    fields
+        .iter()
+        .flat_map(|field| field.descendants())
+        .filter(|candidate| local(*candidate) == "LocalisedCharacterString")
+        .find(|candidate| {
+            candidate
+                .attribute("locale")
+                .map(|locale| {
+                    locale
+                        .trim_start_matches('#')
+                        .to_ascii_lowercase()
+                        .starts_with(&requested)
+                })
+                .unwrap_or(false)
+        })
+        .and_then(node_value)
+        .or_else(|| {
+            fields.iter().find_map(|field| {
+                field
+                    .descendants()
+                    .find(|candidate| matches!(local(*candidate), "CharacterString" | "Anchor"))
+                    .and_then(node_value)
+            })
+        })
+        .or_else(|| fields.into_iter().find_map(node_value))
 }
 
 fn classify_kind(value: &str) -> CatalogRecordKind {
@@ -526,10 +616,10 @@ mod tests {
                 .unwrap()
                 .contains("sea surface temperature")
         );
-        // Landing page comes from the first online resource.
+        // Landing pages prefer a descriptive link over a download URL.
         assert_eq!(
             dataset.landing_page,
-            "https://catalog.example.test/download/sst-2000-2025.nc"
+            "https://catalog.example.test/records/demo-dataset-001"
         );
         assert_eq!(
             dataset.modified.unwrap().date_naive().to_string(),
@@ -562,6 +652,24 @@ mod tests {
         assert_eq!(resources[0]["downloadable"], true);
         assert_eq!(resources[0]["protocol"], "WWW:DOWNLOAD-1.0-http--download");
         assert_eq!(resources[1]["downloadable"], false);
+    }
+
+    #[test]
+    fn selects_localized_text_and_normalizes_extent_and_contacts() {
+        let xml = r##"<csw:GetRecordsResponse xmlns:csw="http://www.opengis.net/cat/csw/2.0.2" xmlns:gmd="http://www.isotc211.org/2005/gmd" xmlns:gco="http://www.isotc211.org/2005/gco"><csw:SearchResults numberOfRecordsMatched="1" numberOfRecordsReturned="1" nextRecord="0"><gmd:MD_Metadata><gmd:fileIdentifier><gco:CharacterString>localized</gco:CharacterString></gmd:fileIdentifier><gmd:title><gco:CharacterString>Default title</gco:CharacterString><gmd:PT_FreeText><gmd:textGroup><gmd:LocalisedCharacterString locale="#FR">Titre français</gmd:LocalisedCharacterString></gmd:textGroup></gmd:PT_FreeText></gmd:title><gmd:abstract><gco:CharacterString>Default description</gco:CharacterString><gmd:PT_FreeText><gmd:textGroup><gmd:LocalisedCharacterString locale="#FR">Description française</gmd:LocalisedCharacterString></gmd:textGroup></gmd:PT_FreeText></gmd:abstract><gmd:EX_GeographicBoundingBox><gmd:westBoundLongitude><gco:Decimal>-5</gco:Decimal></gmd:westBoundLongitude><gmd:eastBoundLongitude><gco:Decimal>10</gco:Decimal></gmd:eastBoundLongitude><gmd:southBoundLatitude><gco:Decimal>40</gco:Decimal></gmd:southBoundLatitude><gmd:northBoundLatitude><gco:Decimal>52</gco:Decimal></gmd:northBoundLatitude></gmd:EX_GeographicBoundingBox><gmd:CI_ResponsibleParty><gmd:organisationName><gco:CharacterString>Marine Office</gco:CharacterString></gmd:organisationName><gmd:electronicMailAddress><gco:CharacterString>data@example.test</gco:CharacterString></gmd:electronicMailAddress><gmd:role><gmd:CI_RoleCode codeListValue="publisher"/></gmd:role></gmd:CI_ResponsibleParty></gmd:MD_Metadata></csw:SearchResults></csw:GetRecordsResponse>"##;
+        let page = parse_get_records(xml, "https://example.test", "fr").unwrap();
+        let record = &page.records[0];
+        assert_eq!(record.title, "Titre français");
+        assert_eq!(record.description.as_deref(), Some("Description française"));
+        assert_eq!(
+            record.metadata["spatial"]["bbox"],
+            json!([-5.0, 40.0, 10.0, 52.0])
+        );
+        assert_eq!(
+            record.metadata["contacts"][0]["organization"],
+            "Marine Office"
+        );
+        assert_eq!(record.metadata["contacts"][0]["role"], "publisher");
     }
 
     #[test]
@@ -604,7 +712,8 @@ mod tests {
             Some("https://emodnet.ec.europa.eu/geonetwork/emodnet/eng/csw"),
         )
         .unwrap();
-        client.bindings().await.unwrap();
+        let first_page = client.paginate_stream().next().await.unwrap().unwrap();
+        assert!(!first_page.is_empty());
     }
 
     #[tokio::test]
@@ -616,6 +725,7 @@ mod tests {
             Some("https://csw.marine.copernicus.eu/geonetwork/csw-MYOCEAN-CORE-PRODUCTS/eng/csw"),
         )
         .unwrap();
-        client.bindings().await.unwrap();
+        let first_page = client.paginate_stream().next().await.unwrap().unwrap();
+        assert!(!first_page.is_empty());
     }
 }

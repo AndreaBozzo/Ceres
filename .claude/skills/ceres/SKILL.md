@@ -1,6 +1,6 @@
 ---
 name: ceres
-description: Use when working with Ceres — a Rust harvest-first toolkit and public open data metadata index. Covers harvesting and synchronization, optional embedding and search, CKAN, DCAT udata, SPARQL-backed DCAT, Project Open Data data.json, Socrata Discovery, OpenDataSoft Explore, ArcGIS Hub, and OGC CSW portal support, Parquet snapshot manifests/reports/changelogs, Ollama or hosted providers, CLI commands, REST API endpoints, portal configuration, architecture, extending via traits, release workflow, and contributing to the Ceres codebase.
+description: Use when working with Ceres — a Rust harvest-first toolkit and public open data metadata index. Covers harvesting and synchronization, optional embedding and search, CKAN, DCAT udata, SPARQL-backed DCAT, Project Open Data data.json, Socrata Discovery, OpenDataSoft Explore, ArcGIS Hub, OGC CSW, and collection-level STAC portal support, Parquet snapshot manifests/reports/changelogs, Ollama or hosted providers, CLI commands, REST API endpoints, portal configuration, architecture, extending via traits, release workflow, and contributing to the Ceres codebase.
 ---
 
 # Ceres — Harvest-First Toolkit for Open Data Portals
@@ -25,7 +25,7 @@ Harvesting and embedding are decoupled: `HarvestService` handles metadata, `Embe
 - Harvest first and keep metadata synchronized over time
 - Add embeddings later only if you want semantic retrieval
 - Prefer Ollama for local embedding, with Gemini and OpenAI still supported
-- Support CKAN, DCAT-AP udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, Socrata Discovery, OpenDataSoft Explore, and ArcGIS Hub portals in the current client factory
+- Support CKAN, DCAT-AP udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, Socrata Discovery, OpenDataSoft Explore, ArcGIS Hub, OGC CSW, and collection-level STAC portals in the current client factory
 - Publish reproducible Parquet snapshots for the public Open Data Index
 - Expose search, export, and API workflows over the same harvested catalog
 
@@ -34,7 +34,7 @@ Harvesting and embedding are decoupled: `HarvestService` handles metadata, `Embe
 | Crate | Purpose | Key Exports |
 |---|---|---|
 | `ceres-core` | Business logic, traits, services | `HarvestService`, `EmbeddingService`, `HarvestPipeline`, `SearchService`, `ExportService`, `WorkerService`, `CircuitBreaker`, traits |
-| `ceres-client` | Portal clients and embedding providers | `CkanClient`, `DcatClient`, `ArcGisClient`, `GeminiClient`, `OpenAIClient`, `OllamaClient`, `PortalClientFactoryEnum`, `EmbeddingProviderEnum` |
+| `ceres-client` | Portal clients and embedding providers | `CkanClient`, `DcatClient`, `ArcGisClient`, `OgcRecordsClient`, `StacClient`, `GeminiClient`, `OpenAIClient`, `OllamaClient`, `PortalClientFactoryEnum`, `EmbeddingProviderEnum` |
 | `ceres-db` | PostgreSQL + pgvector repository | `DatasetRepository`, `HarvestJobRepository` |
 | `ceres-server` | Axum REST API with Swagger UI | Routes, DTOs, bearer auth, OpenAPI/Swagger |
 | `ceres-cli` | Command-line interface | `harvest`, `embed`, `search`, `export`, `stats` subcommands |
@@ -163,11 +163,11 @@ ceres stats
 - **crates.io package:** `ceres-search`
 - Harvesting and embedding are decoupled: `--metadata-only` harvests without API key, `embed` command generates embeddings separately
 - Ollama is the preferred local embedding path; Gemini and OpenAI remain available
-- Current portal client factory supports CKAN, Socrata, OpenDataSoft, ArcGIS Hub, and DCAT (`udata_rest` default profile plus `sparql` and `static_json` profiles)
+- Current portal client factory supports CKAN, Socrata, OpenDataSoft, ArcGIS Hub, OGC CSW, collection-level STAC, and DCAT (`udata_rest` default profile plus `sparql` and `static_json` profiles)
 - ArcGIS Hub clients reject empty `catalogV2` item scopes because those endpoints expose global ArcGIS search results rather than portal-owned datasets
 - Stale dataset detection: datasets removed from portals are soft-marked (`is_stale`) during full syncs
 - Supports Ollama, Gemini, and OpenAI embeddings
 - Parquet export publishes a portable snapshot: `all.parquet` (canonical), per-portal subsets, `identity.parquet`, a versioned snapshot manifest (`metadata.json` with `snapshot_id`, provenance, alias-aware duplicate metadata, and SHA-256 checksums), coverage/quality reports (`reports.json`, `report.md`), and snapshot changelogs (`changelog.json`, `changelog.md` when `--previous` is supplied)
-- v0.6.0 milestone focus: portal coverage expansion — DCAT profile cleanup, Project Open Data `data.json`, Socrata, OpenDataSoft, and ArcGIS Hub have shipped
+- v0.6.0 milestone focus: portal coverage expansion — the earlier client families plus OGC CSW and collection-level STAC have shipped; validation and metadata-only harvesting at scale remain
 - v0.7.0 milestone focus: resource-level metadata depth tracked in issue #68
 - HuggingFace dataset: `AndreaBozzo/ceres-open-data-index`

@@ -26,6 +26,7 @@ use crate::ogc_records::{OgcRecord, OgcRecordsClient};
 use crate::opendatasoft::{OpenDataSoftClient, OpenDataSoftDataset};
 use crate::socrata::{SocrataClient, SocrataDataset};
 use crate::sparql::SparqlDcatClient;
+use crate::stac::{StacClient, StacCollection};
 
 /// Portal-specific dataset data, wrapping concrete types from each portal client.
 #[derive(Debug, Clone)]
@@ -44,6 +45,8 @@ pub enum PortalDataEnum {
     ArcGis(ArcGisDataset),
     /// Data from an OGC CSW catalogue.
     OgcRecords(OgcRecord),
+    /// Data from a STAC API Collection.
+    Stac(StacCollection),
 }
 
 /// Unified portal client that wraps concrete portal implementations.
@@ -68,6 +71,8 @@ pub enum PortalClientEnum {
     ArcGis(ArcGisClient),
     /// OGC CSW 2.0.2 catalogue client.
     OgcRecords(OgcRecordsClient),
+    /// Collection-level STAC API client.
+    Stac(StacClient),
 }
 
 impl PortalClient for PortalClientEnum {
@@ -83,6 +88,7 @@ impl PortalClient for PortalClientEnum {
             Self::OpenDataSoft(c) => c.portal_type(),
             Self::ArcGis(c) => c.portal_type(),
             Self::OgcRecords(c) => c.portal_type(),
+            Self::Stac(c) => c.portal_type(),
         }
     }
 
@@ -96,6 +102,7 @@ impl PortalClient for PortalClientEnum {
             Self::OpenDataSoft(c) => c.base_url(),
             Self::ArcGis(c) => c.base_url(),
             Self::OgcRecords(c) => c.base_url(),
+            Self::Stac(c) => c.base_url(),
         }
     }
 
@@ -109,6 +116,7 @@ impl PortalClient for PortalClientEnum {
             Self::OpenDataSoft(c) => c.list_dataset_ids().await,
             Self::ArcGis(c) => c.list_dataset_ids().await,
             Self::OgcRecords(c) => c.list_dataset_ids().await,
+            Self::Stac(c) => c.list_dataset_ids().await,
         }
     }
 
@@ -122,6 +130,7 @@ impl PortalClient for PortalClientEnum {
             Self::OpenDataSoft(c) => c.get_dataset(id).await.map(PortalDataEnum::OpenDataSoft),
             Self::ArcGis(c) => c.get_dataset(id).await.map(PortalDataEnum::ArcGis),
             Self::OgcRecords(c) => c.get_dataset(id).await.map(PortalDataEnum::OgcRecords),
+            Self::Stac(c) => c.get_dataset(id).await.map(PortalDataEnum::Stac),
         }
     }
 
@@ -152,6 +161,9 @@ impl PortalClient for PortalClientEnum {
             }
             PortalDataEnum::OgcRecords(data) => {
                 OgcRecordsClient::into_new_dataset(data, portal_url, url_template, language)
+            }
+            PortalDataEnum::Stac(data) => {
+                StacClient::into_new_dataset(data, portal_url, url_template, language)
             }
         }
     }
@@ -197,6 +209,10 @@ impl PortalClient for PortalClientEnum {
                     .map(PortalDataEnum::OgcRecords)
                     .collect()
             }),
+            Self::Stac(c) => c
+                .search_modified_since(since)
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Stac).collect()),
         }
     }
 
@@ -238,6 +254,10 @@ impl PortalClient for PortalClientEnum {
                     .map(PortalDataEnum::OgcRecords)
                     .collect()
             }),
+            Self::Stac(c) => c
+                .search_all_datasets()
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Stac).collect()),
         }
     }
 
@@ -297,6 +317,9 @@ impl PortalClient for PortalClientEnum {
                         .collect()
                 })
             })),
+            Self::Stac(c) => Box::pin(StreamExt::map(c.paginate_stream(), |r| {
+                r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Stac).collect())
+            })),
         }
     }
 
@@ -316,6 +339,9 @@ impl PortalClient for PortalClientEnum {
             Self::ArcGis(c) => c.dataset_count().await,
             Self::OgcRecords(_) => Err(AppError::Generic(
                 "dataset_count is not supported for OGC CSW catalogues".into(),
+            )),
+            Self::Stac(_) => Err(AppError::Generic(
+                "dataset_count is not supported for STAC APIs".into(),
             )),
         }
     }
@@ -410,6 +436,7 @@ impl PortalClientFactory for PortalClientFactoryEnum {
                 language,
                 ogc_endpoint,
             )?)),
+            PortalType::Stac => Ok(PortalClientEnum::Stac(StacClient::new(portal_url)?)),
             PortalType::Dcat => match profile.unwrap_or_default() {
                 DcatProfile::UdataRest => Ok(PortalClientEnum::Dcat(DcatClient::new(
                     portal_url, language,
@@ -680,6 +707,23 @@ mod tests {
         assert!(matches!(client, PortalClientEnum::OgcRecords(_)));
         assert_eq!(client.portal_type(), "ogc_records");
         assert_eq!(client.base_url(), "https://emodnet.ec.europa.eu/");
+    }
+
+    #[test]
+    fn test_factory_creates_stac_client() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory
+            .create(
+                "https://stac.dataspace.copernicus.eu/v1/",
+                PortalType::Stac,
+                "en",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(matches!(client, PortalClientEnum::Stac(_)));
+        assert_eq!(client.portal_type(), "stac");
     }
 
     #[test]

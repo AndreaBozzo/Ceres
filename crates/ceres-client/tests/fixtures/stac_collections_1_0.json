@@ -1,0 +1,25 @@
+{
+  "collections": [
+    {
+      "stac_version": "1.0.0",
+      "type": "Collection",
+      "id": "sentinel-2-l2a",
+      "title": "Sentinel-2 Level 2A",
+      "description": "Surface reflectance imagery.",
+      "license": "proprietary",
+      "keywords": ["satellite", "optical"],
+      "providers": [{"name": "ESA", "roles": ["producer", "licensor"]}],
+      "extent": {
+        "spatial": {"bbox": [[-180, -90, 180, 90]]},
+        "temporal": {"interval": [["2015-06-27T00:00:00Z", null]]}
+      },
+      "summaries": {"platform": ["sentinel-2a", "sentinel-2b"]},
+      "assets": {"thumbnail": {"href": "https://catalog.test/thumb.png", "type": "image/png"}},
+      "links": [
+        {"rel": "self", "href": "https://catalog.test/collections/sentinel-2-l2a", "type": "application/json"},
+        {"rel": "items", "href": "https://catalog.test/collections/sentinel-2-l2a/items", "type": "application/geo+json"}
+      ]
+    }
+  ],
+  "links": []
+}

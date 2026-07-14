@@ -1343,3 +1343,19 @@ type = "arcgis"
 language = "en"
 enabled = false
 description = "Arizona Geographic Information Council ArcGIS Hub catalogue"
+
+[[portals]]
+name = "copernicus-data-space-stac"
+url = "https://stac.dataspace.copernicus.eu/v1/"
+type = "stac"
+language = "en"
+enabled = false
+description = "Copernicus Data Space STAC API (~380 collections; collection-level only)"
+
+[[portals]]
+name = "canada-datacube-stac"
+url = "https://datacube.services.geo.ca/stac/api/"
+type = "stac"
+language = "en"
+enabled = false
+description = "Natural Resources Canada DataCube STAC API (~50 collections; collection-level only)"

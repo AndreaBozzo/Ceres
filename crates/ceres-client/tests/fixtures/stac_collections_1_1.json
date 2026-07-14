@@ -1,0 +1,25 @@
+{
+  "collections": [
+    {
+      "stac_version": "1.1.0",
+      "type": "Collection",
+      "id": "landsat-c2-l2",
+      "title": "Landsat Collection 2 Level-2",
+      "description": "Analysis-ready Landsat imagery.",
+      "license": "PDDL-1.0",
+      "created": "2020-12-01T00:00:00Z",
+      "updated": "2026-06-15T12:00:00Z",
+      "extent": {
+        "spatial": {"bbox": [[-180, -90, 180, 90]]},
+        "temporal": {"interval": [["1982-08-22T00:00:00Z", null]]}
+      },
+      "providers": [{"name": "USGS", "roles": ["producer", "host"]}],
+      "summaries": {"platform": ["landsat-4", "landsat-5", "landsat-7", "landsat-8", "landsat-9"]},
+      "assets": {},
+      "links": [{"rel": "self", "href": "./landsat-c2-l2", "type": "application/json"}]
+    }
+  ],
+  "links": [
+    {"rel": "next", "href": "?limit=1&token=next", "type": "application/json", "method": "GET"}
+  ]
+}

@@ -27,6 +27,7 @@
 //! | OpenDataSoft | Supported | Explore API v2.1 (`/api/explore/v2.1/catalog/datasets`) |
 //! | ArcGIS Hub | Supported | Hub Search API (`/api/search/v1/collections/dataset/items`) |
 //! | OGC Records | Supported | CSW 2.0.2 catalog service |
+//! | STAC | Supported | Collection-level STAC API harvesting |
 //!
 //! # Embedding Providers
 //!
@@ -53,6 +54,7 @@ pub mod portal;
 pub mod provider;
 pub mod socrata;
 pub mod sparql;
+pub mod stac;
 
 // Re-export main client types
 pub use arcgis::{ArcGisClient, ArcGisDataset};
@@ -70,3 +72,4 @@ pub use provider::MockEmbeddingClient;
 pub use provider::{EmbeddingConfig, EmbeddingProviderEnum};
 pub use socrata::{SocrataClient, SocrataDataset};
 pub use sparql::SparqlDcatClient;
+pub use stac::{StacClient, StacCollection};
