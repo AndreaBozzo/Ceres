@@ -174,12 +174,13 @@ raising the local index from 2,232,257 rows / 373 sources to 2,242,358 rows /
 A new live search covered every implemented metadata client. Candidates were
 first excluded by canonical hostname against both `portals.toml` and the local
 database, then checked through the protocol endpoint rather than by testing the
-landing page alone. The resulting disabled curation tranche contains 33 portal
+landing page alone. The resulting disabled curation tranche contains 34 portal
 sources pending a later incremental stability check:
 
-- 7 CKAN catalogs, discovered from the public data-portal registry and checked
+- 8 CKAN catalogs, discovered from the public data-portal registry and checked
   with `package_search`; advertised sizes range from 49 records at Sweden's
-  Traffic Data portal to about 21,100 at California Natural Resources.
+  Traffic Data portal to about 21,100 at California Natural Resources. NETL EDX
+  adds roughly 18,000 energy datasets.
 - 4 Socrata domains absent from the index, discovered through the global
   Discovery API. A full dry run of New Brunswick returned 311 normalized
   datasets without failures.
@@ -207,9 +208,10 @@ but the large CKAN, OpenDataSoft, `data.json`, and national geospatial catalogs
 still need a second scheduled sync before being enabled by default. Málaga was
 re-probed successfully but remains excluded
 because the earlier full comparison found 99.8% title overlap with
-`datos.gob.es`. NETL EDX was also removed after its count request succeeded but
-the first real `package_search` page returned HTTP 403. OPM and the Federal
-Reserve were removed after full harvests showed 100% exact-title overlap with
+`datos.gob.es`. NETL EDX initially rejected the client's obsolete bot-style
+User-Agent with HTTP 403; after replacing it with the package version and
+project URL, real paged harvesting succeeded and EDX was retained. OPM and the
+Federal Reserve were removed after full harvests showed 100% exact-title overlap with
 Data.gov; California Health and Human Services was likewise 100% contained by
 the California `data.json` aggregate. Those redundant rows were removed from
 the local index.

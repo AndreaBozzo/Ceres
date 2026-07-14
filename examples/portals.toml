@@ -1365,6 +1365,14 @@ description = "Natural Resources Canada DataCube STAC API (~50 collections; coll
 
 # CKAN
 [[portals]]
+name = "netl-edx"
+url = "https://edx.netl.doe.gov"
+type = "ckan"
+language = "en"
+enabled = false
+description = "US National Energy Technology Laboratory Energy Data eXchange CKAN catalogue"
+
+[[portals]]
 name = "sweden-traffic-data"
 url = "https://trafficdata.se"
 type = "ckan"
