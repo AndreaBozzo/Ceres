@@ -49,7 +49,9 @@ impl StacClient {
             return Err(AppError::InvalidPortalUrl(base_url.to_string()));
         }
         let client = Client::builder()
-            .user_agent("Ceres/0.6 (open-data-harvester)")
+            // A project URL keeps the agent identifiable without the generic
+            // "harvester" token that some public STAC WAF rules reject.
+            .user_agent("Ceres/0.6 (+https://github.com/AndreaBozzo/Ceres)")
             .timeout(Duration::from_secs(120))
             .build()
             .map_err(|error| AppError::ClientError(error.to_string()))?;

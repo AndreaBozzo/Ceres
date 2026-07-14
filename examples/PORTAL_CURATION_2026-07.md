@@ -168,3 +168,64 @@ decision not to curate it.
 Overall the session added 10,101 stored rows and nine logical portal sources,
 raising the local index from 2,232,257 rows / 373 sources to 2,242,358 rows /
 382 sources.
+
+## Protocol-wide discovery pass (14 July 2026)
+
+A new live search covered every implemented metadata client. Candidates were
+first excluded by canonical hostname against both `portals.toml` and the local
+database, then checked through the protocol endpoint rather than by testing the
+landing page alone. The resulting disabled curation tranche contains 33 portal
+sources pending a later incremental stability check:
+
+- 7 CKAN catalogs, discovered from the public data-portal registry and checked
+  with `package_search`; advertised sizes range from 49 records at Sweden's
+  Traffic Data portal to about 21,100 at California Natural Resources.
+- 4 Socrata domains absent from the index, discovered through the global
+  Discovery API. A full dry run of New Brunswick returned 311 normalized
+  datasets without failures.
+- 2 OpenDataSoft catalogs found by grouping the federation hub on source
+  domain: Banque de France (35,839) and PNDB (17,837). They add about 305 and
+  698 titles respectively beyond the federation hub's current snapshot.
+- Serbia's production udata API, advertising 3,450 datasets through Hydra and
+  returning the JSON-LD catalog shape expected by the client.
+- The GSA Project Open Data feed (344 records), retained because 176 normalized
+  titles were absent from the Data.gov aggregate.
+- Croatia's national DCAT SPARQL endpoint, returning 3,873 distinct
+  `dcat:Dataset` resources to the client's count query.
+- 8 correctly scoped ArcGIS Hub sites. Their injected `catalogV2` item filters
+  were non-empty and the Hub Search API advertised between 80 and 2,701
+  datasets for the retained sites; Dundee completed an 80-record dry run.
+- Spain's IDEE CSW catalog, whose capabilities bindings and `GetRecords` pages
+  return ISO 19139 `gmd:MD_Metadata` (43,884 matched records).
+- 8 STAC APIs from the maintained STAC Index list. Each landing page declared
+  STAC 1.0 or 1.1 and exposed a working Collections relation; Thünen completed
+  a seven-Collection dry run without failures. Static STAC catalogs and APIs
+  whose Collections relation returned 404 were rejected.
+
+This tranche intentionally remains `enabled = false`: the endpoints are valid,
+but the large CKAN, OpenDataSoft, `data.json`, and national geospatial catalogs
+still need a second scheduled sync before being enabled by default. Málaga was
+re-probed successfully but remains excluded
+because the earlier full comparison found 99.8% title overlap with
+`datos.gob.es`. NETL EDX was also removed after its count request succeeded but
+the first real `package_search` page returned HTTP 403. OPM and the Federal
+Reserve were removed after full harvests showed 100% exact-title overlap with
+Data.gov; California Health and Human Services was likewise 100% contained by
+the California `data.json` aggregate. Those redundant rows were removed from
+the local index.
+
+IMOS was excluded after the live full harvest: its CSW intermittently declares
+50 or 100 returned records while serializing one fewer `MD_Metadata` element.
+Ceres rejects that inconsistent page rather than silently accepting a partial
+catalog. Digital Earth Australia's sandbox STAC endpoint initially rejected the
+generic `open-data-harvester` user-agent token; the client now sends an
+identifiable project URL instead. Digital Earth Africa's production landing
+page was excluded because its advertised Collections link returns an HTML page
+rather than STAC JSON.
+
+Spain's CODSI was also excluded after deeper pagination checks. Its first page
+works, but later positions throw server-side null-pointer exceptions even with
+`maxRecords=1`; no client page size can produce a complete deterministic walk.
+Centre-Val de Loire was removed because all 377 titles are already in the
+OpenDataSoft federation hub. The FCC Socrata portal was likewise removed after
+51 of its 56 titles matched Data.gov, leaving too little independent scope.
