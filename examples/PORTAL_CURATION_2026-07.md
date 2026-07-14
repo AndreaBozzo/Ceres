@@ -211,8 +211,8 @@ because the earlier full comparison found 99.8% title overlap with
 `datos.gob.es`. NETL EDX initially rejected the client's obsolete bot-style
 User-Agent with HTTP 403; after replacing it with the package version and
 project URL, real paged harvesting succeeded and EDX was retained. OPM and the
-Federal Reserve were removed after full harvests showed 100% exact-title overlap with
-Data.gov; California Health and Human Services was likewise 100% contained by
+Federal Reserve were removed after full harvests showed 100% exact-title overlap
+with Data.gov; California Health and Human Services was likewise 100% contained by
 the California `data.json` aggregate. Those redundant rows were removed from
 the local index.
 
