@@ -7,7 +7,7 @@ description: The portal APIs Ceres can harvest today, how to configure each one,
 
 Ceres currently harvests **120+ portals** into a single synchronized catalog of
 **2M+ datasets** — national portals, EU aggregators, US federal agencies, and
-city open data sites. Seven harvest paths are shipped today, and every one of
+city open data sites. Nine harvest paths are shipped today, and every one of
 them shares the same sync machinery: incremental sync, content-hash delta
 detection, streaming page-by-page processing, and stale dataset marking.
 
@@ -21,6 +21,7 @@ detection, streaming page-by-page processing, and stale dataset marking.
 | OpenDataSoft | `--type opendatasoft` | OpenDataSoft Explore API v2.1 catalogs | opendata.paris.fr, data.economie.gouv.fr |
 | ArcGIS Hub | `--type arcgis` | ArcGIS Hub Search API catalogs | opendata.dc.gov, opendata.gis.utah.gov |
 | OGC Records | `--type ogc_records` | CSW 2.0.2 / GeoNetwork catalogues | EMODnet, British Geological Survey |
+| STAC | `--type stac` | Collection-level STAC APIs | Copernicus Data Space, Canada DataCube |
 
 Every client preserves the complete source metadata payload, so downstream
 features like resource-schema extraction keep working no matter which portal a
@@ -52,6 +53,9 @@ ceres harvest https://opendata.dc.gov --type arcgis --metadata-only
 
 # OGC CSW 2.0.2
 ceres harvest https://emodnet.ec.europa.eu/geonetwork/emodnet/eng/csw --type ogc_records --metadata-only
+
+# STAC Collections (never individual Items)
+ceres harvest https://stac.dataspace.copernicus.eu/v1/ --type stac --metadata-only
 ```
 
 Or configure them once in `portals.toml` and harvest in batch:
@@ -130,6 +134,20 @@ for a larger, curated configuration set.
 - Hub sites with an empty `catalogV2` item scope are rejected because their search endpoint returns global ArcGIS content rather than datasets belonging to that portal
 - No credentials required for public reads
 
+### OGC Records / CSW
+
+- Discovers `GetRecords` and `GetRecordById` bindings from CSW 2.0.2 `GetCapabilities`
+- Streams bounded record windows and preserves each complete source XML record
+- Resolves localized titles and abstracts, spatial/temporal extents, contacts, constraints, and online resources
+- Classifies datasets, series, services, and maps instead of treating every catalog record as a downloadable dataset
+
+### STAC
+
+- Discovers the Collections endpoint from the landing page `rel=data` link and follows `rel=next` pagination
+- Stores one Ceres `series` record per STAC Collection, preserving the complete Collection JSON (extent, providers, assets, summaries, and extension fields)
+- Never follows Collection `items` links; item/scene-level indexing is intentionally out of scope
+- Supports STAC 1.0 and 1.1 APIs; public reads require no credentials unless the catalog itself is private
+
 ## The published index
 
 The catalog Ceres maintains is published as the
@@ -139,10 +157,9 @@ checksums, coverage/quality reports, and snapshot-to-snapshot changelogs.
 
 ## What's next
 
-Coverage keeps expanding. With **OpenDataSoft** and **ArcGIS Hub** shipped, the
-[v0.6.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones) continues
-with job-based harvesting for every supported client and newly validated
-portals at scale.
+Coverage keeps expanding. The [v0.6.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones)
+now focuses on validating the OGC CSW and collection-level STAC clients across
+more portals and publishing a reproducible metadata-only coverage set.
 
 Want a portal that none of the current clients cover? The client layer is
 trait-based and designed for extension — see

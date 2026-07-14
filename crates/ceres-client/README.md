@@ -8,8 +8,11 @@ OGC catalogue records are harvested through CSW 2.0.2 with
 `type = "ogc_records"`; use `ogc_endpoint` when the CSW service URL differs
 from the logical portal URL.
 
+STAC APIs are harvested with `type = "stac"`. Ceres indexes Collections as
+series and deliberately never follows Item links.
+
 ### What it provides
-* **Portal Clients**: CKAN, DCAT profiles, Socrata, OpenDataSoft, ArcGIS Hub, and OGC CSW 2.0.2.
+* **Portal Clients**: CKAN, DCAT profiles, Socrata, OpenDataSoft, ArcGIS Hub, OGC CSW 2.0.2, and collection-level STAC.
 * **Embedding Providers**: Ollama, Gemini, and OpenAI via the `EmbeddingProvider` trait.
 * **HTTP Handling**: Robust request handling with retries.
 

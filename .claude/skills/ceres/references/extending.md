@@ -81,7 +81,7 @@ Key design notes:
 - `search_modified_since` enables incremental sync. Return `Err` if the portal doesn't support it — Ceres will fall back to full sync.
 - `search_all_datasets` is an optimization for bulk fetch. Default returns an error, falling back to `list_dataset_ids()` + `get_dataset()`.
 
-**Built-in:** `CkanClient`, `DcatClient`, `SparqlDcatClient`, `DataJsonClient`, `SocrataClient`, `OpenDataSoftClient`, `ArcGisClient`, and `OgcRecordsClient`.
+**Built-in:** `CkanClient`, `DcatClient`, `SparqlDcatClient`, `DataJsonClient`, `SocrataClient`, `OpenDataSoftClient`, `ArcGisClient`, `OgcRecordsClient`, and `StacClient` (Collections only).
 
 ### PortalClientFactory
 

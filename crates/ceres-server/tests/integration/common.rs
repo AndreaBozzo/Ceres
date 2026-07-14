@@ -70,7 +70,7 @@ const MIGRATIONS: &[&str] = &[
         url_template TEXT,
         language TEXT,
         portal_type TEXT NOT NULL DEFAULT 'ckan'
-            CHECK (portal_type IN ('ckan', 'dcat', 'socrata', 'opendatasoft', 'arcgis', 'ogc_records')),
+            CHECK (portal_type IN ('ckan', 'dcat', 'socrata', 'opendatasoft', 'arcgis', 'ogc_records', 'stac')),
         profile TEXT,
         sparql_endpoint TEXT,
         ogc_endpoint TEXT,

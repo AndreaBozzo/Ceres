@@ -1343,3 +1343,308 @@ type = "arcgis"
 language = "en"
 enabled = false
 description = "Arizona Geographic Information Council ArcGIS Hub catalogue"
+
+[[portals]]
+name = "copernicus-data-space-stac"
+url = "https://stac.dataspace.copernicus.eu/v1/"
+type = "stac"
+language = "en"
+enabled = false
+description = "Copernicus Data Space STAC API (~380 collections; collection-level only)"
+
+[[portals]]
+name = "canada-datacube-stac"
+url = "https://datacube.services.geo.ca/stac/api/"
+type = "stac"
+language = "en"
+enabled = false
+description = "Natural Resources Canada DataCube STAC API (~50 collections; collection-level only)"
+
+# July 2026 deep-discovery tranche. Each endpoint below was checked against the
+# live protocol API and was absent from both this file and the local index.
+
+# CKAN
+[[portals]]
+name = "netl-edx"
+url = "https://edx.netl.doe.gov"
+type = "ckan"
+language = "en"
+enabled = false
+description = "US National Energy Technology Laboratory Energy Data eXchange CKAN catalogue"
+
+[[portals]]
+name = "sweden-traffic-data"
+url = "https://trafficdata.se"
+type = "ckan"
+language = "sv"
+enabled = false
+description = "Swedish Traffic Data CKAN catalogue"
+
+[[portals]]
+name = "lublin"
+url = "https://otwartedane.lublin.eu"
+type = "ckan"
+language = "pl"
+enabled = false
+description = "City of Lublin open data CKAN catalogue"
+
+[[portals]]
+name = "upper-silesia-metropolis"
+url = "https://otwartedane.metropoliagzm.pl"
+type = "ckan"
+language = "pl"
+enabled = false
+description = "Górnośląsko-Zagłębiowska Metropolia CKAN catalogue (~1,180 datasets)"
+
+[[portals]]
+name = "milwaukee"
+url = "https://data.milwaukee.gov"
+type = "ckan"
+language = "en"
+enabled = false
+description = "City of Milwaukee open data CKAN catalogue"
+
+[[portals]]
+name = "americaview"
+url = "https://ckan.americaview.org"
+type = "ckan"
+language = "en"
+enabled = false
+description = "AmericaView remote-sensing resources CKAN catalogue"
+
+[[portals]]
+name = "phoenix"
+url = "https://phoenixopendata.com"
+type = "ckan"
+language = "en"
+enabled = false
+description = "City of Phoenix open data CKAN catalogue"
+
+[[portals]]
+name = "california-natural-resources"
+url = "https://data.cnra.ca.gov"
+type = "ckan"
+language = "en"
+enabled = false
+description = "California Natural Resources Agency CKAN catalogue"
+
+# Socrata
+[[portals]]
+name = "nova-scotia"
+url = "https://data.novascotia.ca"
+type = "socrata"
+language = "en"
+enabled = false
+description = "Province of Nova Scotia Socrata catalogue"
+
+[[portals]]
+name = "cook-county"
+url = "https://datacatalog.cookcountyil.gov"
+type = "socrata"
+language = "en"
+enabled = false
+description = "Cook County, Illinois Socrata catalogue"
+
+[[portals]]
+name = "new-brunswick"
+url = "https://gnb.socrata.com"
+type = "socrata"
+language = "en"
+enabled = false
+description = "Government of New Brunswick Socrata catalogue"
+
+[[portals]]
+name = "michigan"
+url = "https://data.michigan.gov"
+type = "socrata"
+language = "en"
+enabled = false
+description = "State of Michigan Socrata catalogue"
+
+# OpenDataSoft
+[[portals]]
+name = "banque-de-france"
+url = "https://webstat.banque-france.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Banque de France Webstat OpenDataSoft catalogue"
+
+[[portals]]
+name = "pndb"
+url = "https://pndb.opendatasoft.com"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "French National Biodiversity Data Hub OpenDataSoft catalogue"
+
+# udata REST DCAT
+[[portals]]
+name = "serbia"
+url = "https://data.gov.rs"
+type = "dcat"
+profile = "udata_rest"
+language = "sr"
+enabled = false
+description = "Serbian national udata JSON-LD catalogue (~3,450 datasets)"
+
+# Project Open Data data.json
+[[portals]]
+name = "us-gsa-data-json"
+url = "https://open.gsa.gov/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "US General Services Administration Project Open Data catalog"
+
+# SPARQL-backed DCAT
+[[portals]]
+name = "croatia"
+url = "https://data.gov.hr"
+type = "dcat"
+profile = "sparql"
+sparql_endpoint = "https://data.gov.hr/sparql"
+language = "hr"
+enabled = false
+description = "Croatian national DCAT catalogue via SPARQL (~3,870 datasets)"
+
+# ArcGIS Hub
+[[portals]]
+name = "california-geoportal"
+url = "https://gis.data.ca.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "California State Geoportal ArcGIS Hub catalogue"
+
+[[portals]]
+name = "miami-dade"
+url = "https://opendata.miamidade.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Miami-Dade County ArcGIS Hub catalogue"
+
+[[portals]]
+name = "los-angeles-geohub"
+url = "https://data-lahub.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Los Angeles GeoHub ArcGIS catalogue"
+
+[[portals]]
+name = "detroit"
+url = "https://data.detroitmi.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "City of Detroit ArcGIS Hub catalogue"
+
+[[portals]]
+name = "dundee"
+url = "https://opendata-dundeecity.hub.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Dundee City Council ArcGIS Hub catalogue"
+
+[[portals]]
+name = "louisville"
+url = "https://louisville-metro-opendata-lojic.hub.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "Louisville Metro Open Data ArcGIS Hub catalogue"
+
+[[portals]]
+name = "los-angeles-county"
+url = "https://data.lacounty.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "County of Los Angeles ArcGIS Hub catalogue"
+
+[[portals]]
+name = "rio-de-janeiro"
+url = "https://www.data.rio"
+type = "arcgis"
+language = "pt"
+enabled = false
+description = "DATA.RIO municipal ArcGIS Hub catalogue"
+
+# OGC CSW 2.0.2 / ISO 19139
+[[portals]]
+name = "spain-idee-csw"
+url = "https://www.idee.es/csw-inspire-idee"
+type = "ogc_records"
+language = "es"
+enabled = false
+ogc_endpoint = "https://www.idee.es/csw-inspire-idee/srv/spa/csw"
+description = "Spain IDEE national discovery catalogue via CSW (~43,880 records)"
+
+# STAC APIs (Collections are indexed as dataset metadata; Items are not fetched)
+[[portals]]
+name = "swisstopo-stac"
+url = "https://data.geo.admin.ch/api/stac/v1/"
+type = "stac"
+language = "en"
+enabled = false
+description = "Swiss federal geodata STAC API"
+
+[[portals]]
+name = "digital-earth-australia-sandbox-stac"
+url = "https://explorer.sandbox.dea.ga.gov.au/stac/"
+type = "stac"
+language = "en"
+enabled = false
+description = "Digital Earth Australia sandbox STAC API"
+
+[[portals]]
+name = "dlr-eoc-stac"
+url = "https://geoservice.dlr.de/eoc/ogc/stac/v1/"
+type = "stac"
+language = "en"
+enabled = false
+description = "German Aerospace Center Earth Observation Center STAC API"
+
+[[portals]]
+name = "inpe-bdc-stac"
+url = "https://data.inpe.br/bdc/stac/v1/"
+type = "stac"
+language = "en"
+enabled = false
+description = "Brazilian National Institute for Space Research data cube STAC API"
+
+[[portals]]
+name = "paituli-stac"
+url = "https://paituli.csc.fi/geoserver/ogc/stac/v1/"
+type = "stac"
+language = "en"
+enabled = false
+description = "CSC Finland Paituli geodata STAC API"
+
+[[portals]]
+name = "thuenen-stac"
+url = "https://eodata.thuenen.de/stac/api/v1/"
+type = "stac"
+language = "en"
+enabled = false
+description = "Thünen Institute Earth observation STAC API"
+
+[[portals]]
+name = "usgs-landsat-stac"
+url = "https://landsatlook.usgs.gov/stac-server/"
+type = "stac"
+language = "en"
+enabled = false
+description = "USGS LandsatLook STAC API"
+
+[[portals]]
+name = "worldpop-stac"
+url = "https://api.stac.worldpop.org/"
+type = "stac"
+language = "en"
+enabled = false
+description = "WorldPop population geodata STAC API"

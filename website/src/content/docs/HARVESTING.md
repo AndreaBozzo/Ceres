@@ -19,10 +19,27 @@ Today the shipping portal clients cover:
 - OpenDataSoft catalogs through the Explore API v2.1 (via `--type opendatasoft`)
 - ArcGIS Hub catalogs through the Hub Search API (via `--type arcgis`)
 - OGC CSW 2.0.2 catalogues (via `--type ogc_records`)
+- STAC APIs at Collection granularity (via `--type stac`)
 
 OGC catalogues are capability-driven: Ceres reads `GetCapabilities`, follows
 the advertised record bindings, and streams bounded result windows. Configure
 `ogc_endpoint` when the CSW service differs from the logical portal URL.
+
+STAC harvesting is link-driven: Ceres reads the API landing page, verifies
+STAC conformance, follows its `rel=data` Collections link, and follows
+`rel=next` page links. Each Collection becomes one `series` record with its
+complete JSON preserved. Item links are never followed, preventing accidental
+scene-level catalog expansion.
+
+The live protocol smokes are opt-in and metadata-only; normal tests remain
+offline and deterministic:
+
+```bash
+cargo test -p ceres-client ogc_records::tests::emodnet_csw_smoke -- --ignored --exact
+cargo test -p ceres-client ogc_records::tests::copernicus_marine_csw_smoke -- --ignored --exact
+cargo test -p ceres-client stac::tests::copernicus_stac_smoke -- --ignored --exact
+cargo test -p ceres-client stac::tests::canada_datacube_stac_smoke -- --ignored --exact
+```
 
 See [Supported portals](/portals/) for per-portal configuration, examples, and
 current coverage numbers.

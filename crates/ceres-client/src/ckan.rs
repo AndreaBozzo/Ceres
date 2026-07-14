@@ -245,8 +245,11 @@ impl CkanClient {
     /// Shared constructor: builds the HTTP client and assembles the struct.
     fn build(base_url: Url, action_base: Url, api_key: Option<String>) -> Result<Self, AppError> {
         let client = Client::builder()
-            // TODO(config): Make User-Agent configurable or use version from Cargo.toml
-            .user_agent("Ceres/0.1 (semantic-search-bot)")
+            .user_agent(concat!(
+                "Ceres/",
+                env!("CARGO_PKG_VERSION"),
+                " (+https://github.com/AndreaBozzo/Ceres)"
+            ))
             // Client-level timeout is the hard ceiling; each request sets its own
             // (adaptive) timeout via `.timeout()`, which overrides this per-request.
             .timeout(Self::MAX_PAGE_TIMEOUT)

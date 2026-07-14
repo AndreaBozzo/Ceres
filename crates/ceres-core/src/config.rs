@@ -396,6 +396,8 @@ pub enum PortalType {
     /// OGC catalogue records exposed through CSW 2.0.2.
     #[serde(rename = "ogc_records")]
     OgcRecords,
+    /// SpatioTemporal Asset Catalog API, harvested at Collection granularity.
+    Stac,
 }
 
 impl fmt::Display for PortalType {
@@ -407,6 +409,7 @@ impl fmt::Display for PortalType {
             Self::OpenDataSoft => write!(f, "opendatasoft"),
             Self::ArcGis => write!(f, "arcgis"),
             Self::OgcRecords => write!(f, "ogc_records"),
+            Self::Stac => write!(f, "stac"),
         }
     }
 }
@@ -422,8 +425,9 @@ impl FromStr for PortalType {
             "opendatasoft" => Ok(Self::OpenDataSoft),
             "arcgis" => Ok(Self::ArcGis),
             "ogc_records" | "csw" => Ok(Self::OgcRecords),
+            "stac" => Ok(Self::Stac),
             _ => Err(AppError::ConfigError(format!(
-                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat, opendatasoft, arcgis, ogc_records",
+                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat, opendatasoft, arcgis, ogc_records, stac",
                 s
             ))),
         }
@@ -1195,6 +1199,23 @@ type = "arcgis"
 
         let err = "arcgishub".parse::<PortalType>().unwrap_err();
         assert!(err.to_string().contains("arcgis"));
+    }
+
+    #[test]
+    fn test_portal_type_stac_parse_display_deserialize() {
+        assert_eq!("stac".parse::<PortalType>().unwrap(), PortalType::Stac);
+        assert_eq!("STAC".parse::<PortalType>().unwrap(), PortalType::Stac);
+        assert_eq!(PortalType::Stac.to_string(), "stac");
+
+        let toml = r#"
+[[portals]]
+name = "copernicus-stac"
+url = "https://stac.dataspace.copernicus.eu/v1/"
+type = "stac"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.portals[0].portal_type, PortalType::Stac);
+        assert!(config.portals[0].validate().is_ok());
     }
 
     #[test]
