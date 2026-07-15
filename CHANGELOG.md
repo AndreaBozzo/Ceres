@@ -5,11 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-07-15
+
+
+### Added
+
+- **server**: Enable portal-aware harvest jobs
+- **dcat**: Support static Project Open Data catalogs
+- Add Socrata Discovery API client support
+- **opendatasoft**: Add portal client for OpenDataSoft catalogs
+- Add support for ArcGIS Hub portal
+- Expand curated portal coverage
+- Add CatalogRecordKind enum and integrate into dataset models
+- Add STAC collection harvesting and finish CSW
+- Finish 0.6.0 coverage validation and smoke checks (#164, #169)
+- Add July 2026 coverage-amplification portal tranche
+
+
+### Changed
+
+- **dcat**: Make profile dispatch and configuration explicit
+
+
+### Documentation
+
+- Rehaul public-facing surfaces (README, website, agent docs)
+- Add root-level community health files for GitHub
+
+
+### Fixed
+
+- **dcat**: Retry udata pages on transient non-JSON responses
 ## [0.5.0] - 2026-06-26
 
 
 ### Added
 
+- **parquet**: Add versioned snapshot manifest and integrity metadata
 - **parquet**: Add versioned snapshot manifest and integrity metadata
 - **index**: Publish coverage and quality reports with each snapshot
 - **index**: Explicit duplicate/alias semantics and snapshot changelogs (#155, #154)
@@ -21,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **deps**: Bump js-yaml from 4.1.1 to 4.2.0 in /website
 - **deps**: Bump vite, @astrojs/starlight and astro in /website
 - **deps**: Bump esbuild, @astrojs/starlight and astro in /website
+
+
+### Documentation
+
+- Clean v0.5.0 changelog
 
 
 ### Miscellaneous
