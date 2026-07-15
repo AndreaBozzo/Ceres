@@ -2138,7 +2138,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires network access to data.europa.eu"]
     async fn test_sparql_smoke_europa() {
-        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        // Override the portal with CERES_SPARQL_SMOKE_URL (large by default;
+        // point it at a smaller national endpoint for routine smoke runs).
+        let url = std::env::var("CERES_SPARQL_SMOKE_URL")
+            .unwrap_or_else(|_| "https://data.europa.eu".to_string());
+        let client = SparqlDcatClient::new(&url, "en", None).unwrap();
         let count = client.dataset_count().await.unwrap();
         assert!(count > 100, "Expected >100 datasets, got {}", count);
 

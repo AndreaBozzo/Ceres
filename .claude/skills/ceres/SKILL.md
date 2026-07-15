@@ -8,7 +8,7 @@ description: Use when working with Ceres — a Rust harvest-first toolkit and pu
 Ceres is centered on harvesting and synchronizing open data metadata. Embeddings, semantic search, exports, and API access are downstream capabilities layered on top of the harvested catalog.
 
 **Repository:** https://github.com/AndreaBozzo/Ceres
-**License:** Apache-2.0 | **Rust edition:** 2024 | **MSRV:** 1.88+
+**License:** Apache-2.0 | **Rust edition:** 2024 | **MSRV:** 1.95+
 
 ## Pipeline
 
@@ -168,6 +168,6 @@ ceres stats
 - Stale dataset detection: datasets removed from portals are soft-marked (`is_stale`) during full syncs
 - Supports Ollama, Gemini, and OpenAI embeddings
 - Parquet export publishes a portable snapshot: `all.parquet` (canonical), per-portal subsets, `identity.parquet`, a versioned snapshot manifest (`metadata.json` with `snapshot_id`, provenance, alias-aware duplicate metadata, and SHA-256 checksums), coverage/quality reports (`reports.json`, `report.md`), and snapshot changelogs (`changelog.json`, `changelog.md` when `--previous` is supplied)
-- v0.6.0 milestone focus: portal coverage expansion — the earlier client families plus OGC CSW and collection-level STAC have shipped; validation and metadata-only harvesting at scale remain
-- v0.7.0 milestone focus: resource-level metadata depth tracked in issue #68
+- v0.6.0 coverage foundations shipped: CKAN, DCAT (`udata_rest`/`sparql`/`static_json`), Socrata, OpenDataSoft, ArcGIS Hub, OGC CSW, and collection-level STAC, plus one opt-in live smoke test per profile (`cargo test -p ceres-client -- --ignored smoke`, `CERES_*_SMOKE_URL` overrides) and a reproducible metadata-only coverage validation set documented in `website/src/content/docs/PORTALS.md`
+- v0.7.0 milestone focus (next): resource-level metadata depth tracked in issue #68
 - HuggingFace dataset: `AndreaBozzo/ceres-open-data-index`

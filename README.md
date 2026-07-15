@@ -28,7 +28,7 @@ Everything else is layered on top, and optional: local embeddings, semantic sear
 
 ## At a Glance
 
-- **120+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, data.slovensko.sk, govdata.de), cities (Milano, NYC, Zurich), and agencies
+- **300+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, data.slovensko.sk, govdata.de), cities (Milano, NYC, Zurich), and agencies
 - **2M+ datasets** in the live catalog and published snapshots
 - **9 harvest paths** shipped, including OGC CSW 2.0.2 and collection-level STAC alongside the major open-data portal families
 - **Metadata-only by default** — no embedding provider, API key, or GPU required to build and maintain a catalog
@@ -366,9 +366,9 @@ Ceres ships with agent support in-repo:
 
 ## Roadmap
 
-- **Now (v0.5.0)** — trustable published index: versioned snapshot manifests, integrity checksums, coverage/quality reports, alias-aware duplicate semantics, snapshot changelogs; Socrata Discovery and static `data.json` harvest paths
-- **Next (v0.6.0)** — validate OGC CSW and collection-level STAC coverage at scale, finish the reproducible metadata-only portal set, and exercise job-based harvesting for every client
-- **Later (v0.7.0)** — resource-level metadata depth ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
+- **Now (v0.6.0)** — coverage foundations: OpenDataSoft Explore, ArcGIS Hub, Project Open Data `data.json`, OGC CSW 2.0.2, and collection-level STAC harvest paths shipped; opt-in per-profile live smoke checks and a reproducible metadata-only [coverage validation set](https://learnceres.pages.dev/portals/#coverage-validation-set-v060)
+- **Next (v0.7.0)** — resource-level metadata depth: first-class distribution/resource metadata in snapshots and APIs ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
+- **Shipped (v0.5.0)** — trustable published index: versioned snapshot manifests, integrity checksums, coverage/quality reports, alias-aware duplicate semantics, and snapshot changelogs
 
 ## Related Projects
 
