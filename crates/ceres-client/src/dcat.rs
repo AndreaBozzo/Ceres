@@ -57,7 +57,11 @@ const PAGE_RATE_LIMIT_RETRIES: u32 = 3;
 /// connection. Large udata catalogs (e.g. data.gouv.fr) emit these
 /// intermittently on deep pagination; a short same-page retry clears them
 /// instead of abandoning the rest of the catalog. Scaled by attempt number.
+/// Shrunk under `cfg(test)` so the retry-recovery test stays fast.
+#[cfg(not(test))]
 const PAGE_TRANSIENT_COOLDOWN: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const PAGE_TRANSIENT_COOLDOWN: Duration = Duration::from_millis(10);
 
 /// Maximum number of same-page retries for a transient non-JSON/network error.
 const PAGE_TRANSIENT_RETRIES: u32 = 4;
