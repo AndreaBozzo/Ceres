@@ -1648,3 +1648,127 @@ type = "stac"
 language = "en"
 enabled = false
 description = "WorldPop population geodata STAC API"
+
+# =============================================================================
+# July 2026 coverage-amplification tranche
+#
+# New sources discovered and metadata-only harvested on 2026-07-15 while
+# preparing the 0.6.0 snapshot. Disabled by default pending a second stability
+# sync before promotion to the maintained set. Counts are approximate.
+# =============================================================================
+
+# ---- CKAN ----
+[[portals]]
+name = "queensland"
+url = "https://www.data.qld.gov.au"
+type = "ckan"
+language = "en"
+enabled = false
+description = "Queensland Government open data (CKAN, ~188,800 datasets, very large)"
+
+[[portals]]
+name = "mexico"
+url = "https://datos.gob.mx"
+type = "ckan"
+language = "es"
+enabled = false
+description = "Mexican Government open data (CKAN, ~1,710 datasets)"
+
+[[portals]]
+name = "quebec"
+url = "https://www.donneesquebec.ca/recherche"
+type = "ckan"
+language = "fr"
+enabled = false
+description = "Données Québec open data (CKAN, ~1,610 datasets)"
+
+[[portals]]
+name = "israel"
+url = "https://data.gov.il"
+type = "ckan"
+language = "he"
+enabled = false
+description = "Israeli Government open data (CKAN, ~1,200 datasets)"
+
+[[portals]]
+name = "dominican-republic"
+url = "https://datos.gob.do"
+type = "ckan"
+language = "es"
+enabled = false
+description = "Dominican Republic open data (CKAN, ~1,060 datasets)"
+
+[[portals]]
+name = "sarawak"
+url = "https://catalog.sarawak.gov.my"
+type = "ckan"
+language = "en"
+enabled = false
+description = "Sarawak (Malaysia) open data (CKAN, ~215 datasets)"
+
+[[portals]]
+name = "nhs-scotland"
+url = "https://www.opendata.nhs.scot"
+type = "ckan"
+language = "en"
+enabled = false
+description = "Public Health Scotland open data (CKAN, ~105 datasets)"
+
+# ---- Socrata ----
+[[portals]]
+name = "us-commerce"
+url = "https://performance.commerce.gov"
+type = "socrata"
+language = "en"
+enabled = false
+description = "US Department of Commerce open data (Socrata, ~400 dataset assets)"
+
+# ---- OpenDataSoft ----
+[[portals]]
+name = "hauts-de-seine"
+url = "https://opendata.hauts-de-seine.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "Département des Hauts-de-Seine open data (OpenDataSoft, ~270 datasets)"
+
+# ---- STAC (collection-level) ----
+[[portals]]
+name = "microsoft-planetary-computer-stac"
+url = "https://planetarycomputer.microsoft.com/api/stac/v1"
+type = "stac"
+language = "en"
+enabled = false
+description = "Microsoft Planetary Computer STAC API (~135 collections)"
+
+[[portals]]
+name = "esa-emc-stac"
+url = "https://emc.spacebel.be"
+type = "stac"
+language = "en"
+enabled = false
+description = "ESA EO Missions Collections (EMC) STAC API (~960 collections)"
+
+[[portals]]
+name = "nasa-veda-stac"
+url = "https://openveda.cloud/api/stac"
+type = "stac"
+language = "en"
+enabled = false
+description = "NASA VEDA STAC API (~245 collections)"
+
+[[portals]]
+name = "eurac-stac"
+url = "https://stac.eurac.edu"
+type = "stac"
+language = "en"
+enabled = false
+description = "Eurac Research Earth observation STAC API (~130 collections)"
+
+[[portals]]
+name = "aws-earth-search-stac"
+url = "https://earth-search.aws.element84.com/v1"
+type = "stac"
+language = "en"
+enabled = false
+description = "Element 84 Earth Search (AWS Open Data) STAC API (~9 collections)"
