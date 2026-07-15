@@ -1239,6 +1239,28 @@ mod tests {
             "something".to_string()
         )));
     }
+
+    // ---- Integration smoke test (requires network) -------------------------
+
+    #[tokio::test]
+    #[ignore = "requires network access to a public CKAN portal"]
+    async fn ckan_smoke_catalog() {
+        // Opt-in smoke test:
+        //   cargo test -p ceres-client ckan::tests::ckan_smoke_catalog -- --ignored --exact
+        // Override the portal with CERES_CKAN_SMOKE_URL (defaults to a small,
+        // reliable municipal catalog).
+        let url = std::env::var("CERES_CKAN_SMOKE_URL")
+            .unwrap_or_else(|_| "https://ckan.a2gov.org".to_string());
+        let client = CkanClient::new(&url).unwrap();
+        let count = client.dataset_count().await.unwrap();
+        assert!(count > 0, "{url} returned no datasets");
+        let datasets = client.search_all_datasets().await.unwrap();
+        assert!(!datasets.is_empty(), "{url} returned no usable datasets");
+        let first = &datasets[0];
+        assert!(!first.id.is_empty(), "first dataset id is empty");
+        assert!(!first.name.is_empty(), "first dataset name is empty");
+        eprintln!("{url}: {count} datasets; first={}", first.name);
+    }
 }
 
 // =============================================================================

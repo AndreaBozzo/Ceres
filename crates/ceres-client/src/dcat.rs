@@ -968,7 +968,10 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires network access to data.public.lu"]
     async fn test_dcat_smoke_luxembourg() {
-        let client = DcatClient::new("https://data.public.lu", "fr").unwrap();
+        // Override the portal with CERES_DCAT_SMOKE_URL.
+        let url = std::env::var("CERES_DCAT_SMOKE_URL")
+            .unwrap_or_else(|_| "https://data.public.lu".to_string());
+        let client = DcatClient::new(&url, "fr").unwrap();
         let datasets = client.search_all_datasets().await.unwrap();
         assert!(
             datasets.len() > 100,

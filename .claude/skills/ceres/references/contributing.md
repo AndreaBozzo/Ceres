@@ -2,7 +2,7 @@
 
 ## Development Setup
 
-**Requirements:** Rust 1.88+, PostgreSQL 16+ with pgvector, Docker (recommended).
+**Requirements:** Rust 1.95+, PostgreSQL 16+ with pgvector, Docker (recommended).
 
 ```bash
 # Clone
@@ -91,8 +91,8 @@ Only stable versions: `vX.Y.Z`.
 
 ## Areas for Contribution
 
-- **v0.6.0 portal coverage:** DCAT profile cleanup (#165), Project Open Data `data.json` (#156), Socrata (#166), OpenDataSoft (#167), ArcGIS Hub (#168), opt-in smoke checks (#169)
-- **v0.7.0 resource metadata:** enrich resource/distribution metadata and schema exposure (#68)
+- **v0.6.0 portal coverage (shipped):** DCAT profile cleanup (#165), Project Open Data `data.json` (#156), Socrata (#166), OpenDataSoft (#167), ArcGIS Hub (#168), OGC CSW (#177), collection-level STAC (#178), coverage validation set (#164), opt-in smoke checks (#169)
+- **v0.7.0 resource metadata (next):** enrich resource/distribution metadata and schema exposure (#68)
 - **Backlog:** REST Parquet export endpoint (#98), multi-tenancy (#91), configurable delta detection (#51)
 - **Embedding providers:** more local or self-hosted models beyond Ollama
 - **HNSW tuning:** Optimize pgvector index parameters for production scale

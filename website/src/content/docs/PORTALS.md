@@ -5,7 +5,7 @@ description: The portal APIs Ceres can harvest today, how to configure each one,
 
 # Supported portals
 
-Ceres currently harvests **120+ portals** into a single synchronized catalog of
+Ceres currently harvests **300+ portals** into a single synchronized catalog of
 **2M+ datasets** — national portals, EU aggregators, US federal agencies, and
 city open data sites. Nine harvest paths are shipped today, and every one of
 them shares the same sync machinery: incremental sync, content-hash delta
@@ -148,6 +148,48 @@ for a larger, curated configuration set.
 - Never follows Collection `items` links; item/scene-level indexing is intentionally out of scope
 - Supports STAC 1.0 and 1.1 APIs; public reads require no credentials unless the catalog itself is private
 
+## Coverage validation set (v0.6.0)
+
+The v0.6.0 milestone is proven by a small, reproducible set of portals — one per
+harvest profile — rather than by code paths alone. Every entry below is present
+in [`examples/portals.toml`](https://github.com/AndreaBozzo/Ceres/blob/master/examples/portals.toml)
+(shipped `enabled = false`) so you can reproduce a metadata-only validation
+without guessing the type/profile settings:
+
+```bash
+# Preview (no DB writes), then a real metadata-only harvest
+ceres harvest --config examples/portals.toml --portal ann-arbor --metadata-only --dry-run
+ceres harvest --config examples/portals.toml --portal ann-arbor --metadata-only
+```
+
+| Profile | Selector | `portals.toml` name | Approx. datasets | Language | Credentials | Use as |
+|---|---|---|---|---|---|---|
+| CKAN | `--type ckan` | `ann-arbor` | ~95 | en | none | CI smoke |
+| DCAT udata REST | `--type dcat` | `luxembourg` | ~2,490 | fr | none | Manual smoke |
+| DCAT SPARQL | `--type dcat --profile sparql` | `slovakia` | ~11,680 | sk | none | Manual smoke |
+| Project Open Data | `--type dcat --profile static_json` | `us-national-archives` | ~84 | en | none | CI smoke |
+| Socrata | `--type socrata` | `new-brunswick` | ~310 | en | optional `SOCRATA_APP_TOKEN` | Manual smoke |
+| OpenDataSoft | `--type opendatasoft` | `paris` | ~490 | fr | optional `ODS_API_KEY` | Manual smoke |
+| ArcGIS Hub | `--type arcgis` | `washington-dc` | ~1,500 | en | none | Manual smoke |
+| OGC CSW | `--type ogc_records` | `copernicus-marine-csw` | ~310 | en | none | Manual smoke |
+| STAC | `--type stac` | `canada-datacube-stac` | ~50 collections | en | none | CI smoke |
+| SPARQL (scale) | `--type dcat --profile sparql` | `eu-open-data` | ~2M | en | none | Scale only |
+
+Notes:
+
+- **Use as** classifies each portal for validation: *CI smoke* portals are small,
+  fast, and reliable enough for automated checks; *Manual smoke* portals are
+  moderate and best run by hand; *Scale only* portals (e.g. `data.europa.eu`)
+  prove throughput but should never be the sole proof that a client works.
+- Counts are approximate and drift as portals publish; treat them as an order of
+  magnitude, not an assertion.
+- No entry requires embedding credentials. `SOCRATA_APP_TOKEN` and `ODS_API_KEY`
+  only raise public rate limits and can be omitted.
+- Each profile has a matching opt-in live smoke test (most with a
+  `CERES_*_SMOKE_URL` override; STAC uses `CERES_STAC_*_URL` and the OGC CSW
+  smokes hard-code their endpoints), documented in
+  [Harvesting → Opt-in live smoke tests](/harvesting/#opt-in-live-smoke-tests).
+
 ## The published index
 
 The catalog Ceres maintains is published as the
@@ -157,9 +199,11 @@ checksums, coverage/quality reports, and snapshot-to-snapshot changelogs.
 
 ## What's next
 
-Coverage keeps expanding. The [v0.6.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones)
-now focuses on validating the OGC CSW and collection-level STAC clients across
-more portals and publishing a reproducible metadata-only coverage set.
+Coverage keeps expanding. The v0.6.0 milestone shipped the OGC CSW and
+collection-level STAC clients and the coverage validation set above; the
+[v0.7.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones) turns to
+resource-level metadata depth — making distribution/resource metadata
+first-class in published snapshots and the API.
 
 Want a portal that none of the current clients cover? The client layer is
 trait-based and designed for extension — see

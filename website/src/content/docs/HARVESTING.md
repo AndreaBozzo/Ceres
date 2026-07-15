@@ -31,18 +31,75 @@ STAC conformance, follows its `rel=data` Collections link, and follows
 complete JSON preserved. Item links are never followed, preventing accidental
 scene-level catalog expansion.
 
-The live protocol smokes are opt-in and metadata-only; normal tests remain
-offline and deterministic:
-
-```bash
-cargo test -p ceres-client ogc_records::tests::emodnet_csw_smoke -- --ignored --exact
-cargo test -p ceres-client ogc_records::tests::copernicus_marine_csw_smoke -- --ignored --exact
-cargo test -p ceres-client stac::tests::copernicus_stac_smoke -- --ignored --exact
-cargo test -p ceres-client stac::tests::canada_datacube_stac_smoke -- --ignored --exact
-```
-
 See [Supported portals](/portals/) for per-portal configuration, examples, and
 current coverage numbers.
+
+## Opt-in live smoke tests
+
+Every shipping client has a deterministic, offline unit/parser suite that runs
+in normal CI, plus at least one live smoke test that talks to a real portal.
+The live smokes are marked `#[ignore]`, so ordinary `cargo test` and CI never
+run them and never depend on a network. They are metadata-only and never
+require embedding credentials.
+
+Run every family's smoke at once (this matches every `#[ignore]` test with
+`smoke` in its name, including the extra checks noted below the table):
+
+```bash
+cargo test -p ceres-client -- --ignored smoke
+```
+
+Or run one family. Most tests read a `CERES_*_SMOKE_URL` override so you can
+point them at any portal of that family; the exceptions are noted in the table:
+
+| Profile | Smoke test | Portal override | Default portal |
+|---|---|---|---|
+| CKAN | `ckan::tests::ckan_smoke_catalog` | `CERES_CKAN_SMOKE_URL` | `ckan.a2gov.org` |
+| DCAT udata REST | `dcat::tests::test_dcat_smoke_luxembourg` | `CERES_DCAT_SMOKE_URL` | `data.public.lu` |
+| DCAT SPARQL | `sparql::tests::test_sparql_smoke_europa` | `CERES_SPARQL_SMOKE_URL` | `data.europa.eu` |
+| Project Open Data | `datajson::tests::data_json_smoke_catalog` | `CERES_DATAJSON_SMOKE_URL` | `www.data.va.gov/data.json` |
+| Socrata | `socrata::tests::socrata_smoke_catalog` | `CERES_SOCRATA_SMOKE_URL` | `data.cityofnewyork.us` |
+| OpenDataSoft | `opendatasoft::tests::opendatasoft_smoke_catalog` | `CERES_ODS_SMOKE_URL` | `opendata.paris.fr` |
+| ArcGIS Hub | `arcgis::tests::arcgis_smoke_catalog` | `CERES_ARCGIS_SMOKE_URL` | `opendata.dc.gov` |
+| OGC CSW | `ogc_records::tests::emodnet_csw_smoke` | — (endpoint hard-coded) | EMODnet GeoNetwork |
+| STAC | `stac::tests::copernicus_stac_smoke` | `CERES_STAC_COPERNICUS_URL` | `stac.dataspace.copernicus.eu` |
+
+Some families ship a second `#[ignore]` smoke that the run-all command also
+picks up: ArcGIS adds `arcgis_rejects_global_scope_smoke` (a negative-path
+check that a known empty-scope Hub is rejected), OGC CSW adds
+`copernicus_marine_csw_smoke` (endpoint hard-coded), and STAC adds
+`canada_datacube_stac_smoke` (`CERES_STAC_CANADA_URL` override).
+
+```bash
+# Single family, exact test name
+cargo test -p ceres-client ckan::tests::ckan_smoke_catalog -- --ignored --exact
+
+# Same test against a different CKAN portal
+CERES_CKAN_SMOKE_URL=https://data.stadt-zuerich.ch \
+  cargo test -p ceres-client ckan::tests::ckan_smoke_catalog -- --ignored --exact
+```
+
+Skip conditions and rules:
+
+- The default `data.europa.eu` SPARQL smoke is a **scale** endpoint (millions of
+  records). For routine validation point `CERES_SPARQL_SMOKE_URL` at a smaller
+  national catalogue (for example `https://data.slovensko.sk`).
+- A smoke test failure means today's portal contract changed or the portal is
+  down. It never fails normal CI because the tests are ignored by default; treat
+  a red smoke as a signal to investigate the portal, not a broken build.
+- Optional API tokens (`SOCRATA_APP_TOKEN`, `ODS_API_KEY`) only raise rate
+  limits — the smokes read public data without them.
+
+Beyond the client smokes, a full metadata-only harvest of any configured portal
+is the strongest live check:
+
+```bash
+# Dry run first: exercises the client without writing to the database
+ceres harvest --config examples/portals.toml --portal ann-arbor --metadata-only --dry-run
+
+# Then a real metadata-only harvest
+ceres harvest --config examples/portals.toml --portal ann-arbor --metadata-only
+```
 
 ## Socrata Discovery API
 
