@@ -185,8 +185,10 @@ Notes:
   magnitude, not an assertion.
 - No entry requires embedding credentials. `SOCRATA_APP_TOKEN` and `ODS_API_KEY`
   only raise public rate limits and can be omitted.
-- The matching per-profile live smoke tests (with `CERES_*_SMOKE_URL` overrides)
-  are documented in [Harvesting → Opt-in live smoke tests](/harvesting/#opt-in-live-smoke-tests).
+- Each profile has a matching opt-in live smoke test (most with a
+  `CERES_*_SMOKE_URL` override; STAC uses `CERES_STAC_*_URL` and the OGC CSW
+  smokes hard-code their endpoints), documented in
+  [Harvesting → Opt-in live smoke tests](/harvesting/#opt-in-live-smoke-tests).
 
 ## The published index
 

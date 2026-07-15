@@ -1245,7 +1245,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires network access to a public CKAN portal"]
     async fn ckan_smoke_catalog() {
-        // Opt-in smoke test: cargo test -p ceres-client ckan_smoke -- --ignored
+        // Opt-in smoke test:
+        //   cargo test -p ceres-client ckan::tests::ckan_smoke_catalog -- --ignored --exact
         // Override the portal with CERES_CKAN_SMOKE_URL (defaults to a small,
         // reliable municipal catalog).
         let url = std::env::var("CERES_CKAN_SMOKE_URL")

@@ -37,19 +37,20 @@ current coverage numbers.
 ## Opt-in live smoke tests
 
 Every shipping client has a deterministic, offline unit/parser suite that runs
-in normal CI, plus one live smoke test that talks to a real portal. The live
-smokes are marked `#[ignore]`, so ordinary `cargo test` and CI never run them
-and never depend on a network. They are metadata-only and never require
-embedding credentials.
+in normal CI, plus at least one live smoke test that talks to a real portal.
+The live smokes are marked `#[ignore]`, so ordinary `cargo test` and CI never
+run them and never depend on a network. They are metadata-only and never
+require embedding credentials.
 
-Run every family's smoke at once:
+Run every family's smoke at once (this matches every `#[ignore]` test with
+`smoke` in its name, including the extra checks noted below the table):
 
 ```bash
 cargo test -p ceres-client -- --ignored smoke
 ```
 
-Or run one family (each test reads a `CERES_*_SMOKE_URL` override so you can
-point it at any portal of that family):
+Or run one family. Most tests read a `CERES_*_SMOKE_URL` override so you can
+point them at any portal of that family; the exceptions are noted in the table:
 
 | Profile | Smoke test | Portal override | Default portal |
 |---|---|---|---|
@@ -60,8 +61,14 @@ point it at any portal of that family):
 | Socrata | `socrata::tests::socrata_smoke_catalog` | `CERES_SOCRATA_SMOKE_URL` | `data.cityofnewyork.us` |
 | OpenDataSoft | `opendatasoft::tests::opendatasoft_smoke_catalog` | `CERES_ODS_SMOKE_URL` | `opendata.paris.fr` |
 | ArcGIS Hub | `arcgis::tests::arcgis_smoke_catalog` | `CERES_ARCGIS_SMOKE_URL` | `opendata.dc.gov` |
-| OGC CSW | `ogc_records::tests::emodnet_csw_smoke` | — (endpoint is hard-coded) | EMODnet GeoNetwork |
+| OGC CSW | `ogc_records::tests::emodnet_csw_smoke` | — (endpoint hard-coded) | EMODnet GeoNetwork |
 | STAC | `stac::tests::copernicus_stac_smoke` | `CERES_STAC_COPERNICUS_URL` | `stac.dataspace.copernicus.eu` |
+
+Some families ship a second `#[ignore]` smoke that the run-all command also
+picks up: ArcGIS adds `arcgis_rejects_global_scope_smoke` (a negative-path
+check that a known empty-scope Hub is rejected), OGC CSW adds
+`copernicus_marine_csw_smoke` (endpoint hard-coded), and STAC adds
+`canada_datacube_stac_smoke` (`CERES_STAC_CANADA_URL` override).
 
 ```bash
 # Single family, exact test name
