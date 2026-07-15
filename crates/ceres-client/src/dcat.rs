@@ -52,6 +52,16 @@ const PAGE_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(60);
 /// Maximum number of page-level retries when a catalog page is rate-limited.
 const PAGE_RATE_LIMIT_RETRIES: u32 = 3;
 
+/// Cooldown before retrying a page that returned a *transient* failure — a
+/// non-JSON body (an HTML error page served with HTTP 200) or a dropped
+/// connection. Large udata catalogs (e.g. data.gouv.fr) emit these
+/// intermittently on deep pagination; a short same-page retry clears them
+/// instead of abandoning the rest of the catalog. Scaled by attempt number.
+const PAGE_TRANSIENT_COOLDOWN: Duration = Duration::from_secs(2);
+
+/// Maximum number of same-page retries for a transient non-JSON/network error.
+const PAGE_TRANSIENT_RETRIES: u32 = 4;
+
 /// Portal-specific dataset data parsed from a DCAT-AP JSON-LD `@graph` node.
 #[derive(Debug, Clone)]
 pub struct DcatDataset {
@@ -369,29 +379,53 @@ impl DcatClient {
         }
     }
 
-    /// Like [`fetch_graph`](Self::fetch_graph) but, on a persistent rate-limit
-    /// (`429`) after the low-level retries are exhausted, waits an escalating
-    /// cooldown and retries the *same* page up to [`PAGE_RATE_LIMIT_RETRIES`]
-    /// times. This keeps large udata catalogs (e.g. dados.gov.pt) from bailing
-    /// out with only partial results the moment the portal throttles us.
+    /// Like [`fetch_graph`](Self::fetch_graph) but retries the *same* page on
+    /// two kinds of recoverable failure instead of abandoning the harvest with
+    /// only partial results:
+    ///
+    /// - a persistent rate-limit (`429`) after the low-level retries are
+    ///   exhausted — waits an escalating cooldown, up to
+    ///   [`PAGE_RATE_LIMIT_RETRIES`] times (e.g. dados.gov.pt throttling);
+    /// - a transient non-JSON body or dropped connection — udata portals
+    ///   (e.g. data.gouv.fr) intermittently serve an HTML error page with
+    ///   HTTP 200 on deep pagination; retried up to [`PAGE_TRANSIENT_RETRIES`]
+    ///   times with a short escalating cooldown.
     async fn fetch_graph_with_cooldown(&self, url: &Url) -> Result<Vec<Value>, AppError> {
-        // Up to PAGE_RATE_LIMIT_RETRIES cooldown waits on a 429, then one final attempt.
-        for attempt in 1..=PAGE_RATE_LIMIT_RETRIES {
+        let mut rate_limit_retries = 0u32;
+        let mut transient_retries = 0u32;
+        loop {
             match self.fetch_graph(url).await {
-                Err(AppError::RateLimitExceeded) => {
-                    let cooldown = PAGE_RATE_LIMIT_COOLDOWN * attempt;
+                Err(AppError::RateLimitExceeded)
+                    if rate_limit_retries < PAGE_RATE_LIMIT_RETRIES =>
+                {
+                    rate_limit_retries += 1;
+                    let cooldown = PAGE_RATE_LIMIT_COOLDOWN * rate_limit_retries;
                     tracing::warn!(
-                        attempt,
+                        attempt = rate_limit_retries,
                         cooldown_secs = cooldown.as_secs(),
                         url = %url,
                         "DCAT page rate-limited; cooling down before retrying same page"
                     );
                     sleep(cooldown).await;
                 }
+                Err(e)
+                    if transient_retries < PAGE_TRANSIENT_RETRIES
+                        && is_transient_page_error(&e) =>
+                {
+                    transient_retries += 1;
+                    let cooldown = PAGE_TRANSIENT_COOLDOWN * transient_retries;
+                    tracing::warn!(
+                        attempt = transient_retries,
+                        cooldown_secs = cooldown.as_secs(),
+                        url = %url,
+                        error = %e,
+                        "DCAT page returned a transient error; retrying same page"
+                    );
+                    sleep(cooldown).await;
+                }
                 other => return other,
             }
         }
-        self.fetch_graph(url).await
     }
 
     /// HTTP GET with exponential backoff retry on transient errors and rate limits.
@@ -530,6 +564,21 @@ pub fn resolve_jsonld_text(value: &Value, language: &str) -> String {
                 .to_string()
         }
         _ => String::new(),
+    }
+}
+
+/// Returns `true` for page-fetch errors worth retrying the *same* catalog page.
+///
+/// The main case is a non-JSON body served with an otherwise-OK response:
+/// udata portals intermittently return an HTML error page on deep pagination,
+/// which fails JSON decoding in [`DcatClient::fetch_graph`]. Connection resets
+/// and timeouts mid-catalog are likewise transient. Rate limits (`429`) are
+/// handled separately by the caller and are deliberately excluded here.
+fn is_transient_page_error(err: &AppError) -> bool {
+    match err {
+        AppError::ClientError(msg) => msg.contains("Portal returned non-JSON response"),
+        AppError::NetworkError(_) | AppError::Timeout(_) => true,
+        _ => false,
     }
 }
 
@@ -961,6 +1010,76 @@ mod tests {
     fn dcat_client_new_invalid_url() {
         let result = DcatClient::new("not-a-url", "en");
         assert!(matches!(result, Err(AppError::InvalidPortalUrl(_))));
+    }
+
+    // ---- Transient page-error retry (#184) ---------------------------------
+
+    #[test]
+    fn transient_page_error_classification() {
+        // Non-JSON body (udata serving an HTML error page on HTTP 200) is retryable.
+        assert!(is_transient_page_error(&AppError::ClientError(
+            "Portal returned non-JSON response: error decoding response body".to_string()
+        )));
+        assert!(is_transient_page_error(&AppError::NetworkError(
+            "connection reset".to_string()
+        )));
+        assert!(is_transient_page_error(&AppError::Timeout(90)));
+        // Rate limits are handled by a separate cooldown path, not here.
+        assert!(!is_transient_page_error(&AppError::RateLimitExceeded));
+        // A structural parse problem is not worth retrying the same page.
+        assert!(!is_transient_page_error(&AppError::ClientError(
+            "DCAT response missing @graph".to_string()
+        )));
+    }
+
+    #[tokio::test]
+    async fn retries_transient_non_json_page_and_recovers() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+
+        // First hit returns an HTML error page with HTTP 200 (non-JSON body);
+        // the retry returns a valid single-page JSON-LD catalog.
+        struct FlakyPage {
+            hits: Arc<AtomicUsize>,
+        }
+        impl Respond for FlakyPage {
+            fn respond(&self, _req: &Request) -> ResponseTemplate {
+                if self.hits.fetch_add(1, Ordering::SeqCst) == 0 {
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/html")
+                        .set_body_string("<html><body>502 Bad Gateway</body></html>")
+                } else {
+                    ResponseTemplate::new(200).set_body_json(json!({
+                        "@graph": [{
+                            "@type": "dcat:Dataset",
+                            "@id": "https://example.org/datasets/1",
+                            "title": "Recovered dataset",
+                            "identifier": "1"
+                        }]
+                    }))
+                }
+            }
+        }
+
+        let server = MockServer::start().await;
+        let hits = Arc::new(AtomicUsize::new(0));
+        Mock::given(method("GET"))
+            .and(path("/api/1/site/catalog.jsonld"))
+            .respond_with(FlakyPage { hits: hits.clone() })
+            .mount(&server)
+            .await;
+
+        let client = DcatClient::new(&server.uri(), "en").unwrap();
+        let datasets = client.search_all_datasets().await.unwrap();
+
+        assert_eq!(datasets.len(), 1, "retry should recover the page's dataset");
+        assert_eq!(datasets[0].title, "Recovered dataset");
+        assert!(
+            hits.load(Ordering::SeqCst) >= 2,
+            "the non-JSON page should have been retried"
+        );
     }
 
     // ---- Integration smoke test (requires network) -------------------------
