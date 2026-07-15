@@ -53,6 +53,12 @@ filter_unconventional = true
 # Process each line of a commit as an individual commit
 split_commits = false
 
+# Normalize PR #170's non-conventional squash title before validation so it is
+# retained in generated release notes.
+commit_preprocessors = [
+    { pattern = "enable portal-aware harvest jobs \\(#170\\)", replace = "feat(server): enable portal-aware harvest jobs (#170)" },
+]
+
 # Regex for parsing commit messages
 commit_parsers = [
     { message = "^feat", group = "Added" },
