@@ -372,6 +372,13 @@ Ceres ships with agent support in-repo:
 
 ## Related Projects
 
+The Ceres Open Data Index is a source of truth for downstream apps. These consume the same published Hugging Face snapshot, so they stay in sync with the catalog without re-harvesting:
+
+- [**databricks-ceres-pipeline**](https://github.com/AndreaBozzo/databricks-ceres-pipeline) — a Medallion Architecture (Bronze → Silver → Gold) analytics pipeline on Databricks. Ingests the snapshot into Delta Lake and produces analytics tables (ingestion trends, topic frequency, per-portal stats) plus a lightweight Spark-SQL TF-IDF semantic search, packaged as a Databricks Asset Bundle.
+- [**ceres-discovery-agent**](https://github.com/AndreaBozzo/ceres-discovery-agent) — a natural-language discovery agent on Databricks Free Edition. Composes Agent Bricks (Genie text-to-SQL + Knowledge Assistant + Multi-Agent Supervisor) over the index so you can ask *"find open-licensed transport datasets in Italy updated this year"* and get an answer without writing SQL.
+
+Data and docs:
+
 - [AndreaBozzo/ceres-open-data-index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index) — published dataset snapshots on Hugging Face
 - [learnceres.pages.dev](https://learnceres.pages.dev) — documentation website
 
