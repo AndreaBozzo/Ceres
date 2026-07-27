@@ -139,11 +139,15 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             },
         ),
         (
+            // The shared CSW fixture's records carry only link and download
+            // access protocols, which describe how to fetch a resource rather
+            // than what it is, so no format or media type is expected here. The
+            // `protocol` split is unit-tested against all three real-world
+            // shapes in `ceres_core::schema`.
             "ogc_csw",
-            Expect::Gap {
-                issue: "#204",
-                where_it_lives: "`online_resources[]` — already normalized by the client, \
-                                 merely under a key `DatasetSchema` does not read",
+            Expect::Resources {
+                facets: &[Facet::Url],
+                fields: false,
             },
         ),
     ])

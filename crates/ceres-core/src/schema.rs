@@ -80,6 +80,7 @@ impl DatasetSchema {
             "distribution",
             "dcat:distribution",
             "distributions",
+            "online_resources",
         ] {
             if let Some(Value::Array(items)) = metadata.get(key) {
                 resources.extend(items.iter().filter_map(extract_resource));
@@ -153,6 +154,49 @@ fn shorten_format(format: String) -> String {
         .unwrap_or(format)
 }
 
+/// Splits an ISO 19139 `CI_OnlineResource/protocol` into a format and a media
+/// type, returning `(format, media_type)`.
+///
+/// The field is overloaded in practice. Across the harvested index it holds MIME
+/// types (`image/png`, `text/xml`), OGC service identifiers (`OGC:WFS`,
+/// `OGC Web Map Service`), and pure access methods (`WWW:LINK-1.0-http--link`,
+/// `WWW:DOWNLOAD-1.0-http--download`). Only the first two describe the resource;
+/// access methods say how to fetch it, not what it is, so they are dropped rather
+/// than polluting the format distribution reported for the index.
+fn split_protocol(protocol: &str) -> (Option<String>, Option<String>) {
+    let protocol = protocol.trim();
+
+    // MIME type, possibly with parameters (`image/png; mode=24bit`). Guard
+    // against a URL, which also contains a slash.
+    if protocol.contains('/') && !protocol.starts_with("http") {
+        let media_type = protocol
+            .split(';')
+            .next()
+            .unwrap_or(protocol)
+            .trim()
+            .to_string();
+        return (None, Some(media_type));
+    }
+
+    // OGC service identifier, spelled either `OGC:WFS` or `OGC Web Feature Service`.
+    let lowered = protocol.to_ascii_lowercase();
+    for service in ["wmts", "wms", "wfs", "wcs", "csw", "sos"] {
+        let spelled_out = match service {
+            "wms" => "web map service",
+            "wfs" => "web feature service",
+            "wcs" => "web coverage service",
+            "wmts" => "web map tile service",
+            "csw" => "catalogue service",
+            _ => "sensor observation service",
+        };
+        if lowered.contains(service) || lowered.contains(spelled_out) {
+            return (Some(service.to_ascii_uppercase()), None);
+        }
+    }
+
+    (None, None)
+}
+
 /// Normalizes a single resource/distribution node, returning `None` if it is not
 /// a JSON object.
 fn extract_resource(node: &Value) -> Option<DatasetResource> {
@@ -160,9 +204,15 @@ fn extract_resource(node: &Value) -> Option<DatasetResource> {
         return None;
     }
 
+    let (protocol_format, protocol_media_type) = first_str(node, &["protocol"])
+        .map(|protocol| split_protocol(&protocol))
+        .unwrap_or((None, None));
+
     Some(DatasetResource {
         name: first_str(node, &["name", "title", "dct:title"]),
-        format: first_ref(node, &["format", "dct:format"]).map(shorten_format),
+        format: first_ref(node, &["format", "dct:format"])
+            .map(shorten_format)
+            .or(protocol_format),
         media_type: first_ref(
             node,
             &[
@@ -172,7 +222,8 @@ fn extract_resource(node: &Value) -> Option<DatasetResource> {
                 "media_type",
                 "dcat:mediaType",
             ],
-        ),
+        )
+        .or(protocol_media_type),
         url: first_ref(
             node,
             &[
@@ -373,6 +424,70 @@ mod tests {
         });
         let schema = DatasetSchema::from_metadata(&metadata);
         assert_eq!(schema.resources[0].format.as_deref(), Some("GeoJSON"));
+    }
+
+    #[test]
+    fn ogc_online_resources_are_read() {
+        let metadata = json!({
+            "online_resources": [
+                {"url": "https://catalog.test/download/sst.nc",
+                 "protocol": "WWW:DOWNLOAD-1.0-http--download", "downloadable": true},
+                {"url": "https://catalog.test/wfs", "protocol": "OGC:WFS", "downloadable": true},
+                {"url": "https://catalog.test/preview.png", "protocol": "image/png; mode=24bit",
+                 "downloadable": false}
+            ]
+        });
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources.len(), 3);
+
+        // A pure access method describes how to fetch, not what the resource is.
+        assert_eq!(schema.resources[0].format, None);
+        assert_eq!(schema.resources[0].media_type, None);
+        assert_eq!(
+            schema.resources[0].url.as_deref(),
+            Some("https://catalog.test/download/sst.nc")
+        );
+
+        assert_eq!(schema.resources[1].format.as_deref(), Some("WFS"));
+        assert_eq!(schema.resources[2].media_type.as_deref(), Some("image/png"));
+        assert_eq!(schema.resources[2].format, None);
+    }
+
+    #[test]
+    fn spelled_out_ogc_service_protocols_are_recognized() {
+        let metadata = json!({
+            "online_resources": [
+                {"url": "https://catalog.test/wms", "protocol": "OGC Web Map Service"},
+                {"url": "https://catalog.test/wfs", "protocol": "OGC Web Feature Service"}
+            ]
+        });
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources[0].format.as_deref(), Some("WMS"));
+        assert_eq!(schema.resources[1].format.as_deref(), Some("WFS"));
+    }
+
+    #[test]
+    fn a_url_valued_protocol_is_not_read_as_a_media_type() {
+        let metadata = json!({
+            "online_resources": [{"url": "https://catalog.test/a", "protocol": "https://example.org/spec"}]
+        });
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources[0].media_type, None);
+        assert_eq!(schema.resources[0].format, None);
+    }
+
+    #[test]
+    fn explicit_format_wins_over_the_protocol_fallback() {
+        let metadata = json!({
+            "online_resources": [{"format": "NetCDF", "protocol": "OGC:WFS", "mimetype": "application/x-netcdf"}]
+        });
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources[0].format.as_deref(), Some("NetCDF"));
+        assert_eq!(
+            schema.resources[0].media_type.as_deref(),
+            Some("application/x-netcdf")
+        );
     }
 
     #[test]
