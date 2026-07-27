@@ -13,8 +13,24 @@
         "resources": [
           {
             "id": "resource-csv",
+            "name": "Air quality readings (CSV)",
+            "description": "Hourly readings, one row per station-hour.",
             "format": "CSV",
-            "url": "https://example.org/data/air-quality.csv"
+            "mimetype": "text/csv",
+            "url": "https://example.org/data/air-quality.csv",
+            "schema": {
+              "fields": [
+                { "name": "station", "type": "string", "description": "Station identifier" },
+                { "name": "measured_at", "type": "datetime" },
+                { "name": "pm10", "type": "number" }
+              ]
+            }
+          },
+          {
+            "id": "resource-pdf",
+            "name": "Methodology note",
+            "format": "PDF",
+            "url": "https://example.org/data/methodology.pdf"
           }
         ]
       },
