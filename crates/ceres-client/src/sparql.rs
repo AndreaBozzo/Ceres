@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::time::sleep;
 
-use crate::dcat::{DcatDataset, extract_dataset, is_dataset_node};
+use crate::dcat::{DcatDataset, GraphIndex, extract_dataset, is_dataset_node};
 
 /// Delay between paginated SPARQL requests.
 const PAGE_DELAY: Duration = Duration::from_millis(300);
@@ -964,7 +964,9 @@ impl SparqlDcatClient {
 
             if is_dataset_node(node) {
                 entries += 1;
-                if let Some(dataset) = extract_dataset(node, &self.language) {
+                if let Some(dataset) =
+                    extract_dataset(node, &self.language, &GraphIndex::build(graph))
+                {
                     datasets.push(dataset);
                 }
                 continue;
@@ -972,8 +974,11 @@ impl SparqlDcatClient {
 
             if let Some(nested) = node.get("@graph").and_then(|v| v.as_array()) {
                 entries += 1;
+                // A registry entry carries its own `@graph`, so distribution
+                // references resolve against the nested nodes, not the outer page.
                 if let Some(dataset_node) = nested.iter().find(|n| is_dataset_node(n))
-                    && let Some(mut dataset) = extract_dataset(dataset_node, &self.language)
+                    && let Some(mut dataset) =
+                        extract_dataset(dataset_node, &self.language, &GraphIndex::build(nested))
                 {
                     dataset.raw = node.clone();
                     datasets.push(dataset);

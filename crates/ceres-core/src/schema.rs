@@ -16,9 +16,13 @@
 //! - Field-level schema only appears when the portal inlined it in the harvested
 //!   metadata (e.g. a Frictionless `schema.fields` block). We do not call CKAN's
 //!   `datastore_info`/`datastore_search`, so DataStore-only schemas are not enriched.
-//! - For DCAT portals, only the dataset node is persisted in `metadata`; the
-//!   separate distribution `@graph` nodes are not, so distribution detail is
-//!   limited to whatever is inlined on the dataset node.
+//! - For DCAT portals, distributions published as separate `@graph` nodes are
+//!   inlined onto the dataset node at harvest time by the DCAT client. A
+//!   distribution paginated onto a later catalog page cannot be resolved, so its
+//!   reference is preserved verbatim and yields no detail here.
+//! - Socrata, OpenDataSoft, ArcGIS Hub, STAC, and OGC CSW harvest resource
+//!   detail into shapes this module does not yet read; see the resource-parity
+//!   suite in `ceres-client/tests/resource_parity.rs` for the current baseline.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -105,6 +109,46 @@ fn first_str(obj: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
+/// Reads the first present value among `keys`, additionally accepting a JSON-LD
+/// node reference `{"@id": "..."}`.
+///
+/// DCAT-AP producers overwhelmingly express `dcat:downloadURL`, `dcat:accessURL`,
+/// and `dct:format` as references to a URI rather than as literals, so a
+/// `@value`-only reader silently drops them.
+fn first_ref(obj: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = first_str(obj, &[key]) {
+            return Some(value);
+        }
+        if let Some(id) = obj
+            .get(*key)
+            .and_then(|v| v.get("@id"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            return Some(id.to_string());
+        }
+    }
+    None
+}
+
+/// Reduces a controlled-vocabulary format URI to its final segment.
+///
+/// DCAT-AP portals cite formats as authority URIs (for example
+/// `http://publications.europa.eu/resource/authority/file-type/CSV`); consumers
+/// want `CSV`. Plain format literals pass through untouched.
+fn shorten_format(format: String) -> String {
+    if !format.contains("://") {
+        return format;
+    }
+    format
+        .trim_end_matches('/')
+        .rsplit('/')
+        .find(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .unwrap_or(format)
+}
+
 /// Normalizes a single resource/distribution node, returning `None` if it is not
 /// a JSON object.
 fn extract_resource(node: &Value) -> Option<DatasetResource> {
@@ -114,8 +158,8 @@ fn extract_resource(node: &Value) -> Option<DatasetResource> {
 
     Some(DatasetResource {
         name: first_str(node, &["name", "title", "dct:title"]),
-        format: first_str(node, &["format", "dct:format"]),
-        media_type: first_str(
+        format: first_ref(node, &["format", "dct:format"]).map(shorten_format),
+        media_type: first_ref(
             node,
             &[
                 "mimetype",
@@ -125,7 +169,7 @@ fn extract_resource(node: &Value) -> Option<DatasetResource> {
                 "dcat:mediaType",
             ],
         ),
-        url: first_str(
+        url: first_ref(
             node,
             &[
                 "url",
@@ -276,6 +320,55 @@ mod tests {
         assert_eq!(r.format.as_deref(), Some("GeoJSON"));
         assert_eq!(r.url.as_deref(), Some("https://example.org/data.geojson"));
         assert!(r.fields.is_empty());
+    }
+
+    #[test]
+    fn dcat_node_references_resolve_to_urls_and_formats() {
+        // The shape DCAT-AP portals actually emit: URLs and formats as JSON-LD
+        // node references rather than literals.
+        let metadata = json!({
+            "distribution": [{
+                "@type": "dcat:Distribution",
+                "dct:title": {"@language": "en", "@value": "Air quality CSV"},
+                "dct:format": {"@id": "http://publications.europa.eu/resource/authority/file-type/CSV"},
+                "dcat:mediaType": "text/csv",
+                "dcat:downloadURL": {"@id": "https://example.org/files/air-quality.csv"}
+            }]
+        });
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        let r = &schema.resources[0];
+        assert_eq!(r.name.as_deref(), Some("Air quality CSV"));
+        assert_eq!(r.format.as_deref(), Some("CSV"));
+        assert_eq!(r.media_type.as_deref(), Some("text/csv"));
+        assert_eq!(
+            r.url.as_deref(),
+            Some("https://example.org/files/air-quality.csv")
+        );
+    }
+
+    #[test]
+    fn plain_format_literals_are_not_shortened() {
+        let metadata =
+            json!({"resources": [{"format": "CSV", "url": "https://example.org/a.csv"}]});
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources[0].format.as_deref(), Some("CSV"));
+        assert_eq!(
+            schema.resources[0].url.as_deref(),
+            Some("https://example.org/a.csv")
+        );
+    }
+
+    #[test]
+    fn literal_values_win_over_node_references() {
+        let metadata = json!({
+            "distribution": [{
+                "dct:format": "GeoJSON",
+                "dcat:downloadURL": {"@id": "https://example.org/data.geojson"}
+            }]
+        });
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources[0].format.as_deref(), Some("GeoJSON"));
     }
 
     #[test]
