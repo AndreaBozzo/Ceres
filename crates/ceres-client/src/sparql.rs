@@ -957,6 +957,10 @@ impl SparqlDcatClient {
 
         let mut datasets = Vec::new();
         let mut entries = 0usize;
+        // Built once per page: the page-level index is the same for every
+        // top-level dataset node, so rebuilding it per node would make this
+        // quadratic in the number of `@graph` nodes.
+        let page_index = GraphIndex::build(graph);
         for node in graph {
             if is_hydra_view_node(node) {
                 continue;
@@ -964,9 +968,7 @@ impl SparqlDcatClient {
 
             if is_dataset_node(node) {
                 entries += 1;
-                if let Some(dataset) =
-                    extract_dataset(node, &self.language, &GraphIndex::build(graph))
-                {
+                if let Some(dataset) = extract_dataset(node, &self.language, &page_index) {
                     datasets.push(dataset);
                 }
                 continue;
@@ -975,7 +977,9 @@ impl SparqlDcatClient {
             if let Some(nested) = node.get("@graph").and_then(|v| v.as_array()) {
                 entries += 1;
                 // A registry entry carries its own `@graph`, so distribution
-                // references resolve against the nested nodes, not the outer page.
+                // references resolve against the nested nodes rather than the
+                // outer page. This index is per entry by necessity — `nested`
+                // differs for every registry entry, so it cannot be hoisted.
                 if let Some(dataset_node) = nested.iter().find(|n| is_dataset_node(n))
                     && let Some(mut dataset) =
                         extract_dataset(dataset_node, &self.language, &GraphIndex::build(nested))

@@ -19,7 +19,11 @@
 //! - For DCAT portals, distributions published as separate `@graph` nodes are
 //!   inlined onto the dataset node at harvest time by the DCAT client. A
 //!   distribution paginated onto a later catalog page cannot be resolved, so its
-//!   reference is preserved verbatim and yields no detail here.
+//!   reference is preserved verbatim.
+//! - An unresolved `{"@id": "..."}` reference is still a JSON object, so it
+//!   currently normalizes into a [`DatasetResource`] with every facet `None`.
+//!   A non-empty `resources` therefore does not by itself imply usable resource
+//!   depth — check that at least one facet is populated. Tracked in #207.
 //! - Socrata, OpenDataSoft, ArcGIS Hub, STAC, and OGC CSW harvest resource
 //!   detail into shapes this module does not yet read; see the resource-parity
 //!   suite in `ceres-client/tests/resource_parity.rs` for the current baseline.

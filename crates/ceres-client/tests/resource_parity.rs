@@ -110,7 +110,7 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
         (
             "socrata",
             Expect::Gap {
-                issue: "#187 follow-up",
+                issue: "#203",
                 where_it_lives: "`resource.columns_name` / `columns_datatype` — a full column \
                                  schema, but not shaped as a resource array",
             },
@@ -118,7 +118,7 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
         (
             "opendatasoft",
             Expect::Gap {
-                issue: "#187 follow-up",
+                issue: "#202",
                 where_it_lives: "dataset-level `fields[]` — a full column schema; the dataset \
                                  is itself the single resource",
             },
@@ -126,7 +126,7 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
         (
             "arcgis",
             Expect::Gap {
-                issue: "#187 follow-up",
+                issue: "#206",
                 where_it_lives: "`properties.url` — the service endpoint, with `properties.type` \
                                  as its format",
             },
@@ -134,14 +134,14 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
         (
             "stac",
             Expect::Gap {
-                issue: "#187 follow-up",
+                issue: "#205",
                 where_it_lives: "`assets` — a keyed object rather than an array",
             },
         ),
         (
             "ogc_csw",
             Expect::Gap {
-                issue: "#187 follow-up",
+                issue: "#204",
                 where_it_lives: "`online_resources[]` — already normalized by the client, \
                                  merely under a key `DatasetSchema` does not read",
             },
