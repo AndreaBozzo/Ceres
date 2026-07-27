@@ -165,10 +165,17 @@ fn shorten_format(format: String) -> String {
 /// than polluting the format distribution reported for the index.
 fn split_protocol(protocol: &str) -> (Option<String>, Option<String>) {
     let protocol = protocol.trim();
+    let lowered = protocol.to_ascii_lowercase();
 
-    // MIME type, possibly with parameters (`image/png; mode=24bit`). Guard
-    // against a URL, which also contains a slash.
-    if protocol.contains('/') && !protocol.starts_with("http") {
+    // A URI is never a media type — its scheme separator would otherwise read as
+    // a MIME slash. It may still name a service, though: the values that reach
+    // here are free text lifted from XML, and in practice a URI-valued protocol
+    // that mentions a service (an OGC `serviceType` URI, a GetCapabilities
+    // endpoint) genuinely identifies that service, so the check below still runs.
+    let is_uri = lowered.contains("://");
+
+    // MIME type, possibly with parameters (`image/png; mode=24bit`).
+    if !is_uri && protocol.contains('/') {
         let media_type = protocol
             .split(';')
             .next()
@@ -179,7 +186,6 @@ fn split_protocol(protocol: &str) -> (Option<String>, Option<String>) {
     }
 
     // OGC service identifier, spelled either `OGC:WFS` or `OGC Web Feature Service`.
-    let lowered = protocol.to_ascii_lowercase();
     for service in ["wmts", "wms", "wfs", "wcs", "csw", "sos"] {
         let spelled_out = match service {
             "wms" => "web map service",
@@ -469,12 +475,43 @@ mod tests {
 
     #[test]
     fn a_url_valued_protocol_is_not_read_as_a_media_type() {
-        let metadata = json!({
-            "online_resources": [{"url": "https://catalog.test/a", "protocol": "https://example.org/spec"}]
-        });
-        let schema = DatasetSchema::from_metadata(&metadata);
-        assert_eq!(schema.resources[0].media_type, None);
-        assert_eq!(schema.resources[0].format, None);
+        // Case-insensitively: the scheme separator must not read as a MIME slash
+        // whatever the casing.
+        for protocol in [
+            "https://example.org/spec",
+            "HTTP://EXAMPLE.ORG/SPEC",
+            "http://",
+        ] {
+            let metadata = json!({
+                "online_resources": [{"url": "https://catalog.test/a", "protocol": protocol}]
+            });
+            let schema = DatasetSchema::from_metadata(&metadata);
+            assert_eq!(
+                schema.resources[0].media_type, None,
+                "{protocol} should not yield a media type"
+            );
+            assert_eq!(
+                schema.resources[0].format, None,
+                "{protocol} names no service"
+            );
+        }
+    }
+
+    #[test]
+    fn a_uri_valued_protocol_naming_a_service_still_yields_its_format() {
+        // Both shapes occur verbatim in the harvested index: an OGC `serviceType`
+        // URI leaked with its surrounding markup, and a GetCapabilities endpoint.
+        for protocol in [
+            r#"xlink:href="http://www.opengis.net/def/serviceType/ogc/wms">OGC Web Map Service"#,
+            "https://example.org/svc?service=WMS&request=GetCapabilities",
+        ] {
+            let metadata = json!({
+                "online_resources": [{"url": "https://catalog.test/a", "protocol": protocol}]
+            });
+            let schema = DatasetSchema::from_metadata(&metadata);
+            assert_eq!(schema.resources[0].format.as_deref(), Some("WMS"));
+            assert_eq!(schema.resources[0].media_type, None);
+        }
     }
 
     #[test]
