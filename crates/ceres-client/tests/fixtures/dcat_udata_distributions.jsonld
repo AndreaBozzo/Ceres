@@ -1,0 +1,86 @@
+{
+  "@context": "https://www.w3.org/ns/dcat.jsonld",
+  "@graph": [
+    {
+      "@id": "https://data.example.org/datasets/air-quality/",
+      "@type": "dcat:Dataset",
+      "identifier": "air-quality",
+      "title": {
+        "@language": "en",
+        "@value": "Air quality"
+      },
+      "description": {
+        "@language": "en",
+        "@value": "Hourly monitoring observations."
+      },
+      "landingPage": {
+        "@id": "https://data.example.org/datasets/air-quality/"
+      },
+      "distribution": [
+        {
+          "@id": "https://data.example.org/distributions/air-quality-csv"
+        },
+        "https://data.example.org/distributions/air-quality-json"
+      ]
+    },
+    {
+      "@id": "https://data.example.org/datasets/population/",
+      "@type": "Dataset",
+      "identifier": "population",
+      "title": {
+        "@language": "en",
+        "@value": "Population"
+      },
+      "distribution": "https://data.example.org/distributions/population-xlsx"
+    },
+    {
+      "@id": "https://data.example.org/datasets/no-distribution/",
+      "@type": "Dataset",
+      "identifier": "no-distribution",
+      "title": {
+        "@language": "en",
+        "@value": "Register without distributions"
+      }
+    },
+    {
+      "@id": "https://data.example.org/distributions/air-quality-csv",
+      "@type": "dcat:Distribution",
+      "dct:title": {
+        "@language": "en",
+        "@value": "Air quality CSV"
+      },
+      "dct:description": {
+        "@language": "en",
+        "@value": "Comma-separated hourly readings."
+      },
+      "dct:format": {
+        "@id": "http://publications.europa.eu/resource/authority/file-type/CSV"
+      },
+      "dcat:mediaType": "text/csv",
+      "dcat:downloadURL": {
+        "@id": "https://data.example.org/files/air-quality.csv"
+      },
+      "dcat:byteSize": 20480
+    },
+    {
+      "@id": "https://data.example.org/distributions/air-quality-json",
+      "@type": "Distribution",
+      "title": "Air quality JSON",
+      "format": "JSON",
+      "mediaType": "application/json",
+      "downloadURL": "https://data.example.org/files/air-quality.json"
+    },
+    {
+      "@id": "https://data.example.org/distributions/population-xlsx",
+      "@type": "dcat:Distribution",
+      "dct:title": {
+        "@language": "en",
+        "@value": "Population workbook"
+      },
+      "dct:format": "XLSX",
+      "dcat:accessURL": {
+        "@id": "https://data.example.org/files/population.xlsx"
+      }
+    }
+  ]
+}

@@ -20,6 +20,7 @@
 //! the harvest hot path uses `search_all_datasets`, `get_dataset` is not implemented
 //! and returns an error. Implement it if single-dataset lookup becomes necessary.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use ceres_core::HttpConfig;
@@ -237,10 +238,12 @@ impl DcatClient {
                 }
             };
 
-            // Extract Dataset nodes from @graph
+            // Extract Dataset nodes from @graph, resolving distribution
+            // references against the other nodes on the same page.
+            let index = GraphIndex::build(&graph);
             for node in &graph {
                 if is_dataset_node(node)
-                    && let Some(dataset) = extract_dataset(node, &self.language)
+                    && let Some(dataset) = extract_dataset(node, &self.language, &index)
                 {
                     all_datasets.push(dataset);
                 }
@@ -314,11 +317,13 @@ impl DcatClient {
                         return None;
                     }
                 };
-                // Extract Dataset nodes from @graph
+                // Extract Dataset nodes from @graph, resolving distribution
+                // references against the other nodes on the same page.
+                let index = GraphIndex::build(&graph);
                 let mut datasets = Vec::new();
                 for node in &graph {
                     if is_dataset_node(node)
-                        && let Some(dataset) = extract_dataset(node, &self.language)
+                        && let Some(dataset) = extract_dataset(node, &self.language, &index)
                     {
                         datasets.push(dataset);
                     }
@@ -667,13 +672,95 @@ fn get_jsonld_property<'a>(node: &'a Value, keys: &[&str]) -> Option<&'a Value> 
     keys.iter().find_map(|key| node.get(*key))
 }
 
+/// Lookup of a page's `@graph` nodes by `@id`, used to resolve the intra-document
+/// references DCAT-AP uses between a dataset and its distributions.
+pub struct GraphIndex<'a>(HashMap<&'a str, &'a Value>);
+
+impl<'a> GraphIndex<'a> {
+    /// Indexes every node in `graph` that carries a non-empty `@id`.
+    pub fn build(graph: &'a [Value]) -> Self {
+        Self(
+            graph
+                .iter()
+                .filter_map(|node| {
+                    let id = node.get("@id")?.as_str()?;
+                    (!id.is_empty()).then_some((id, node))
+                })
+                .collect(),
+        )
+    }
+
+    fn get(&self, id: &str) -> Option<&'a Value> {
+        self.0.get(id).copied()
+    }
+}
+
+/// The `@id` a distribution reference points at.
+///
+/// DCAT-AP producers write the reference either as a bare URI string or as an
+/// `{"@id": "..."}` object; both appear in harvested catalogs.
+fn reference_id(value: &Value) -> Option<&str> {
+    match value {
+        Value::String(id) => Some(id.as_str()),
+        Value::Object(obj) => obj.get("@id").and_then(Value::as_str),
+        _ => None,
+    }
+}
+
+/// Inlines distributions held as separate `@graph` nodes onto the dataset node.
+///
+/// Without this the persisted `metadata` keeps only an opaque reference, and the
+/// distribution's format, media type, and download URL — which live on the
+/// sibling node — are lost to `DatasetSchema::from_metadata`.
+///
+/// Resolution is additive and conservative: the key is rewritten only when at
+/// least one reference resolves, references that cannot be resolved (for example
+/// a distribution node paginated onto a later page) are preserved verbatim, and
+/// distributions already inlined by the portal are left untouched.
+fn inline_distributions(node: &mut Value, index: &GraphIndex<'_>) {
+    for key in ["distribution", "dcat:distribution"] {
+        let Some(value) = node.get(key) else {
+            continue;
+        };
+
+        let references: Vec<&Value> = match value {
+            Value::Array(items) => items.iter().collect(),
+            single => vec![single],
+        };
+
+        let mut resolved = Vec::with_capacity(references.len());
+        let mut any_resolved = false;
+        for reference in references {
+            match reference_id(reference).and_then(|id| index.get(id)) {
+                Some(target) => {
+                    resolved.push(target.clone());
+                    any_resolved = true;
+                }
+                None => resolved.push(reference.clone()),
+            }
+        }
+
+        if any_resolved && let Some(object) = node.as_object_mut() {
+            object.insert(key.to_string(), Value::Array(resolved));
+        }
+    }
+}
+
 /// Parses a single `@graph` node into a `DcatDataset`.
 ///
 /// Returns `None` if the node is missing required fields (`@id` or a non-empty title).
 ///
 /// The `identifier` field is taken from `dcat:identifier` when present; otherwise
 /// it falls back to the last path segment of `@id`.
-pub fn extract_dataset(node: &Value, language: &str) -> Option<DcatDataset> {
+///
+/// `index` covers the nodes of the same page, so distributions the portal
+/// published as separate `@graph` entries are inlined into the preserved `raw`
+/// metadata rather than left as bare references.
+pub fn extract_dataset(
+    node: &Value,
+    language: &str,
+    index: &GraphIndex<'_>,
+) -> Option<DcatDataset> {
     let id_uri = node.get("@id")?.as_str()?.to_string();
     if id_uri.is_empty() {
         return None;
@@ -707,12 +794,15 @@ pub fn extract_dataset(node: &Value, language: &str) -> Option<DcatDataset> {
         .map(|v| resolve_jsonld_text(v, language))
         .filter(|s| !s.is_empty());
 
+    let mut raw = node.clone();
+    inline_distributions(&mut raw, index);
+
     Some(DcatDataset {
         id_uri,
         identifier,
         title,
         description,
-        raw: node.clone(),
+        raw,
     })
 }
 
@@ -874,6 +964,12 @@ mod tests {
 
     // ---- extract_dataset ---------------------------------------------------
 
+    /// An index over no sibling nodes, for cases where resolution is not under test.
+    fn no_graph() -> GraphIndex<'static> {
+        const EMPTY: &[Value] = &[];
+        GraphIndex::build(EMPTY)
+    }
+
     #[test]
     fn extract_udata_catalog_fixture() {
         let document: Value = serde_json::from_slice(UDATA_CATALOG_FIXTURE).unwrap();
@@ -881,7 +977,7 @@ mod tests {
         let datasets: Vec<_> = graph
             .iter()
             .filter(|node| is_dataset_node(node))
-            .filter_map(|node| extract_dataset(node, "en"))
+            .filter_map(|node| extract_dataset(node, "en", &GraphIndex::build(graph)))
             .collect();
 
         assert_eq!(datasets.len(), 2);
@@ -895,6 +991,77 @@ mod tests {
     }
 
     #[test]
+    fn inlines_distributions_held_as_separate_graph_nodes() {
+        const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcat_udata_distributions.jsonld");
+
+        let document: Value = serde_json::from_slice(FIXTURE).unwrap();
+        let graph = document["@graph"].as_array().unwrap();
+        let index = GraphIndex::build(graph);
+        let datasets: Vec<_> = graph
+            .iter()
+            .filter(|node| is_dataset_node(node))
+            .filter_map(|node| extract_dataset(node, "en", &index))
+            .collect();
+
+        assert_eq!(datasets.len(), 3);
+
+        // Both reference forms resolve: `{"@id": ...}` and a bare URI string.
+        let air_quality = &datasets[0];
+        let distributions = air_quality.raw["distribution"].as_array().unwrap();
+        assert_eq!(distributions.len(), 2);
+        assert_eq!(
+            distributions[0]["dcat:mediaType"].as_str(),
+            Some("text/csv"),
+            "an @id-object reference should resolve to the sibling node"
+        );
+        assert_eq!(
+            distributions[1]["format"].as_str(),
+            Some("JSON"),
+            "a bare string reference should resolve to the sibling node"
+        );
+
+        // A single (non-array) string reference is normalized to an array.
+        let population = &datasets[1];
+        let distributions = population.raw["distribution"].as_array().unwrap();
+        assert_eq!(distributions.len(), 1);
+        assert_eq!(distributions[0]["dct:format"].as_str(), Some("XLSX"));
+
+        // A dataset without distributions keeps its shape.
+        assert!(datasets[2].raw.get("distribution").is_none());
+    }
+
+    #[test]
+    fn unresolvable_distribution_references_are_preserved_verbatim() {
+        // A distribution paginated onto a later page cannot be resolved; the
+        // reference must survive rather than be dropped or blanked.
+        let node = json!({
+            "@id": "https://example.org/datasets/1",
+            "@type": "Dataset",
+            "identifier": "1",
+            "title": "Dangling reference",
+            "distribution": "https://example.org/distributions/elsewhere"
+        });
+        let dataset = extract_dataset(&node, "en", &no_graph()).unwrap();
+        assert_eq!(
+            dataset.raw["distribution"].as_str(),
+            Some("https://example.org/distributions/elsewhere")
+        );
+    }
+
+    #[test]
+    fn portal_inlined_distributions_are_left_untouched() {
+        let node = json!({
+            "@id": "https://example.org/datasets/1",
+            "@type": "Dataset",
+            "identifier": "1",
+            "title": "Already inlined",
+            "distribution": [{"dct:format": "CSV", "dcat:downloadURL": "https://example.org/a.csv"}]
+        });
+        let dataset = extract_dataset(&node, "en", &no_graph()).unwrap();
+        assert_eq!(dataset.raw["distribution"], node["distribution"]);
+    }
+
+    #[test]
     fn extract_dataset_basic() {
         let node = json!({
             "@id": "https://data.public.lu/datasets/abc123/",
@@ -903,7 +1070,7 @@ mod tests {
             "title": "Test Dataset",
             "description": "A test description"
         });
-        let dataset = extract_dataset(&node, "en").unwrap();
+        let dataset = extract_dataset(&node, "en", &no_graph()).unwrap();
         assert_eq!(dataset.id_uri, "https://data.public.lu/datasets/abc123/");
         assert_eq!(dataset.identifier, "abc123");
         assert_eq!(dataset.title, "Test Dataset");
@@ -923,7 +1090,7 @@ mod tests {
             "dct:description": {"@language": "en", "@value": "Description"}
         });
 
-        let dataset = extract_dataset(&node, "en").unwrap();
+        let dataset = extract_dataset(&node, "en", &no_graph()).unwrap();
         assert_eq!(dataset.identifier, "example-id");
         assert_eq!(dataset.title, "English Title");
         assert_eq!(dataset.description.as_deref(), Some("Description"));
@@ -936,20 +1103,20 @@ mod tests {
             "@type": "Dataset",
             "title": "My Dataset"
         });
-        let dataset = extract_dataset(&node, "en").unwrap();
+        let dataset = extract_dataset(&node, "en", &no_graph()).unwrap();
         assert_eq!(dataset.identifier, "my-dataset");
     }
 
     #[test]
     fn extract_dataset_missing_id_returns_none() {
         let node = json!({"@type": "Dataset", "title": "No ID"});
-        assert!(extract_dataset(&node, "en").is_none());
+        assert!(extract_dataset(&node, "en", &no_graph()).is_none());
     }
 
     #[test]
     fn extract_dataset_missing_title_returns_none() {
         let node = json!({"@id": "https://example.org/d/1", "@type": "Dataset"});
-        assert!(extract_dataset(&node, "en").is_none());
+        assert!(extract_dataset(&node, "en", &no_graph()).is_none());
     }
 
     // ---- into_new_dataset --------------------------------------------------
