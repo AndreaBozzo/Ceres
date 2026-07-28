@@ -7,8 +7,23 @@
       "dataset_uid": "da_abc123",
       "has_records": true,
       "features": ["analyze", "geo"],
-      "attachments": [],
-      "alternative_exports": [],
+      "attachments": [
+        {
+          "id": "notice_methodologique_pdf",
+          "title": "Notice méthodologique.pdf",
+          "mimetype": "application/pdf",
+          "url": "https://opendata.example.fr/api/explore/v2.1/catalog/datasets/arbres-remarquables/attachments/notice_methodologique_pdf"
+        }
+      ],
+      "alternative_exports": [
+        {
+          "id": "arbres_remarquables_shp_zip",
+          "title": "arbres_remarquables.zip",
+          "mimetype": "application/zip",
+          "description": "Fichier de formes (Shapefile) en RGF93",
+          "url": "https://opendata.example.fr/api/explore/v2.1/catalog/datasets/arbres-remarquables/alternative_exports/arbres_remarquables_shp_zip"
+        }
+      ],
       "data_visible": true,
       "fields": [
         {
