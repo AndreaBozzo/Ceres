@@ -11,8 +11,11 @@
 //! text fields such as `dataset_id`. Datasets without a `modified` timestamp
 //! are collected in a final `where=modified is null` sweep.
 //!
-//! The complete catalog entry (including the `fields` schema hints) is
-//! preserved in [`NewDataset::metadata`].
+//! The complete catalog entry is preserved verbatim in
+//! [`NewDataset::metadata`]. `ceres_core::DatasetSchema` normalizes it on read:
+//! the dataset-level `fields[]` become the column schema of the single table an
+//! ODS dataset is, and `attachments[]` / `alternative_exports[]` become
+//! resources of their own.
 
 use std::collections::HashSet;
 use std::time::Duration;

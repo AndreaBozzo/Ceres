@@ -24,9 +24,17 @@
 //!   currently normalizes into a [`DatasetResource`] with every facet `None`.
 //!   A non-empty `resources` therefore does not by itself imply usable resource
 //!   depth — check that at least one facet is populated. Tracked in #207.
-//! - Socrata, OpenDataSoft, ArcGIS Hub, STAC, and OGC CSW harvest resource
-//!   detail into shapes this module does not yet read; see the resource-parity
-//!   suite in `ceres-client/tests/resource_parity.rs` for the current baseline.
+//! - An OpenDataSoft dataset is a single table whose column schema lives at the
+//!   *dataset* level, so its primary resource is synthesized rather than read
+//!   from an array, and carries no URL: the catalog payload holds no absolute
+//!   one. The Explore export endpoint is not synthesized either — it is a
+//!   portal-wide API capability rather than per-dataset metadata, and it does
+//!   not resolve for the federated `dataset_id@domain` entries that make up all
+//!   of `data.opendatasoft.com`. Attachments and alternative exports do carry
+//!   real URLs and are read as additional resources.
+//! - Socrata, ArcGIS Hub, and STAC harvest resource detail into shapes this
+//!   module does not yet read; see the resource-parity suite in
+//!   `ceres-client/tests/resource_parity.rs` for the current baseline.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -73,7 +81,11 @@ impl DatasetSchema {
     /// supported portal types and normalizes each entry. Always returns a value;
     /// an absent or unrecognized structure yields an empty `resources` vector.
     pub fn from_metadata(metadata: &Value) -> Self {
-        let mut resources = Vec::new();
+        // The dataset's own table, where the portal describes it at the dataset
+        // level rather than in a resource array, comes before the artifacts
+        // hanging off it.
+        let mut resources: Vec<DatasetResource> =
+            opendatasoft_table(metadata).into_iter().collect();
 
         for key in [
             "resources",
@@ -81,6 +93,8 @@ impl DatasetSchema {
             "dcat:distribution",
             "distributions",
             "online_resources",
+            "attachments",
+            "alternative_exports",
         ] {
             if let Some(Value::Array(items)) = metadata.get(key) {
                 resources.extend(items.iter().filter_map(extract_resource));
@@ -242,6 +256,63 @@ fn extract_resource(node: &Value) -> Option<DatasetResource> {
         ),
         description: first_str(node, &["description", "dct:description"]),
         fields: extract_fields(node),
+    })
+}
+
+/// Synthesizes the single tabular resource an OpenDataSoft dataset represents.
+///
+/// An ODS dataset is one table, so the Explore catalog entry describes its
+/// columns at the *dataset* level in `fields[]` rather than inside a resource
+/// array — there is no node for [`extract_resource`] to normalize. Recognized
+/// by the catalog-entry signature (a `dataset_id` alongside a `metas` block),
+/// which no other supported family emits.
+///
+/// Returns `None` unless the column schema is actually populated: ODS ships
+/// `fields: []` for every dataset without records (all but one of
+/// `webstat.banque-france.fr`, for instance), and a resource naming the dataset
+/// with nothing else to say is the phantom of #207.
+///
+/// The resource carries no URL. The catalog payload holds no absolute one, and
+/// the Explore export endpoint is deliberately not synthesized: it describes
+/// what the API can do rather than what the portal published, and it 400s for
+/// the federated `dataset_id@domain` entries that make up the whole of the
+/// `data.opendatasoft.com` hub. `attachments` and `alternative_exports` are the
+/// artifacts that do carry real URLs, and are read as resources in their own
+/// right by [`DatasetSchema::from_metadata`].
+fn opendatasoft_table(metadata: &Value) -> Option<DatasetResource> {
+    let dataset_id = metadata.get("dataset_id").and_then(Value::as_str)?;
+    if !metadata.get("metas").is_some_and(Value::is_object) {
+        return None;
+    }
+
+    let fields: Vec<ResourceField> = metadata
+        .get("fields")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(extract_field)
+        .collect();
+    if fields.is_empty() {
+        return None;
+    }
+
+    // Blank titles occur in the wild; the client falls back to the dataset id
+    // for the dataset's own title, so the resource does the same.
+    let name = metadata
+        .pointer("/metas/default")
+        .and_then(|metas| first_str(metas, &["title"]))
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| dataset_id.to_string());
+
+    Some(DatasetResource {
+        name: Some(name),
+        format: None,
+        media_type: None,
+        url: None,
+        // The dataset-level description is already carried by the dataset
+        // itself; repeating it here would add bytes to every exported row
+        // without adding information.
+        description: None,
+        fields,
     })
 }
 
@@ -525,6 +596,137 @@ mod tests {
             schema.resources[0].media_type.as_deref(),
             Some("application/x-netcdf")
         );
+    }
+
+    /// A trimmed Explore v2.1 catalog entry, in the shape the client persists.
+    fn ods_entry(fields: Value, extra: Value) -> Value {
+        let mut entry = json!({
+            "dataset_id": "arbres-remarquables",
+            "has_records": true,
+            "attachments": [],
+            "alternative_exports": [],
+            "fields": fields,
+            "metas": {"default": {"title": "Arbres remarquables", "records_count": 187}}
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            entry[key] = value.clone();
+        }
+        entry
+    }
+
+    #[test]
+    fn opendatasoft_dataset_level_fields_become_one_table_resource() {
+        let metadata = ods_entry(
+            json!([
+                {"name": "essence", "label": "Essence", "description": null, "type": "text"},
+                {"name": "geo_point", "label": "Coordonnées géo", "description": null,
+                 "type": "geo_point_2d"}
+            ]),
+            json!({}),
+        );
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources.len(), 1);
+        let r = &schema.resources[0];
+        assert_eq!(r.name.as_deref(), Some("Arbres remarquables"));
+        // The catalog entry carries no absolute URL and the export endpoint is
+        // not synthesized; the column schema is what this resource contributes.
+        assert_eq!(r.url, None);
+        assert_eq!(r.format, None);
+        assert_eq!(r.fields.len(), 2);
+        assert_eq!(r.fields[0].name, "essence");
+        assert_eq!(r.fields[0].r#type.as_deref(), Some("text"));
+        // ODS leaves `description` null and puts the human label in `label`.
+        assert_eq!(r.fields[0].description.as_deref(), Some("Essence"));
+        assert_eq!(r.fields[1].r#type.as_deref(), Some("geo_point_2d"));
+    }
+
+    #[test]
+    fn opendatasoft_blank_title_falls_back_to_the_dataset_id() {
+        for title in [json!("   "), json!(""), Value::Null] {
+            let mut metadata = ods_entry(json!([{"name": "col", "type": "text"}]), json!({}));
+            metadata["metas"]["default"]["title"] = title.clone();
+
+            let schema = DatasetSchema::from_metadata(&metadata);
+            assert_eq!(
+                schema.resources[0].name.as_deref(),
+                Some("arbres-remarquables"),
+                "title {title} should fall back to the dataset id"
+            );
+        }
+    }
+
+    #[test]
+    fn opendatasoft_without_records_yields_no_phantom_table() {
+        // ODS ships `fields: []` for every dataset that has no records. A
+        // resource naming the dataset and nothing else proves no depth.
+        let metadata = ods_entry(json!([]), json!({"has_records": false}));
+        assert!(DatasetSchema::from_metadata(&metadata).resources.is_empty());
+    }
+
+    #[test]
+    fn opendatasoft_attachments_and_alternative_exports_are_resources() {
+        let metadata = ods_entry(
+            json!([{"name": "essence", "label": "Essence", "type": "text"}]),
+            json!({
+                "attachments": [{
+                    "id": "notice_pdf",
+                    "title": "Notice.pdf",
+                    "mimetype": "application/pdf",
+                    "url": "https://opendata.example.fr/api/explore/v2.1/catalog/datasets/arbres-remarquables/attachments/notice_pdf"
+                }],
+                "alternative_exports": [{
+                    "id": "arbres_shp_zip",
+                    "title": "arbres.zip",
+                    "mimetype": "application/zip",
+                    "description": "Shapefile en RGF93",
+                    "url": "https://opendata.example.fr/api/explore/v2.1/catalog/datasets/arbres-remarquables/alternative_exports/arbres_shp_zip"
+                }]
+            }),
+        );
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        // The dataset's own table first, then the artifacts hanging off it.
+        assert_eq!(schema.resources.len(), 3);
+        assert_eq!(
+            schema.resources[0].name.as_deref(),
+            Some("Arbres remarquables")
+        );
+
+        let attachment = &schema.resources[1];
+        assert_eq!(attachment.name.as_deref(), Some("Notice.pdf"));
+        assert_eq!(attachment.media_type.as_deref(), Some("application/pdf"));
+        assert!(
+            attachment
+                .url
+                .as_deref()
+                .is_some_and(|url| url.ends_with("/attachments/notice_pdf"))
+        );
+
+        let alternative = &schema.resources[2];
+        assert_eq!(alternative.name.as_deref(), Some("arbres.zip"));
+        assert_eq!(alternative.media_type.as_deref(), Some("application/zip"));
+        assert_eq!(
+            alternative.description.as_deref(),
+            Some("Shapefile en RGF93")
+        );
+    }
+
+    #[test]
+    fn a_dataset_level_fields_array_alone_is_not_an_opendatasoft_table() {
+        // The ODS signature is a catalog entry: `dataset_id` plus a `metas`
+        // block. A bare `fields` array on some other family's payload must not
+        // be read as a table resource.
+        for metadata in [
+            json!({"fields": [{"name": "col", "type": "text"}]}),
+            json!({"dataset_id": "x", "fields": [{"name": "col", "type": "text"}]}),
+            json!({"metas": {"default": {}}, "fields": [{"name": "col", "type": "text"}]}),
+        ] {
+            assert!(
+                DatasetSchema::from_metadata(&metadata).resources.is_empty(),
+                "{metadata} is not an OpenDataSoft catalog entry"
+            );
+        }
     }
 
     #[test]

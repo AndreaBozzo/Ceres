@@ -81,9 +81,15 @@ impl Facet {
 /// The reachability baseline, one row per portal family.
 ///
 /// Measured against the live index at the time of writing: of 2.62M harvested
-/// datasets, the `Resources` rows below account for ~1.33M with reachable
-/// resources, while the `Gap` rows account for ~289k whose detail is harvested
+/// datasets, the `Resources` rows below account for ~1.44M with reachable
+/// resources, while the `Gap` rows account for ~59k whose detail is harvested
 /// but unreachable.
+///
+/// A `Resources` row means the family's detail is reachable *where the portal
+/// published it*, not that every dataset in the family has some. OpenDataSoft
+/// is the clearest case: 58,510 of its 170,144 harvested datasets yield an
+/// informative resource, because ODS ships an empty column schema for every
+/// dataset that carries no records.
 fn expectations() -> BTreeMap<&'static str, Expect> {
     BTreeMap::from([
         (
@@ -116,11 +122,14 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             },
         ),
         (
+            // The dataset's own table is synthesized from the dataset-level
+            // `fields[]` and carries no URL — the catalog entry holds no
+            // absolute one. `Url` and `MediaType` come from the attachments and
+            // alternative exports hanging off it, which do.
             "opendatasoft",
-            Expect::Gap {
-                issue: "#202",
-                where_it_lives: "dataset-level `fields[]` — a full column schema; the dataset \
-                                 is itself the single resource",
+            Expect::Resources {
+                facets: &[Facet::Name, Facet::MediaType, Facet::Url],
+                fields: true,
             },
         ),
         (
@@ -310,10 +319,6 @@ fn carries_unreachable_detail(family: &str, metadata: &Value) -> bool {
             .pointer("/resource/columns_name")
             .and_then(Value::as_array)
             .is_some_and(|columns| !columns.is_empty()),
-        "opendatasoft" => metadata
-            .get("fields")
-            .and_then(Value::as_array)
-            .is_some_and(|fields| !fields.is_empty()),
         "arcgis" => metadata.pointer("/properties/url").is_some(),
         "stac" => metadata
             .get("assets")
