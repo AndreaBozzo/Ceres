@@ -9,7 +9,10 @@
         "license": "Public Domain",
         "attribution": "Transport Agency",
         "columns_name": ["Count date", "Vehicles"],
-        "columns_datatype": ["Calendar date", "Number"]
+        "columns_field_name": ["count_date", "vehicles"],
+        "columns_datatype": ["Calendar date", "Number"],
+        "columns_description": ["Date the count was taken", ""],
+        "columns_format": [{}, {}]
       },
       "classification": {
         "domain_category": "Transportation",

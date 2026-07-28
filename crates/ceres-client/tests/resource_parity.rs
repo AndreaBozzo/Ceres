@@ -81,8 +81,8 @@ impl Facet {
 /// The reachability baseline, one row per portal family.
 ///
 /// Measured against the live index at the time of writing: of 2.62M harvested
-/// datasets, the `Resources` rows below account for ~1.44M with reachable
-/// resources, while the `Gap` rows account for ~59k whose detail is harvested
+/// datasets, the `Resources` rows below account for ~1.47M with reachable
+/// resources, while the `Gap` rows account for ~27k whose detail is harvested
 /// but unreachable.
 ///
 /// A `Resources` row means the family's detail is reachable *where the portal
@@ -114,11 +114,13 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             },
         ),
         (
+            // One table per dataset, zipped from the parallel `columns_*`
+            // arrays, addressed by the SODA endpoint rebuilt from the payload's
+            // own domain and four-by-four identifier.
             "socrata",
-            Expect::Gap {
-                issue: "#203",
-                where_it_lives: "`resource.columns_name` / `columns_datatype` — a full column \
-                                 schema, but not shaped as a resource array",
+            Expect::Resources {
+                facets: &[Facet::Name, Facet::Format, Facet::MediaType, Facet::Url],
+                fields: true,
             },
         ),
         (
@@ -315,10 +317,6 @@ fn carries_unreachable_detail(family: &str, metadata: &Value) -> bool {
         "dcat_udata" => metadata.get("distribution").is_some_and(|distribution| {
             !distribution.is_array() || distribution.as_array().is_some_and(|d| !d.is_empty())
         }),
-        "socrata" => metadata
-            .pointer("/resource/columns_name")
-            .and_then(Value::as_array)
-            .is_some_and(|columns| !columns.is_empty()),
         "arcgis" => metadata.pointer("/properties/url").is_some(),
         "stac" => metadata
             .get("assets")
