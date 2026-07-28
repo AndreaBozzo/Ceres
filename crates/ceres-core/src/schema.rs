@@ -32,8 +32,12 @@
 //!   not resolve for the federated `dataset_id@domain` entries that make up all
 //!   of `data.opendatasoft.com`. Attachments and alternative exports do carry
 //!   real URLs and are read as additional resources.
-//! - Socrata, ArcGIS Hub, and STAC harvest resource detail into shapes this
-//!   module does not yet read; see the resource-parity suite in
+//! - A Socrata dataset is likewise a single table, described by parallel
+//!   `resource.columns_*` arrays rather than a resource array. Its resource is
+//!   synthesized too, and unlike OpenDataSoft it does carry a URL: the SODA
+//!   endpoint is rebuilt from the payload's own domain and dataset identifier.
+//! - ArcGIS Hub and STAC harvest resource detail into shapes this module does
+//!   not yet read; see the resource-parity suite in
 //!   `ceres-client/tests/resource_parity.rs` for the current baseline.
 
 use serde::Serialize;
@@ -84,8 +88,10 @@ impl DatasetSchema {
         // The dataset's own table, where the portal describes it at the dataset
         // level rather than in a resource array, comes before the artifacts
         // hanging off it.
-        let mut resources: Vec<DatasetResource> =
-            opendatasoft_table(metadata).into_iter().collect();
+        let mut resources: Vec<DatasetResource> = opendatasoft_table(metadata)
+            .or_else(|| socrata_table(metadata))
+            .into_iter()
+            .collect();
 
         for key in [
             "resources",
@@ -314,6 +320,121 @@ fn opendatasoft_table(metadata: &Value) -> Option<DatasetResource> {
         description: None,
         fields,
     })
+}
+
+/// Synthesizes the single tabular resource a Socrata dataset represents.
+///
+/// The Discovery API describes a dataset's columns as parallel `columns_*`
+/// arrays hanging off the `resource` **object**, not as the `resources` array
+/// the generic path looks for. Recognized by that object sitting alongside a
+/// Discovery envelope (`metadata.domain`), which no other supported family
+/// emits.
+///
+/// Unlike its OpenDataSoft counterpart this resource carries a URL. The SODA
+/// endpoint `https://{domain}/resource/{4x4}.json` is the documented, per
+/// dataset access path, both halves come from the payload itself, and it is
+/// exactly the `resource_url` the client already computes and then discards.
+/// `format` and `media_type` describe that URL rather than the dataset, so they
+/// are set only when it is.
+fn socrata_table(metadata: &Value) -> Option<DatasetResource> {
+    let resource = metadata.get("resource").filter(|value| value.is_object())?;
+    let domain = metadata
+        .pointer("/metadata/domain")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|domain| !domain.is_empty())?;
+
+    let fields = socrata_columns(resource);
+    let name = first_str(resource, &["name"]);
+    let url = first_str(resource, &["id"])
+        .filter(|id| is_four_by_four(id))
+        .map(|id| format!("{}://{domain}/resource/{id}.json", socrata_scheme(metadata)));
+
+    // Nothing to say about the table is not a resource; see #207.
+    if name.is_none() && url.is_none() && fields.is_empty() {
+        return None;
+    }
+
+    Some(DatasetResource {
+        name,
+        format: url.is_some().then(|| "JSON".to_string()),
+        media_type: url.is_some().then(|| "application/json".to_string()),
+        url,
+        // As for OpenDataSoft: the dataset already carries its description.
+        description: None,
+        fields,
+    })
+}
+
+/// Zips Socrata's parallel `columns_*` arrays into column-level fields.
+///
+/// The arrays are positional and the API guarantees no alignment between them,
+/// so each column reads its own index independently: a short `columns_datatype`
+/// leaves the trailing columns untyped rather than dropping them or panicking.
+/// A column with neither an API field name nor a display name is skipped.
+///
+/// `columns_field_name` holds the identifier a SODA query uses
+/// (`before_initial_contact`) and `columns_name` its display label
+/// (`Before Initial Contact`), so the former becomes the field name and the
+/// latter falls back to its description. That matches how CKAN's Frictionless
+/// `name`/`title` pair and OpenDataSoft's `name`/`label` pair are read.
+fn socrata_columns(resource: &Value) -> Vec<ResourceField> {
+    let column = |key: &str, index: usize| -> Option<String> {
+        resource
+            .get(key)?
+            .as_array()?
+            .get(index)?
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+
+    let columns = ["columns_field_name", "columns_name"]
+        .into_iter()
+        .filter_map(|key| resource.get(key).and_then(Value::as_array))
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0);
+
+    (0..columns)
+        .filter_map(|index| {
+            let label = column("columns_name", index);
+            let name = column("columns_field_name", index).or_else(|| label.clone())?;
+            Some(ResourceField {
+                r#type: column("columns_datatype", index),
+                description: column("columns_description", index)
+                    .or_else(|| label.filter(|label| *label != name)),
+                name,
+            })
+        })
+        .collect()
+}
+
+/// Whether an identifier has the Socrata four-by-four shape (`abcd-1234`),
+/// which is what the SODA endpoint addresses.
+fn is_four_by_four(id: &str) -> bool {
+    let Some((head, tail)) = id.split_once('-') else {
+        return false;
+    };
+    [head, tail].iter().all(|part| {
+        part.len() == 4
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    })
+}
+
+/// Reads the scheme Socrata itself used, rather than assuming one.
+///
+/// `link` and `permalink` are absolute URLs on the dataset's own domain.
+fn socrata_scheme(metadata: &Value) -> &str {
+    ["link", "permalink"]
+        .into_iter()
+        .filter_map(|key| metadata.get(key).and_then(Value::as_str))
+        .find_map(|url| url.split_once("://").map(|(scheme, _)| scheme))
+        .filter(|scheme| matches!(*scheme, "http" | "https"))
+        .unwrap_or("https")
 }
 
 /// Extracts column-level fields from a resource node.
@@ -725,6 +846,167 @@ mod tests {
             assert!(
                 DatasetSchema::from_metadata(&metadata).resources.is_empty(),
                 "{metadata} is not an OpenDataSoft catalog entry"
+            );
+        }
+    }
+
+    /// A trimmed Discovery API result, in the shape the client persists.
+    fn socrata_result(resource: Value) -> Value {
+        let mut result = json!({
+            "resource": {"id": "abcd-1234", "name": "Traffic counts"},
+            "classification": {"domain_category": "Transportation"},
+            "metadata": {"domain": "data.example.gov"},
+            "link": "https://data.example.gov/Transportation/Traffic-Counts/abcd-1234",
+            "permalink": "https://data.example.gov/d/abcd-1234"
+        });
+        for (key, value) in resource.as_object().unwrap() {
+            result["resource"][key] = value.clone();
+        }
+        result
+    }
+
+    #[test]
+    fn socrata_parallel_columns_zip_into_one_table_resource() {
+        let metadata = socrata_result(json!({
+            "columns_name": ["Count date", "Before Initial Contact"],
+            "columns_field_name": ["count_date", "before_initial_contact"],
+            "columns_datatype": ["Calendar date", "Number"],
+            "columns_description": ["Date of the count", ""]
+        }));
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources.len(), 1);
+        let r = &schema.resources[0];
+        assert_eq!(r.name.as_deref(), Some("Traffic counts"));
+        assert_eq!(
+            r.url.as_deref(),
+            Some("https://data.example.gov/resource/abcd-1234.json")
+        );
+        assert_eq!(r.format.as_deref(), Some("JSON"));
+        assert_eq!(r.media_type.as_deref(), Some("application/json"));
+
+        assert_eq!(r.fields.len(), 2);
+        // The SODA field name identifies the column; the display label falls
+        // back to its description, as for CKAN `title` and ODS `label`.
+        assert_eq!(r.fields[0].name, "count_date");
+        assert_eq!(r.fields[0].r#type.as_deref(), Some("Calendar date"));
+        assert_eq!(
+            r.fields[0].description.as_deref(),
+            Some("Date of the count")
+        );
+        assert_eq!(r.fields[1].name, "before_initial_contact");
+        assert_eq!(
+            r.fields[1].description.as_deref(),
+            Some("Before Initial Contact")
+        );
+    }
+
+    #[test]
+    fn socrata_ragged_column_arrays_leave_the_tail_untyped() {
+        // The Discovery API guarantees no alignment between the parallel
+        // arrays. A short `columns_datatype` must not drop the columns it does
+        // not cover, nor panic.
+        let metadata = socrata_result(json!({
+            "columns_name": ["One", "Two", "Three"],
+            "columns_field_name": ["one", "two", "three"],
+            "columns_datatype": ["Number"],
+            "columns_description": []
+        }));
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        let fields = &schema.resources[0].fields;
+        assert_eq!(fields.len(), 3);
+        assert_eq!(fields[0].r#type.as_deref(), Some("Number"));
+        assert_eq!(fields[1].r#type, None);
+        assert_eq!(fields[2].r#type, None);
+        assert_eq!(fields[2].name, "three");
+    }
+
+    #[test]
+    fn socrata_columns_survive_a_missing_field_name_array() {
+        // Older Discovery payloads omit `columns_field_name` entirely; the
+        // display names then have to carry the schema.
+        let metadata = socrata_result(json!({
+            "columns_name": ["Count date", "Vehicles"],
+            "columns_datatype": ["Calendar date", "Number"]
+        }));
+
+        let fields = &DatasetSchema::from_metadata(&metadata).resources[0].fields;
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "Count date");
+        // The label became the name, so it is not repeated as the description.
+        assert_eq!(fields[0].description, None);
+        assert_eq!(fields[1].name, "Vehicles");
+    }
+
+    #[test]
+    fn socrata_dataset_without_columns_still_exposes_its_soda_endpoint() {
+        let schema = DatasetSchema::from_metadata(&socrata_result(json!({})));
+        let r = &schema.resources[0];
+        assert_eq!(r.name.as_deref(), Some("Traffic counts"));
+        assert_eq!(
+            r.url.as_deref(),
+            Some("https://data.example.gov/resource/abcd-1234.json")
+        );
+        assert!(r.fields.is_empty());
+    }
+
+    #[test]
+    fn socrata_url_needs_a_four_by_four_identifier() {
+        for id in [
+            "missing-title",
+            "abcd-12345",
+            "ABCD-1234",
+            "abcd1234",
+            "ab-cd",
+        ] {
+            let mut metadata = socrata_result(json!({}));
+            metadata["resource"]["id"] = json!(id);
+            let r = &DatasetSchema::from_metadata(&metadata).resources[0];
+            assert_eq!(r.url, None, "{id} is not a Socrata four-by-four");
+            // format and media type describe the URL, so they go with it.
+            assert_eq!(r.format, None, "{id}");
+            assert_eq!(r.media_type, None, "{id}");
+        }
+    }
+
+    #[test]
+    fn socrata_uses_the_scheme_the_portal_published() {
+        let mut metadata = socrata_result(json!({}));
+        metadata["link"] = json!("http://data.example.gov/d/abcd-1234");
+        metadata["permalink"] = json!("http://data.example.gov/d/abcd-1234");
+        assert_eq!(
+            DatasetSchema::from_metadata(&metadata).resources[0]
+                .url
+                .as_deref(),
+            Some("http://data.example.gov/resource/abcd-1234.json")
+        );
+
+        // Absent or unusable links fall back to https rather than guessing.
+        let mut metadata = socrata_result(json!({}));
+        metadata["link"] = json!("/relative/path");
+        metadata["permalink"] = Value::Null;
+        assert_eq!(
+            DatasetSchema::from_metadata(&metadata).resources[0]
+                .url
+                .as_deref(),
+            Some("https://data.example.gov/resource/abcd-1234.json")
+        );
+    }
+
+    #[test]
+    fn socrata_needs_the_discovery_envelope_and_something_to_say() {
+        // A bare `resource` object on some other family's payload is not a
+        // Socrata result, and an empty one yields no phantom resource.
+        for metadata in [
+            json!({"resource": {"id": "abcd-1234", "name": "Traffic counts"}}),
+            json!({"resource": "not-an-object", "metadata": {"domain": "data.example.gov"}}),
+            json!({"resource": {}, "metadata": {"domain": "data.example.gov"}}),
+            json!({"resource": {"id": "not-a-4x4"}, "metadata": {"domain": "data.example.gov"}}),
+        ] {
+            assert!(
+                DatasetSchema::from_metadata(&metadata).resources.is_empty(),
+                "{metadata} should yield no resource"
             );
         }
     }
