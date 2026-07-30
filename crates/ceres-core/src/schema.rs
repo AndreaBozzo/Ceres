@@ -19,11 +19,13 @@
 //! - For DCAT portals, distributions published as separate `@graph` nodes are
 //!   inlined onto the dataset node at harvest time by the DCAT client. A
 //!   distribution paginated onto a later catalog page cannot be resolved, so its
-//!   reference is preserved verbatim.
-//! - An unresolved `{"@id": "..."}` reference is still a JSON object, so it
-//!   currently normalizes into a [`DatasetResource`] with every facet `None`.
-//!   A non-empty `resources` therefore does not by itself imply usable resource
-//!   depth — check that at least one facet is populated. Tracked in #207.
+//!   reference is preserved verbatim in `metadata` — but an unresolved
+//!   `{"@id": "..."}` yields no [`DatasetResource`], because no facet can be read
+//!   from it. Every resource this module emits carries at least one of `name`,
+//!   `format`, `media_type`, `url`, or a non-empty `fields`, so a non-empty
+//!   `resources` does imply usable resource depth. A description alone does not
+//!   qualify, and neither does a value that is blank once trimmed; see
+//!   `is_informative`.
 //! - An OpenDataSoft dataset is a single table whose column schema lives at the
 //!   *dataset* level, so its primary resource is synthesized rather than read
 //!   from an array, and carries no URL: the catalog payload holds no absolute
@@ -111,21 +113,33 @@ impl DatasetSchema {
     }
 }
 
+/// Trims a raw metadata string, treating a blank one as absent.
+///
+/// Portals ship whitespace-only values in the wild — an ArcGIS Hub item with
+/// `"title": "   "` is in this crate's own fixtures. Surfacing one as a
+/// populated facet would let a resource satisfy [`is_informative`] while saying
+/// nothing, so blanks are dropped at the point they are read and every facet
+/// this module emits is non-blank by construction.
+fn non_blank(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 /// Reads the first present string value among `keys` from a JSON object.
 ///
 /// Accepts a plain string, or a JSON-LD language object `{"@value": "..."}`,
-/// returning the first non-empty match.
+/// returning the first match that is not blank, trimmed.
 fn first_str(obj: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
         match obj.get(*key) {
-            Some(Value::String(s)) if !s.is_empty() => return Some(s.clone()),
+            Some(Value::String(s)) => {
+                if let Some(value) = non_blank(s) {
+                    return Some(value);
+                }
+            }
             Some(Value::Object(o)) => {
-                if let Some(s) = o
-                    .get("@value")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                {
-                    return Some(s.to_string());
+                if let Some(value) = o.get("@value").and_then(Value::as_str).and_then(non_blank) {
+                    return Some(value);
                 }
             }
             _ => {}
@@ -148,10 +162,10 @@ fn first_ref(obj: &Value, keys: &[&str]) -> Option<String> {
         if let Some(id) = obj
             .get(*key)
             .and_then(|v| v.get("@id"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
+            .and_then(Value::as_str)
+            .and_then(non_blank)
         {
-            return Some(id.to_string());
+            return Some(id);
         }
     }
     None
@@ -223,8 +237,37 @@ fn split_protocol(protocol: &str) -> (Option<String>, Option<String>) {
     (None, None)
 }
 
-/// Normalizes a single resource/distribution node, returning `None` if it is not
-/// a JSON object.
+/// Whether a normalized resource carries any usable detail.
+///
+/// A resource that names nothing, points nowhere, declares no format or media
+/// type, and lists no columns tells a consumer nothing at all, and counting it
+/// would overstate the index's resource depth for every consumer downstream:
+/// the per-portal signals in the snapshot report, the `resources` list in the
+/// Parquet export, and the `/datasets/{id}/schema` contract.
+///
+/// A facet that was blank in the payload does not count as present — [`non_blank`]
+/// has already dropped it — so this predicate never mistakes `"   "` for a name.
+///
+/// A **description alone does not qualify**. Prose says neither what the
+/// distribution is nor where to get it, which is the whole job of a normalized
+/// resource, and the dataset already carries a description of its own. Nothing
+/// is lost by the omission: the raw node stays verbatim in the dataset's
+/// `metadata`, and this module only ever derives a view of it on read. Any
+/// other facet alongside a description does make the node a resource, and the
+/// description then rides along with it.
+fn is_informative(resource: &DatasetResource) -> bool {
+    resource.name.is_some()
+        || resource.format.is_some()
+        || resource.media_type.is_some()
+        || resource.url.is_some()
+        || !resource.fields.is_empty()
+}
+
+/// Normalizes a single resource/distribution node.
+///
+/// Returns `None` if the node is not a JSON object, or if what could be read
+/// from it does not clear [`is_informative`] — no facet at all, a description
+/// on its own, or values that were blank once trimmed.
 fn extract_resource(node: &Value) -> Option<DatasetResource> {
     if !node.is_object() {
         return None;
@@ -263,6 +306,7 @@ fn extract_resource(node: &Value) -> Option<DatasetResource> {
         description: first_str(node, &["description", "dct:description"]),
         fields: extract_fields(node),
     })
+    .filter(is_informative)
 }
 
 /// Synthesizes the single tabular resource an OpenDataSoft dataset represents.
@@ -273,10 +317,12 @@ fn extract_resource(node: &Value) -> Option<DatasetResource> {
 /// by the catalog-entry signature (a `dataset_id` alongside a `metas` block),
 /// which no other supported family emits.
 ///
-/// Returns `None` unless the column schema is actually populated: ODS ships
-/// `fields: []` for every dataset without records (all but one of
-/// `webstat.banque-france.fr`, for instance), and a resource naming the dataset
-/// with nothing else to say is the phantom of #207.
+/// Returns `None` unless the column schema is actually populated. This is
+/// stricter than the shared `is_informative` rule, which a name alone would
+/// satisfy: ODS ships `fields: []` for every dataset without records (all but
+/// one of `webstat.banque-france.fr`, for instance), and since this resource is
+/// synthesized rather than read, its name is the dataset's own title. A resource
+/// that only restates the dataset's title proves no resource depth.
 ///
 /// The resource carries no URL. The catalog payload holds no absolute one, and
 /// the Explore export endpoint is deliberately not synthesized: it describes
@@ -301,12 +347,12 @@ fn opendatasoft_table(metadata: &Value) -> Option<DatasetResource> {
         return None;
     }
 
-    // Blank titles occur in the wild; the client falls back to the dataset id
-    // for the dataset's own title, so the resource does the same.
+    // Blank titles occur in the wild, and `first_str` reads one as absent; the
+    // client falls back to the dataset id for the dataset's own title, so the
+    // resource does the same.
     let name = metadata
         .pointer("/metas/default")
         .and_then(|metas| first_str(metas, &["title"]))
-        .filter(|title| !title.trim().is_empty())
         .unwrap_or_else(|| dataset_id.to_string());
 
     Some(DatasetResource {
@@ -350,11 +396,6 @@ fn socrata_table(metadata: &Value) -> Option<DatasetResource> {
         .filter(|id| is_four_by_four(id))
         .map(|id| format!("{}://{domain}/resource/{id}.json", socrata_scheme(metadata)));
 
-    // Nothing to say about the table is not a resource; see #207.
-    if name.is_none() && url.is_none() && fields.is_empty() {
-        return None;
-    }
-
     Some(DatasetResource {
         name,
         format: url.is_some().then(|| "JSON".to_string()),
@@ -364,6 +405,9 @@ fn socrata_table(metadata: &Value) -> Option<DatasetResource> {
         description: None,
         fields,
     })
+    // A Discovery envelope with nothing to say about its table is not a
+    // resource, by the same rule the generic path applies.
+    .filter(is_informative)
 }
 
 /// Zips Socrata's parallel `columns_*` arrays into column-level fields.
@@ -1009,6 +1053,82 @@ mod tests {
                 "{metadata} should yield no resource"
             );
         }
+    }
+
+    #[test]
+    fn unresolvable_reference_nodes_yield_no_resource() {
+        // A distribution published as a separate `@graph` node that the DCAT
+        // client could not inline stays an opaque reference. It is a JSON
+        // object, but no facet can be read from it, so it is not a resource:
+        // emitting one would claim resource depth the portal never published.
+        let metadata = json!({
+            "distribution": [
+                {"@id": "https://example.org/dist/1"},
+                {"@id": "https://example.org/dist/2", "@type": "dcat:Distribution"}
+            ]
+        });
+        assert!(DatasetSchema::from_metadata(&metadata).resources.is_empty());
+    }
+
+    #[test]
+    fn blank_facets_are_absent_rather_than_present_and_empty() {
+        // Portals ship whitespace-only strings in the wild. A node offering
+        // nothing but those has as little to say as an empty one, so it is not
+        // a resource — otherwise `resources` would be non-empty while proving
+        // no depth, which is exactly what this rule exists to prevent.
+        let metadata = json!({"resources": [{"name": "   ", "url": "\t\n", "format": ""}]});
+        assert!(DatasetSchema::from_metadata(&metadata).resources.is_empty());
+
+        // Where a real facet survives, the blank ones stay absent rather than
+        // becoming empty strings, and the survivor is trimmed.
+        let metadata = json!({"resources": [{"name": "  ", "format": "  CSV  "}]});
+        let r = &DatasetSchema::from_metadata(&metadata).resources[0];
+        assert_eq!(r.name, None);
+        assert_eq!(r.format.as_deref(), Some("CSV"));
+
+        // The same for the JSON-LD spellings, literal and node reference alike.
+        let metadata = json!({
+            "distribution": [{
+                "dct:title": {"@value": "  "},
+                "dcat:downloadURL": {"@id": "  https://example.org/a.csv  "}
+            }]
+        });
+        let r = &DatasetSchema::from_metadata(&metadata).resources[0];
+        assert_eq!(r.name, None);
+        assert_eq!(r.url.as_deref(), Some("https://example.org/a.csv"));
+    }
+
+    #[test]
+    fn a_description_alone_is_not_a_resource() {
+        // Prose says nothing about what the distribution is or where to get it,
+        // and the raw node is preserved in `metadata` either way.
+        let metadata = json!({
+            "distribution": [{"dct:description": {"@value": "Available on request"}}]
+        });
+        assert!(DatasetSchema::from_metadata(&metadata).resources.is_empty());
+
+        // Any other facet alongside it does make the node a resource, and the
+        // description then rides along.
+        let metadata = json!({
+            "distribution": [{
+                "dct:description": {"@value": "Available on request"},
+                "dct:format": "CSV"
+            }]
+        });
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources.len(), 1);
+        assert_eq!(
+            schema.resources[0].description.as_deref(),
+            Some("Available on request")
+        );
+    }
+
+    #[test]
+    fn an_empty_field_list_alone_is_not_a_resource() {
+        // `fields: []` is the shape a portal emits for a table whose schema it
+        // does not know; it is no more informative than an absent one.
+        let metadata = json!({"resources": [{"fields": []}, {"schema": {"fields": []}}]});
+        assert!(DatasetSchema::from_metadata(&metadata).resources.is_empty());
     }
 
     #[test]

@@ -198,14 +198,13 @@ async fn every_client_family_matches_its_documented_resource_reachability() {
             .iter()
             .map(|dataset| DatasetSchema::from_metadata(&dataset.metadata))
             .collect();
-        // Only *informative* resources count. A DCAT `{"@id": "..."}` reference
-        // node is a JSON object, so `extract_resource` happily normalizes it
-        // into a resource with every field `None` — a phantom that proves no
-        // resource depth and would inflate the completeness signals in #192.
+        // Every resource `DatasetSchema` emits is informative by construction:
+        // a node from which no facet could be read — a DCAT `{"@id": "..."}`
+        // reference that never resolved, say — yields no resource at all (#207).
+        // So a non-empty list here means real reachable depth, not phantoms.
         let resources: Vec<&DatasetResource> = schemas
             .iter()
             .flat_map(|schema| schema.resources.iter())
-            .filter(|resource| is_informative(resource))
             .collect();
 
         match &expectations[family] {
@@ -279,10 +278,9 @@ async fn dcat_resource_smoke() {
     let with_resources = datasets
         .iter()
         .filter(|dataset| {
-            DatasetSchema::from_metadata(&dataset.metadata)
+            !DatasetSchema::from_metadata(&dataset.metadata)
                 .resources
-                .iter()
-                .any(is_informative)
+                .is_empty()
         })
         .count();
 
@@ -295,18 +293,6 @@ async fn dcat_resource_smoke() {
         "{portal_url}: no dataset exposed an informative resource, so `@graph` \
          distribution resolution is not reaching real portal payloads"
     );
-}
-
-/// Whether a normalized resource carries any usable detail.
-///
-/// A resource with no name, format, media type, URL, or fields tells a consumer
-/// nothing; counting it as resource depth would overstate coverage.
-fn is_informative(resource: &DatasetResource) -> bool {
-    resource.name.is_some()
-        || resource.format.is_some()
-        || resource.media_type.is_some()
-        || resource.url.is_some()
-        || !resource.fields.is_empty()
 }
 
 /// Confirms a `Gap` family really does hold resource detail in `metadata`, so
