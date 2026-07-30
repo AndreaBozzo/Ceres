@@ -14,7 +14,16 @@
         "temporal": {"interval": [["2015-06-27T00:00:00Z", null]]}
       },
       "summaries": {"platform": ["sentinel-2a", "sentinel-2b"]},
-      "assets": {"thumbnail": {"href": "https://catalog.test/thumb.png", "type": "image/png"}},
+      "assets": {
+        "thumbnail": {"href": "https://catalog.test/thumb.png", "type": "image/png", "roles": ["thumbnail"]},
+        "zarr": {
+          "href": "https://catalog.test/sentinel-2-l2a.zarr",
+          "type": "application/vnd+zarr",
+          "title": "Analysis-ready cube",
+          "description": "Chunked for time-series access",
+          "roles": ["data"]
+        }
+      },
       "links": [
         {"rel": "self", "href": "https://catalog.test/collections/sentinel-2-l2a", "type": "application/json"},
         {"rel": "items", "href": "https://catalog.test/collections/sentinel-2-l2a/items", "type": "application/geo+json"}

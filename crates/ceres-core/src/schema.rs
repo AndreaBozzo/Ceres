@@ -37,8 +37,13 @@
 //!   `resource.columns_*` arrays rather than a resource array. Its resource is
 //!   synthesized too, and unlike OpenDataSoft it does carry a URL: the SODA
 //!   endpoint is rebuilt from the payload's own domain and dataset identifier.
-//! - ArcGIS Hub and STAC harvest resource detail into shapes this module does
-//!   not yet read; see the resource-parity suite in
+//! - A STAC Collection keys its artifacts by name in an `assets` object rather
+//!   than listing them, so they are read from there. Its `links` are the catalog
+//!   navigation graph, not distributions, and are deliberately skipped: a
+//!   collection with no assets yields no resources, because its data lives in
+//!   its Items, which Ceres does not harvest.
+//! - ArcGIS Hub harvests resource detail into a shape this module does not yet
+//!   read; see the resource-parity suite in
 //!   `ceres-client/tests/resource_parity.rs` for the current baseline.
 
 use serde::Serialize;
@@ -93,6 +98,10 @@ impl DatasetSchema {
             .or_else(|| socrata_table(metadata))
             .into_iter()
             .collect();
+
+        // STAC keys its artifacts by name instead of listing them, so they are
+        // invisible to the array walk below.
+        resources.extend(stac_assets(metadata));
 
         for key in [
             "resources",
@@ -389,6 +398,59 @@ fn socrata_table(metadata: &Value) -> Option<DatasetResource> {
     // A Discovery envelope with nothing to say about its table is not a
     // resource, by the same rule the generic path applies.
     .filter(is_informative)
+}
+
+/// Reads a STAC Collection's `assets` as normalized resources.
+///
+/// STAC carries a collection's downloadable artifacts in `assets`, a **keyed
+/// object** rather than an array, so the array walk in
+/// [`DatasetSchema::from_metadata`] never sees them. Each value is an asset
+/// object whose fields map onto the normalized shape directly: `href` is the
+/// URL, `type` the media type, and `title` the name — falling back to the asset
+/// key (`thumbnail`, `data`, `zarr`) when the publisher supplied no title, since
+/// the key is the name STAC itself addresses the asset by.
+///
+/// `type` is a media type rather than a format label, so `format` stays `None`
+/// instead of being invented from it — the same restraint the OGC CSW path
+/// applies to an access protocol.
+///
+/// **`links` are deliberately not read.** They are STAC's navigation graph
+/// (`self`, `root`, `parent`, `child`, `items`, `next`), not the collection's
+/// distributions: `rel="items"` returns further STAC JSON to walk rather than
+/// the data, and its shape is uniform across every collection in a catalog, so
+/// reading it would add one resource of no information to each. Assets alone
+/// represent what the collection published. A collection with no assets
+/// therefore yields no resources — the honest answer, since its data lives in
+/// its Items, which Ceres does not harvest.
+///
+/// Recognized by `stac_version`, which the spec requires on every Collection and
+/// which no other supported family emits, guarding against a keyed `assets`
+/// object meaning something else elsewhere. Iteration follows the asset key:
+/// `serde_json` maps are ordered, so the result is stable across runs.
+fn stac_assets(metadata: &Value) -> Vec<DatasetResource> {
+    if !metadata.get("stac_version").is_some_and(Value::is_string) {
+        return Vec::new();
+    }
+    let Some(assets) = metadata.get("assets").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+
+    assets
+        .iter()
+        .filter(|(_, asset)| asset.is_object())
+        .filter_map(|(key, asset)| {
+            Some(DatasetResource {
+                name: first_str(asset, &["title"])
+                    .or_else(|| (!key.is_empty()).then(|| key.clone())),
+                format: None,
+                media_type: first_str(asset, &["type"]),
+                url: first_str(asset, &["href"]),
+                description: first_str(asset, &["description"]),
+                fields: Vec::new(),
+            })
+            .filter(is_informative)
+        })
+        .collect()
 }
 
 /// Zips Socrata's parallel `columns_*` arrays into column-level fields.
@@ -1034,6 +1096,106 @@ mod tests {
                 "{metadata} should yield no resource"
             );
         }
+    }
+
+    /// A trimmed STAC Collection, in the shape the client persists.
+    fn stac_collection(assets: Value) -> Value {
+        json!({
+            "stac_version": "1.0.0",
+            "type": "Collection",
+            "id": "sentinel-2-l2a",
+            "title": "Sentinel-2 Level 2A",
+            "license": "proprietary",
+            "assets": assets,
+            "links": [
+                {"rel": "self", "href": "https://catalog.test/collections/sentinel-2-l2a",
+                 "type": "application/json"},
+                {"rel": "items", "href": "https://catalog.test/collections/sentinel-2-l2a/items",
+                 "type": "application/geo+json"}
+            ]
+        })
+    }
+
+    #[test]
+    fn stac_keyed_assets_become_resources() {
+        let metadata = stac_collection(json!({
+            "thumbnail": {
+                "href": "https://catalog.test/thumb.png",
+                "type": "image/png",
+                "roles": ["thumbnail"]
+            },
+            "zarr": {
+                "href": "https://catalog.test/cube.zarr",
+                "type": "application/vnd+zarr",
+                "title": "Analysis-ready cube",
+                "description": "Chunked for time-series access",
+                "roles": ["data"]
+            }
+        }));
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources.len(), 2);
+
+        // Assets are keyed, not ordered; iteration follows the key.
+        let thumbnail = &schema.resources[0];
+        assert_eq!(thumbnail.name.as_deref(), Some("thumbnail"));
+        assert_eq!(thumbnail.media_type.as_deref(), Some("image/png"));
+        assert_eq!(
+            thumbnail.url.as_deref(),
+            Some("https://catalog.test/thumb.png")
+        );
+        // `type` is a media type; no format is invented from it.
+        assert_eq!(thumbnail.format, None);
+
+        let zarr = &schema.resources[1];
+        assert_eq!(zarr.name.as_deref(), Some("Analysis-ready cube"));
+        assert_eq!(zarr.media_type.as_deref(), Some("application/vnd+zarr"));
+        assert_eq!(zarr.url.as_deref(), Some("https://catalog.test/cube.zarr"));
+        assert_eq!(
+            zarr.description.as_deref(),
+            Some("Chunked for time-series access")
+        );
+    }
+
+    #[test]
+    fn stac_links_are_not_resources() {
+        // `links` is STAC's navigation graph, not the collection's
+        // distributions. A collection with no assets exposes nothing, rather
+        // than one resource per catalog rel.
+        let schema = DatasetSchema::from_metadata(&stac_collection(json!({})));
+        assert!(schema.resources.is_empty());
+    }
+
+    #[test]
+    fn stac_assets_need_the_collection_signature() {
+        // A keyed `assets` object on some other family's payload is not a STAC
+        // collection, and an array-valued `assets` is not the keyed map either.
+        for metadata in [
+            json!({"assets": {"data": {"href": "https://example.org/a.tif"}}}),
+            json!({"stac_version": "1.0.0",
+                   "assets": [{"href": "https://example.org/a.tif"}]}),
+        ] {
+            assert!(
+                DatasetSchema::from_metadata(&metadata).resources.is_empty(),
+                "{metadata} is not a STAC collection with keyed assets"
+            );
+        }
+    }
+
+    #[test]
+    fn stac_degenerate_assets_are_skipped() {
+        let metadata = stac_collection(json!({
+            // Not an object: nothing to normalize, and the key alone would
+            // otherwise invent a resource out of a bare string.
+            "broken": "https://catalog.test/a.tif",
+            // An object with nothing in it and no key to fall back on.
+            "": {},
+            "data": {"href": "https://catalog.test/a.tif"}
+        }));
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources.len(), 1);
+        assert_eq!(schema.resources[0].name.as_deref(), Some("data"));
     }
 
     #[test]
