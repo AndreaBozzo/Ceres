@@ -13,19 +13,27 @@
 //!
 //! # Reading the expectation table
 //!
-//! [`expectations`] records, per family, what resource detail is reachable
-//! **today**. Families whose source payload carries resource detail that
-//! [`DatasetSchema`] cannot yet reach are marked [`Expect::Gap`] with the
-//! tracking issue. Those rows assert the gap is still *exactly* as described,
-//! so closing one without updating this table fails the suite rather than
-//! silently drifting — the table is the milestone's ratchet, not a wishlist.
+//! [`expectations`] records, per family, which resource facets are reachable.
+//! Every supported family now reaches its resource detail, so the table is a
+//! floor rather than a ratchet: a family that stops populating a listed facet
+//! fails here, and a new family arrives with a row of its own.
+//!
+//! It is a floor, not a wishlist. A row lists only the facets the family's
+//! source payload genuinely provides — the OGC CSW fixture carries no format,
+//! and an ArcGIS service has no media type — so a facet is added when the
+//! mapping starts producing it, never in anticipation.
+//!
+//! Until #206 closed the last gap, families whose detail `DatasetSchema` could
+//! not yet reach were carried here as `Expect::Gap` rows naming the tracking
+//! issue and the key their detail lived in. See the history of this file for
+//! that shape if a future client family lands with detail left unreached.
 
 use std::collections::BTreeMap;
 
 use ceres_core::schema::DatasetSchema;
 use ceres_core::traits::PortalClient;
 use ceres_core::{DatasetResource, NewDataset};
-use serde_json::{Value, json};
+use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -39,23 +47,15 @@ use ceres_client::{
 // ---------------------------------------------------------------------------
 
 /// What a portal family is expected to yield through `DatasetSchema`.
+///
+/// Asserts that at least one harvested dataset exposes a resource populating
+/// each listed facet.
 #[derive(Debug)]
-enum Expect {
-    /// The family reaches its resource detail. Asserts at least one dataset
-    /// exposes a resource whose listed facets are populated.
-    Resources {
-        /// Facets that must be non-`None` on at least one resource.
-        facets: &'static [Facet],
-        /// Whether at least one resource must carry column-level fields.
-        fields: bool,
-    },
-    /// The source payload carries resource detail that `DatasetSchema` cannot
-    /// reach yet. `where_it_lives` documents the key holding it, so the row
-    /// doubles as the specification for closing the gap.
-    Gap {
-        issue: &'static str,
-        where_it_lives: &'static str,
-    },
+struct Expect {
+    /// Facets that must be non-`None` on at least one resource.
+    facets: &'static [Facet],
+    /// Whether at least one resource must carry column-level fields.
+    fields: bool,
 }
 
 /// A normalized resource facet, named so failures point at a concrete field.
@@ -81,35 +81,35 @@ impl Facet {
 /// The reachability baseline, one row per portal family.
 ///
 /// Measured against the live index at the time of writing: of 2.62M harvested
-/// datasets, the `Resources` rows below account for ~1.47M with reachable
-/// resources, while the `Gap` rows account for ~25k whose detail is harvested
-/// but unreachable — the 25,154 ArcGIS Hub items of #206, now that STAC's 2,263
-/// collections read their assets.
+/// datasets, ~1.47M had reachable resources when this table was first written,
+/// with 27k more behind the two gaps that #205 and #206 have since closed —
+/// STAC's 2,263 collections and ArcGIS Hub's 25,154 items.
 ///
-/// A `Resources` row means the family's detail is reachable *where the portal
-/// published it*, not that every dataset in the family has some. OpenDataSoft
-/// is the clearest case: 58,510 of its 170,144 harvested datasets yield an
-/// informative resource, because ODS ships an empty column schema for every
-/// dataset that carries no records.
+/// A row means the family's detail is reachable *where the portal published
+/// it*, not that every dataset in the family has some. OpenDataSoft is the
+/// clearest case: 58,510 of its 170,144 harvested datasets yield a resource,
+/// because ODS ships an empty column schema for every dataset that carries no
+/// records. ArcGIS Hub is the same story for a different reason: items that are
+/// uploaded files rather than services publish no endpoint to point at.
 fn expectations() -> BTreeMap<&'static str, Expect> {
     BTreeMap::from([
         (
             "ckan",
-            Expect::Resources {
+            Expect {
                 facets: &[Facet::Name, Facet::Format, Facet::MediaType, Facet::Url],
                 fields: true,
             },
         ),
         (
             "project_open_data",
-            Expect::Resources {
+            Expect {
                 facets: &[Facet::Name, Facet::Format, Facet::Url],
                 fields: false,
             },
         ),
         (
             "dcat_udata",
-            Expect::Resources {
+            Expect {
                 facets: &[Facet::Name, Facet::Format, Facet::MediaType, Facet::Url],
                 fields: false,
             },
@@ -119,7 +119,7 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             // arrays, addressed by the SODA endpoint rebuilt from the payload's
             // own domain and four-by-four identifier.
             "socrata",
-            Expect::Resources {
+            Expect {
                 facets: &[Facet::Name, Facet::Format, Facet::MediaType, Facet::Url],
                 fields: true,
             },
@@ -130,17 +130,19 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             // absolute one. `Url` and `MediaType` come from the attachments and
             // alternative exports hanging off it, which do.
             "opendatasoft",
-            Expect::Resources {
+            Expect {
                 facets: &[Facet::Name, Facet::MediaType, Facet::Url],
                 fields: true,
             },
         ),
         (
+            // A Hub item is a service, not a file: one resource, the endpoint
+            // at `properties.url`, typed by `properties.type`. The root answers
+            // in whatever `f=` asks for, so no media type is expected.
             "arcgis",
-            Expect::Gap {
-                issue: "#206",
-                where_it_lives: "`properties.url` — the service endpoint, with `properties.type` \
-                                 as its format",
+            Expect {
+                facets: &[Facet::Name, Facet::Format, Facet::Url],
+                fields: false,
             },
         ),
         (
@@ -148,7 +150,7 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             // `type` is a media type, so no format is expected; `links` are
             // navigation rather than distributions and are not read at all.
             "stac",
-            Expect::Resources {
+            Expect {
                 facets: &[Facet::Name, Facet::MediaType, Facet::Url],
                 fields: false,
             },
@@ -160,7 +162,7 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             // `protocol` split is unit-tested against all three real-world
             // shapes in `ceres_core::schema`.
             "ogc_csw",
-            Expect::Resources {
+            Expect {
                 facets: &[Facet::Url],
                 fields: false,
             },
@@ -211,50 +213,25 @@ async fn every_client_family_matches_its_documented_resource_reachability() {
             .flat_map(|schema| schema.resources.iter())
             .collect();
 
-        match &expectations[family] {
-            Expect::Resources { facets, fields } => {
-                assert!(
-                    !resources.is_empty(),
-                    "{family}: expected reachable resources but DatasetSchema found none — \
-                     the client stopped preserving resource detail in `metadata`"
-                );
+        let Expect { facets, fields } = &expectations[family];
+        assert!(
+            !resources.is_empty(),
+            "{family}: expected reachable resources but DatasetSchema found none — \
+             the client stopped preserving resource detail in `metadata`"
+        );
 
-                for facet in *facets {
-                    assert!(
-                        resources.iter().any(|r| facet.get(r).is_some()),
-                        "{family}: no resource populated {facet:?}, though the source payload \
-                         provides it"
-                    );
-                }
+        for facet in *facets {
+            assert!(
+                resources.iter().any(|r| facet.get(r).is_some()),
+                "{family}: no resource populated {facet:?}, though the source payload provides it"
+            );
+        }
 
-                if *fields {
-                    assert!(
-                        resources.iter().any(|r| !r.fields.is_empty()),
-                        "{family}: no resource carried column-level fields"
-                    );
-                }
-            }
-            Expect::Gap {
-                issue,
-                where_it_lives,
-            } => {
-                assert!(
-                    resources.is_empty(),
-                    "{family}: resources are now reachable ({} found) — the {issue} gap is \
-                     closed, so move this row to Expect::Resources. Detail lived in: \
-                     {where_it_lives}",
-                    resources.len()
-                );
-
-                assert!(
-                    datasets
-                        .iter()
-                        .any(|dataset| carries_unreachable_detail(family, &dataset.metadata)),
-                    "{family}: the mock payload no longer carries the unreachable resource \
-                     detail this row describes ({where_it_lives}), so the gap assertion is \
-                     vacuous"
-                );
-            }
+        if *fields {
+            assert!(
+                resources.iter().any(|r| !r.fields.is_empty()),
+                "{family}: no resource carried column-level fields"
+            );
         }
     }
 }
@@ -297,23 +274,6 @@ async fn dcat_resource_smoke() {
         "{portal_url}: no dataset exposed an informative resource, so `@graph` \
          distribution resolution is not reaching real portal payloads"
     );
-}
-
-/// Confirms a `Gap` family really does hold resource detail in `metadata`, so
-/// the "still empty" assertion above cannot pass vacuously against a payload
-/// that simply has no resources to find.
-fn carries_unreachable_detail(family: &str, metadata: &Value) -> bool {
-    match family {
-        "dcat_udata" => metadata.get("distribution").is_some_and(|distribution| {
-            !distribution.is_array() || distribution.as_array().is_some_and(|d| !d.is_empty())
-        }),
-        "arcgis" => metadata.pointer("/properties/url").is_some(),
-        "ogc_csw" => metadata
-            .get("online_resources")
-            .and_then(Value::as_array)
-            .is_some_and(|resources| !resources.is_empty()),
-        _ => false,
-    }
 }
 
 // ---------------------------------------------------------------------------
