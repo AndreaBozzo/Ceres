@@ -419,7 +419,7 @@ fn socrata_table(metadata: &Value) -> Option<DatasetResource> {
     .filter(is_informative)
 }
 
-/// Reads a STAC Collection's `assets` as normalized resources.
+/// Reads a STAC object's `assets` as normalized resources.
 ///
 /// STAC carries a collection's downloadable artifacts in `assets`, a **keyed
 /// object** rather than an array, so the array walk in
@@ -442,10 +442,17 @@ fn socrata_table(metadata: &Value) -> Option<DatasetResource> {
 /// therefore yields no resources — the honest answer, since its data lives in
 /// its Items, which Ceres does not harvest.
 ///
-/// Recognized by `stac_version`, which the spec requires on every Collection and
-/// which no other supported family emits, guarding against a keyed `assets`
-/// object meaning something else elsewhere. Iteration follows the asset key:
-/// `serde_json` maps are ordered, so the result is stable across runs.
+/// Recognized by `stac_version` alone — deliberately any STAC object, not
+/// Collections specifically. Ceres harvests Collections, so that is what this
+/// sees in practice, but `assets` has the same shape on an Item, so narrowing
+/// the guard to `type == "Collection"` would buy no correctness while risking
+/// the silent loss of every collection from a portal that omits `type`. A
+/// Catalog has no `assets` and so yields nothing either way. What the guard is
+/// for is the opposite direction: keeping a keyed `assets` object that means
+/// something else on a non-STAC payload from being read as artifacts.
+///
+/// Iteration follows the asset key, so the result is stable for a given
+/// payload.
 fn stac_assets(metadata: &Value) -> Vec<DatasetResource> {
     if !metadata.get("stac_version").is_some_and(Value::is_string) {
         return Vec::new();
@@ -1155,21 +1162,27 @@ mod tests {
         let schema = DatasetSchema::from_metadata(&metadata);
         assert_eq!(schema.resources.len(), 2);
 
-        // Assets are keyed, not ordered; iteration follows the key.
-        let thumbnail = &schema.resources[0];
+        // Assets are keyed rather than ordered, so each is located by its URL:
+        // what matters here is the mapping, not the order it comes out in.
+        let by_url = |url: &str| {
+            schema
+                .resources
+                .iter()
+                .find(|r| r.url.as_deref() == Some(url))
+                .unwrap_or_else(|| panic!("no resource for {url}"))
+        };
+
+        // No title: the asset key names the resource.
+        let thumbnail = by_url("https://catalog.test/thumb.png");
         assert_eq!(thumbnail.name.as_deref(), Some("thumbnail"));
         assert_eq!(thumbnail.media_type.as_deref(), Some("image/png"));
-        assert_eq!(
-            thumbnail.url.as_deref(),
-            Some("https://catalog.test/thumb.png")
-        );
         // `type` is a media type; no format is invented from it.
         assert_eq!(thumbnail.format, None);
 
-        let zarr = &schema.resources[1];
+        // A title wins over the key.
+        let zarr = by_url("https://catalog.test/cube.zarr");
         assert_eq!(zarr.name.as_deref(), Some("Analysis-ready cube"));
         assert_eq!(zarr.media_type.as_deref(), Some("application/vnd+zarr"));
-        assert_eq!(zarr.url.as_deref(), Some("https://catalog.test/cube.zarr"));
         assert_eq!(
             zarr.description.as_deref(),
             Some("Chunked for time-series access")
