@@ -43,9 +43,14 @@
 //!   navigation graph, not distributions, and are deliberately skipped: a
 //!   collection with no assets yields no resources, because its data lives in
 //!   its Items, which Ceres does not harvest.
-//! - ArcGIS Hub harvests resource detail into a shape this module does not yet
-//!   read; see the resource-parity suite in
-//!   `ceres-client/tests/resource_parity.rs` for the current baseline.
+//! - An ArcGIS Hub item is a service rather than a file, so it yields exactly
+//!   one resource: the endpoint at `properties.url`, typed by
+//!   `properties.type`. The service root only — deriving its layer and query
+//!   endpoints would mean probing the service at harvest time. An item that
+//!   publishes no URL yields no resource.
+//!
+//! The resource-parity suite in `ceres-client/tests/resource_parity.rs` holds
+//! the per-family reachability table this module is measured against.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -103,6 +108,7 @@ impl DatasetSchema {
         // STAC keys its artifacts by name instead of listing them, so they are
         // invisible to the array walk below.
         resources.extend(stac_assets(metadata));
+        resources.extend(arcgis_service(metadata));
 
         for key in [
             "resources",
@@ -417,6 +423,60 @@ fn socrata_table(metadata: &Value) -> Option<DatasetResource> {
     // A Discovery envelope with nothing to say about its table is not a
     // resource, by the same rule the generic path applies.
     .filter(is_informative)
+}
+
+/// Exposes an ArcGIS Hub item's service endpoint as its single resource.
+///
+/// An ArcGIS Hub item is a **service, not a file**, so it has no resource array
+/// to walk: the one thing it publishes is the endpoint at `properties.url`,
+/// with `properties.type` (`Feature Service`, `Map Service`, `Image Service`)
+/// naming what answers there. That is a format in the same sense an OGC
+/// `protocol` of `OGC:WFS` is one — it says what the endpoint speaks — so it is
+/// carried verbatim rather than reduced to an abbreviation.
+///
+/// **One resource per service.** This differs from the file-per-resource model
+/// of the other families, and deliberately so:
+///
+/// - Only the service **root** is exposed. The standard export endpoints
+///   (`/0`, `/query?f=geojson`) need a layer index, and the layer set of a
+///   `FeatureServer` or `MapServer` is only knowable by asking the service. A
+///   synthesized `/0/query` would be wrong for every service whose layers do
+///   not start at zero, and meaningless for an `ImageServer`. Since resolving
+///   that would mean probing the service at harvest time — network I/O per
+///   item, on catalogs of tens of thousands — the root is the honest stopping
+///   point, and a consumer that wants layers can walk it themselves.
+/// - No media type is set. The root answers as HTML or JSON depending on the
+///   `f=` query parameter, so no single one describes it.
+///
+/// The resource takes `properties.name` — the service's own name
+/// (`Remarkable_Trees`) — rather than `properties.title`, which is the item
+/// title the dataset already carries. Its description is likewise left to the
+/// dataset, as for the OpenDataSoft and Socrata tables.
+///
+/// Returns `None` without a `properties.url`. Hub items that are uploaded files
+/// rather than services carry none in the search payload, so there is no
+/// endpoint to point at, and their item type alone is not a distribution.
+///
+/// Recognized by `orgId`/`typeKeywords`, ArcGIS item fields that no other
+/// supported family emits, so a `properties.url` on some other GeoJSON payload
+/// is not misread as a service.
+fn arcgis_service(metadata: &Value) -> Option<DatasetResource> {
+    let properties = metadata.get("properties").filter(|p| p.is_object())?;
+    if !["orgId", "typeKeywords"]
+        .iter()
+        .any(|key| properties.get(*key).is_some())
+    {
+        return None;
+    }
+
+    Some(DatasetResource {
+        name: first_str(properties, &["name"]),
+        format: first_str(properties, &["type"]),
+        media_type: None,
+        url: Some(first_str(properties, &["url"])?),
+        description: None,
+        fields: Vec::new(),
+    })
 }
 
 /// Reads a STAC object's `assets` as normalized resources.
@@ -1122,6 +1182,90 @@ mod tests {
                 "{metadata} should yield no resource"
             );
         }
+    }
+
+    /// A trimmed ArcGIS Hub item, in the shape the client persists.
+    fn arcgis_item(properties: Value) -> Value {
+        let mut item = json!({
+            "type": "Feature",
+            "id": "a1b2c3d4",
+            "geometry": null,
+            "properties": {
+                "id": "a1b2c3d4",
+                "title": "Remarkable Trees",
+                "name": "Remarkable_Trees",
+                "type": "Feature Service",
+                "typeKeywords": ["ArcGIS Server", "Data", "Feature Service", "Service"],
+                "owner": "ExampleGIS",
+                "orgId": "AbCdEfGhIjKlMnOp",
+                "snippet": "Inventory of remarkable trees.",
+                "url": "https://services.arcgis.com/AbCdEfGhIjKlMnOp/arcgis/rest/services/Remarkable_Trees/FeatureServer"
+            }
+        });
+        for (key, value) in properties.as_object().unwrap() {
+            item["properties"][key] = value.clone();
+        }
+        item
+    }
+
+    #[test]
+    fn arcgis_service_endpoint_becomes_one_resource() {
+        let schema = DatasetSchema::from_metadata(&arcgis_item(json!({})));
+        assert_eq!(schema.resources.len(), 1);
+        let r = &schema.resources[0];
+
+        // The service's own name, not the item title the dataset already carries.
+        assert_eq!(r.name.as_deref(), Some("Remarkable_Trees"));
+        // The ArcGIS item type names the service, as an OGC protocol does.
+        assert_eq!(r.format.as_deref(), Some("Feature Service"));
+        assert_eq!(
+            r.url.as_deref(),
+            Some(
+                "https://services.arcgis.com/AbCdEfGhIjKlMnOp/arcgis/rest/services/Remarkable_Trees/FeatureServer"
+            )
+        );
+        // The service root answers in whatever `f=` asks for, so no media type
+        // is invented; the item carries no column schema either.
+        assert_eq!(r.media_type, None);
+        assert!(r.fields.is_empty());
+        // The dataset already carries its own description.
+        assert_eq!(r.description, None);
+    }
+
+    #[test]
+    fn arcgis_item_without_a_service_url_yields_no_resource() {
+        // Hub items that are uploaded files rather than services carry no URL
+        // in the search payload, so there is no endpoint to point at. Their
+        // item type alone is not a distribution.
+        for url in [Value::Null, json!(""), json!(42)] {
+            let metadata = arcgis_item(json!({"url": url.clone(), "type": "CSV"}));
+            assert!(
+                DatasetSchema::from_metadata(&metadata).resources.is_empty(),
+                "url {url} is not a service endpoint"
+            );
+        }
+    }
+
+    #[test]
+    fn arcgis_service_without_a_name_still_exposes_its_endpoint() {
+        let mut metadata = arcgis_item(json!({}));
+        metadata["properties"]["name"] = Value::Null;
+
+        let r = &DatasetSchema::from_metadata(&metadata).resources[0];
+        assert_eq!(r.name, None);
+        assert_eq!(r.format.as_deref(), Some("Feature Service"));
+        assert!(r.url.is_some());
+    }
+
+    #[test]
+    fn arcgis_needs_the_item_signature() {
+        // A `properties.url` on some other family's GeoJSON payload is not an
+        // ArcGIS Hub item; `orgId`/`typeKeywords` are what make it one.
+        let metadata = json!({
+            "type": "Feature",
+            "properties": {"url": "https://example.org/service", "type": "Feature Service"}
+        });
+        assert!(DatasetSchema::from_metadata(&metadata).resources.is_empty());
     }
 
     /// A trimmed STAC Collection, in the shape the client persists.
