@@ -82,8 +82,9 @@ impl Facet {
 ///
 /// Measured against the live index at the time of writing: of 2.62M harvested
 /// datasets, the `Resources` rows below account for ~1.47M with reachable
-/// resources, while the `Gap` rows account for ~27k whose detail is harvested
-/// but unreachable.
+/// resources, while the `Gap` rows account for ~25k whose detail is harvested
+/// but unreachable — the 25,154 ArcGIS Hub items of #206, now that STAC's 2,263
+/// collections read their assets.
 ///
 /// A `Resources` row means the family's detail is reachable *where the portal
 /// published it*, not that every dataset in the family has some. OpenDataSoft
@@ -143,10 +144,13 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             },
         ),
         (
+            // A collection's artifacts, read from the keyed `assets` object.
+            // `type` is a media type, so no format is expected; `links` are
+            // navigation rather than distributions and are not read at all.
             "stac",
-            Expect::Gap {
-                issue: "#205",
-                where_it_lives: "`assets` — a keyed object rather than an array",
+            Expect::Resources {
+                facets: &[Facet::Name, Facet::MediaType, Facet::Url],
+                fields: false,
             },
         ),
         (
@@ -304,10 +308,6 @@ fn carries_unreachable_detail(family: &str, metadata: &Value) -> bool {
             !distribution.is_array() || distribution.as_array().is_some_and(|d| !d.is_empty())
         }),
         "arcgis" => metadata.pointer("/properties/url").is_some(),
-        "stac" => metadata
-            .get("assets")
-            .and_then(Value::as_object)
-            .is_some_and(|assets| !assets.is_empty()),
         "ogc_csw" => metadata
             .get("online_resources")
             .and_then(Value::as_array)
