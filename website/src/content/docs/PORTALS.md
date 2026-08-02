@@ -195,7 +195,10 @@ Notes:
 The catalog Ceres maintains is published as the
 [Ceres Open Data Index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index)
 on Hugging Face: curated Parquet snapshots with versioned manifests, SHA-256
-checksums, coverage/quality reports, and snapshot-to-snapshot changelogs.
+checksums, coverage/quality reports, and snapshot-to-snapshot changelogs. Snapshot
+schema v2 exposes normalized resources in both `all.parquet` and every per-portal
+subset as `{name, format, media_type, url, field_count}` structs, so consumers do
+not need to understand each portal's raw metadata shape.
 
 ## What's next
 
