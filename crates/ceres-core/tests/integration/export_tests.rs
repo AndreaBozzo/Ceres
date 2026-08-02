@@ -14,6 +14,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use sha2::{Digest, Sha256};
 
 const TEST_PORTAL_URL: &str = "https://test-portal.example.com";
+const SPARSE_PORTAL_URL: &str = "https://sparse-portal.example.com";
 
 /// Helper to create and store test datasets in the mock store.
 async fn setup_test_datasets(store: &MockDatasetStore, count: usize) -> Vec<MockPortalData> {
@@ -442,7 +443,22 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
             "tags": [{"name": "air"}],
             "organization": {"title": "Env Agency"},
             "license_title": "CC-BY 4.0",
-            "metadata_modified": "2026-01-01"
+            "metadata_modified": "2026-01-01",
+            "resources": [
+                {
+                    "name": "readings.csv",
+                    "format": "CSV",
+                    "mimetype": "text/csv",
+                    "url": "https://cdn.example.com/readings.csv",
+                    "schema": {"fields": [{"name": "station_id", "type": "text"}]}
+                },
+                {
+                    "name": "readings.json",
+                    "format": "JSON",
+                    "mimetype": "application/json",
+                    "url": "https://cdn.example.com/readings.json"
+                }
+            ]
         }),
         content_hash: NewDataset::compute_content_hash(
             "Air quality measurements",
@@ -452,8 +468,8 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     let sparse = NewDataset {
         record_kind: ceres_core::CatalogRecordKind::Dataset,
         original_id: "sparse".to_string(),
-        source_portal: TEST_PORTAL_URL.to_string(),
-        url: format!("{TEST_PORTAL_URL}/dataset/sparse"),
+        source_portal: SPARSE_PORTAL_URL.to_string(),
+        url: format!("{SPARSE_PORTAL_URL}/dataset/sparse"),
         title: "Bus timetable export".to_string(),
         description: Some("Timetable data.".to_string()),
         embedding: None,
@@ -467,19 +483,34 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     store.upsert(&sparse).await.unwrap();
 
     let portals = PortalsConfig {
-        portals: vec![PortalEntry {
-            name: "test-portal".to_string(),
-            url: TEST_PORTAL_URL.to_string(),
-            portal_type: PortalType::Ckan,
-            enabled: true,
-            description: None,
-            url_template: None,
-            language: Some("en".to_string()),
-            profile: None,
-            sparql_endpoint: None,
-            ogc_endpoint: None,
-            aliases: Vec::new(),
-        }],
+        portals: vec![
+            PortalEntry {
+                name: "test-portal".to_string(),
+                url: TEST_PORTAL_URL.to_string(),
+                portal_type: PortalType::Ckan,
+                enabled: true,
+                description: None,
+                url_template: None,
+                language: Some("en".to_string()),
+                profile: None,
+                sparql_endpoint: None,
+                ogc_endpoint: None,
+                aliases: Vec::new(),
+            },
+            PortalEntry {
+                name: "sparse-portal".to_string(),
+                url: SPARSE_PORTAL_URL.to_string(),
+                portal_type: PortalType::Ckan,
+                enabled: true,
+                description: None,
+                url_template: None,
+                language: Some("en".to_string()),
+                profile: None,
+                sparql_endpoint: None,
+                ogc_endpoint: None,
+                aliases: Vec::new(),
+            },
+        ],
     };
     let service = ParquetExportService::new(store, Some(portals), ParquetExportConfig::default());
     let output = tempfile::tempdir().unwrap();
@@ -494,7 +525,7 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
             .unwrap();
 
     // Report figures agree with the manifest (acceptance criterion).
-    assert_eq!(report["schema_version"], "1.0.0");
+    assert_eq!(report["schema_version"], "2.0.0");
     assert_eq!(report["snapshot_id"], manifest["snapshot_id"]);
     assert_eq!(
         report["curation"]["exported"],
@@ -507,10 +538,24 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     );
 
     assert_eq!(report["coverage"]["total_datasets"], 2);
-    assert_eq!(report["coverage"]["portals"], 1);
+    assert_eq!(report["coverage"]["portals"], 2);
     assert_eq!(report["coverage"]["by_language"][0]["key"], "en");
     assert_eq!(report["coverage"]["by_language"][0]["count"], 2);
     assert_eq!(report["coverage"]["by_portal_type"][0]["key"], "ckan");
+    assert_eq!(
+        report["coverage"]["by_format"],
+        serde_json::json!([
+            {"key": "CSV", "count": 1},
+            {"key": "JSON", "count": 1}
+        ])
+    );
+    assert_eq!(
+        report["coverage"]["by_media_type"],
+        serde_json::json!([
+            {"key": "application/json", "count": 1},
+            {"key": "text/csv", "count": 1}
+        ])
+    );
 
     // Completeness: description present for both, license/org/tags/modified for one.
     let fc = &report["field_completeness"];
@@ -521,12 +566,44 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     assert_eq!(fc["license"]["rate"], 0.5);
     assert_eq!(fc["tags"]["present"], 1);
     assert_eq!(fc["modification_date"]["present"], 1);
+    assert_eq!(fc["resources_present"]["present"], 1);
+    assert_eq!(fc["resources_present"]["rate"], 0.5);
+    assert_eq!(fc["resource_schema_present"]["present"], 1);
+    assert_eq!(fc["resource_schema_present"]["rate"], 0.5);
+
+    let portal_quality = report["coverage"]["resource_quality_by_portal"]
+        .as_array()
+        .unwrap();
+    let rich_portal = portal_quality
+        .iter()
+        .find(|portal| portal["portal"] == "test-portal")
+        .unwrap();
+    assert_eq!(rich_portal["total_datasets"], 1);
+    assert_eq!(rich_portal["resources_present"]["rate"], 1.0);
+    assert_eq!(rich_portal["resource_schema_present"]["rate"], 1.0);
+    assert_eq!(rich_portal["by_format"].as_array().unwrap().len(), 2);
+
+    let sparse_portal = portal_quality
+        .iter()
+        .find(|portal| portal["portal"] == "sparse-portal")
+        .unwrap();
+    assert_eq!(sparse_portal["total_datasets"], 1);
+    assert_eq!(sparse_portal["resources_present"]["present"], 0);
+    assert_eq!(sparse_portal["resource_schema_present"]["present"], 0);
+    assert!(sparse_portal["by_format"].as_array().unwrap().is_empty());
 
     // Report is also surfaced on the in-memory result and a human-readable form.
     assert_eq!(result.report.coverage.total_datasets, 2);
     let report_md = std::fs::read_to_string(output.path().join("report.md")).unwrap();
     assert!(report_md.contains("# Ceres Snapshot Report"));
     assert!(report_md.contains("Field completeness"));
+    assert!(report_md.contains("By resource format"));
+    assert!(
+        report_md
+            .contains("Resource format and media-type counts below count resources, not datasets.")
+    );
+    assert!(report_md.contains("Resource quality by portal"));
+    assert!(report_md.contains("| sparse-portal | 1 | 0 (0.0%) | 0 (0.0%) |"));
 }
 
 // =============================================================================

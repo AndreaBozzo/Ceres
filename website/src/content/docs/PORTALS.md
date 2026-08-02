@@ -198,7 +198,9 @@ on Hugging Face: curated Parquet snapshots with versioned manifests, SHA-256
 checksums, coverage/quality reports, and snapshot-to-snapshot changelogs. Snapshot
 schema v2 exposes normalized resources in both `all.parquet` and every per-portal
 subset as `{name, format, media_type, url, field_count}` structs, so consumers do
-not need to understand each portal's raw metadata shape.
+not need to understand each portal's raw metadata shape. The versioned quality
+report also tracks resource and field-schema completeness globally and per portal,
+with resource-count format and media-type distributions from the same export pass.
 
 ## What's next
 

@@ -38,7 +38,7 @@ pub const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "2.0.0";
 pub const SNAPSHOT_DATA_SCHEMA_VERSION: &str = "2.0.0";
 
 /// Schema version for the coverage and quality report written beside every export.
-pub const SNAPSHOT_REPORT_SCHEMA_VERSION: &str = "1.0.0";
+pub const SNAPSHOT_REPORT_SCHEMA_VERSION: &str = "2.0.0";
 
 /// Schema version for the snapshot-to-snapshot changelog written when a previous
 /// snapshot is supplied.
@@ -252,13 +252,32 @@ pub struct CoverageReport {
     pub by_profile: Vec<CoverageBucket>,
     pub by_language: Vec<CoverageBucket>,
     pub by_portal: Vec<CoverageBucket>,
+    /// Counts of normalized resources grouped by their declared format.
+    pub by_format: Vec<CoverageBucket>,
+    /// Counts of normalized resources grouped by their declared media type.
+    pub by_media_type: Vec<CoverageBucket>,
+    /// Resource completeness and distributions for each contributing portal.
+    pub resource_quality_by_portal: Vec<PortalResourceQualityReport>,
 }
 
-/// One coverage bucket: a dimension value and its dataset count.
+/// One coverage bucket: a dimension value and its count. Dataset dimensions
+/// count datasets; resource format/media-type dimensions count resources.
 #[derive(Debug, Serialize)]
 pub struct CoverageBucket {
     pub key: String,
     pub count: u64,
+}
+
+/// Resource-level completeness and distributions for one contributing portal.
+#[derive(Debug, Serialize)]
+pub struct PortalResourceQualityReport {
+    pub portal: String,
+    pub source_portal: String,
+    pub total_datasets: u64,
+    pub resources_present: FieldCompleteness,
+    pub resource_schema_present: FieldCompleteness,
+    pub by_format: Vec<CoverageBucket>,
+    pub by_media_type: Vec<CoverageBucket>,
 }
 
 /// Field-completeness rates across the exported dataset.
@@ -270,6 +289,10 @@ pub struct FieldCompletenessReport {
     pub organization: FieldCompleteness,
     pub tags: FieldCompleteness,
     pub modification_date: FieldCompleteness,
+    /// Datasets with at least one normalized resource/distribution.
+    pub resources_present: FieldCompleteness,
+    /// Datasets with at least one resource carrying field-level schema.
+    pub resource_schema_present: FieldCompleteness,
 }
 
 /// Completeness of a single metadata field: rows present and the resulting rate.
@@ -332,6 +355,8 @@ struct QualityAccumulator {
     organization_present: u64,
     tags_present: u64,
     modification_date_present: u64,
+    resource_quality: ResourceQualityAccumulator,
+    resource_quality_by_portal: HashMap<String, ResourceQualityAccumulator>,
 }
 
 impl QualityAccumulator {
@@ -355,6 +380,49 @@ impl QualityAccumulator {
         }
         if !record.metadata_modified.trim().is_empty() {
             self.modification_date_present += 1;
+        }
+        self.resource_quality.observe(record);
+        self.resource_quality_by_portal
+            .entry(record.source_portal.clone())
+            .or_default()
+            .observe(record);
+    }
+}
+
+/// Accumulates resource completeness and facet distributions globally or for a
+/// single portal. Format and media-type buckets count resources, not datasets.
+#[derive(Clone, Default)]
+struct ResourceQualityAccumulator {
+    total_datasets: u64,
+    resources_present: u64,
+    resource_schema_present: u64,
+    format_counts: HashMap<String, u64>,
+    media_type_counts: HashMap<String, u64>,
+}
+
+impl ResourceQualityAccumulator {
+    fn observe(&mut self, record: &FlatRecord) {
+        self.total_datasets += 1;
+        if !record.resources.is_empty() {
+            self.resources_present += 1;
+        }
+        if record
+            .resources
+            .iter()
+            .any(|resource| resource.field_count > 0)
+        {
+            self.resource_schema_present += 1;
+        }
+        for resource in &record.resources {
+            if let Some(format) = &resource.format {
+                *self.format_counts.entry(format.clone()).or_default() += 1;
+            }
+            if let Some(media_type) = &resource.media_type {
+                *self
+                    .media_type_counts
+                    .entry(media_type.clone())
+                    .or_default() += 1;
+            }
         }
     }
 }
@@ -716,6 +784,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
         let mut type_counts: HashMap<String, u64> = HashMap::new();
         let mut profile_counts: HashMap<String, u64> = HashMap::new();
         let mut by_portal = Vec::with_capacity(outcome.portals.len());
+        let mut resource_quality_by_portal = Vec::with_capacity(outcome.portals.len());
         for portal in &outcome.portals {
             *type_counts.entry(portal.portal_type.clone()).or_default() += portal.count;
             let profile = portal.profile.clone().unwrap_or_else(|| "none".to_string());
@@ -723,6 +792,27 @@ impl<S: DatasetStore> ParquetExportService<S> {
             by_portal.push(CoverageBucket {
                 key: portal.name.clone(),
                 count: portal.count,
+            });
+            let resource_quality = outcome
+                .quality
+                .resource_quality_by_portal
+                .get(&portal.url)
+                .cloned()
+                .unwrap_or_default();
+            resource_quality_by_portal.push(PortalResourceQualityReport {
+                portal: portal.name.clone(),
+                source_portal: portal.url.clone(),
+                total_datasets: resource_quality.total_datasets,
+                resources_present: field_completeness(
+                    resource_quality.resources_present,
+                    resource_quality.total_datasets,
+                ),
+                resource_schema_present: field_completeness(
+                    resource_quality.resource_schema_present,
+                    resource_quality.total_datasets,
+                ),
+                by_format: sorted_buckets(resource_quality.format_counts),
+                by_media_type: sorted_buckets(resource_quality.media_type_counts),
             });
         }
 
@@ -758,6 +848,11 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 by_profile: sorted_buckets(profile_counts),
                 by_language: sorted_buckets(outcome.quality.language_counts.clone()),
                 by_portal,
+                by_format: sorted_buckets(outcome.quality.resource_quality.format_counts.clone()),
+                by_media_type: sorted_buckets(
+                    outcome.quality.resource_quality.media_type_counts.clone(),
+                ),
+                resource_quality_by_portal,
             },
             field_completeness: FieldCompletenessReport {
                 total,
@@ -767,6 +862,14 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 tags: field_completeness(outcome.quality.tags_present, total),
                 modification_date: field_completeness(
                     outcome.quality.modification_date_present,
+                    total,
+                ),
+                resources_present: field_completeness(
+                    outcome.quality.resource_quality.resources_present,
+                    total,
+                ),
+                resource_schema_present: field_completeness(
+                    outcome.quality.resource_quality.resource_schema_present,
                     total,
                 ),
             },
@@ -1434,6 +1537,13 @@ fn render_report_markdown(report: &SnapshotReport) -> String {
     write_bucket_table(&mut out, "By portal type", &cov.by_portal_type);
     write_bucket_table(&mut out, "By profile", &cov.by_profile);
     write_bucket_table(&mut out, "By language", &cov.by_language);
+    let _ = writeln!(
+        out,
+        "_Resource format and media-type counts below count resources, not datasets._"
+    );
+    let _ = writeln!(out);
+    write_bucket_table(&mut out, "By resource format", &cov.by_format);
+    write_bucket_table(&mut out, "By resource media type", &cov.by_media_type);
 
     let f = &report.field_completeness;
     let _ = writeln!(out, "## Field completeness ({} datasets)", f.total);
@@ -1445,6 +1555,33 @@ fn render_report_markdown(report: &SnapshotReport) -> String {
     write_completeness_row(&mut out, "organization", &f.organization);
     write_completeness_row(&mut out, "tags", &f.tags);
     write_completeness_row(&mut out, "modification_date", &f.modification_date);
+    write_completeness_row(&mut out, "resources_present", &f.resources_present);
+    write_completeness_row(
+        &mut out,
+        "resource_schema_present",
+        &f.resource_schema_present,
+    );
+    let _ = writeln!(out);
+
+    let _ = writeln!(out, "## Resource quality by portal");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "| Portal | Datasets | Resources present | Field schema present |"
+    );
+    let _ = writeln!(out, "| --- | ---: | ---: | ---: |");
+    for portal in &cov.resource_quality_by_portal {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} ({:.1}%) | {} ({:.1}%) |",
+            portal.portal,
+            portal.total_datasets,
+            portal.resources_present.present,
+            portal.resources_present.rate * 100.0,
+            portal.resource_schema_present.present,
+            portal.resource_schema_present.rate * 100.0
+        );
+    }
     let _ = writeln!(out);
 
     out
