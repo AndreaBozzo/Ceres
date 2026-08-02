@@ -10,8 +10,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use arrow::array::{Array, BooleanBuilder, StringArray, StringBuilder};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::array::{
+    Array, BooleanBuilder, ListBuilder, StringArray, StringBuilder, StructBuilder, UInt64Builder,
+};
+use arrow::datatypes::{DataType, Field, Fields, Schema};
 use arrow::record_batch::RecordBatch;
 use chrono::Utc;
 use futures::StreamExt;
@@ -26,10 +28,14 @@ use tracing::{info, warn};
 use crate::config::PortalsConfig;
 use crate::error::AppError;
 use crate::models::Dataset;
+use crate::schema::DatasetSchema;
 use crate::traits::DatasetStore;
 
 /// Schema version for the snapshot manifest written beside every Parquet export.
-pub const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "1.0.0";
+pub const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "2.0.0";
+
+/// Schema version for the dataset rows in `all.parquet` and per-portal files.
+pub const SNAPSHOT_DATA_SCHEMA_VERSION: &str = "2.0.0";
 
 /// Schema version for the coverage and quality report written beside every export.
 pub const SNAPSHOT_REPORT_SCHEMA_VERSION: &str = "1.0.0";
@@ -113,6 +119,7 @@ pub struct PortalExportStats {
 #[derive(Debug, Serialize)]
 pub struct SnapshotManifest {
     pub schema_version: String,
+    pub dataset_schema: SnapshotDatasetSchema,
     pub snapshot_id: String,
     pub generated_at: String,
     pub snapshot_date: String,
@@ -124,6 +131,22 @@ pub struct SnapshotManifest {
     pub files: Vec<SnapshotFile>,
     pub portals: Vec<SnapshotPortal>,
     pub warnings: Vec<String>,
+}
+
+/// Version and documentation for the rows in the canonical and per-portal
+/// Parquet files.
+#[derive(Debug, Serialize)]
+pub struct SnapshotDatasetSchema {
+    pub version: String,
+    pub resources: SnapshotColumnDefinition,
+}
+
+/// Machine-readable documentation for an additive Parquet column.
+#[derive(Debug, Serialize)]
+pub struct SnapshotColumnDefinition {
+    pub data_type: String,
+    pub nullable: bool,
+    pub description: String,
 }
 
 /// Ceres build metadata embedded in a snapshot manifest.
@@ -363,6 +386,18 @@ struct FlatRecord {
     first_seen_at: String,
     language: String,
     is_duplicate: bool,
+    resources: Vec<FlatResource>,
+}
+
+/// Resource facets retained in a buffered Parquet row. Keeping only the public
+/// snapshot fields avoids buffering the full field-level schema.
+#[derive(Clone)]
+struct FlatResource {
+    name: Option<String>,
+    format: Option<String>,
+    media_type: Option<String>,
+    url: Option<String>,
+    field_count: u64,
 }
 
 /// Service for exporting curated datasets as Parquet.
@@ -625,6 +660,15 @@ impl<S: DatasetStore> ParquetExportService<S> {
 
         Ok(SnapshotManifest {
             schema_version: SNAPSHOT_MANIFEST_SCHEMA_VERSION.to_string(),
+            dataset_schema: SnapshotDatasetSchema {
+                version: SNAPSHOT_DATA_SCHEMA_VERSION.to_string(),
+                resources: SnapshotColumnDefinition {
+                    data_type: "list<struct<name: string?, format: string?, media_type: string?, url: string?, field_count: uint64>>".to_string(),
+                    nullable: false,
+                    description: "Normalized resources/distributions derived from harvested metadata; an empty list means no usable resource detail was exposed."
+                        .to_string(),
+                },
+            },
             snapshot_id: format!(
                 "ceres-{}-{}",
                 snapshot_date.replace('-', ""),
@@ -848,6 +892,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
                     first_seen_at: record.first_seen_at.clone(),
                     language: record.language.clone(),
                     is_duplicate: record.is_duplicate,
+                    resources: record.resources.clone(),
                 });
 
             // Add to all buffer
@@ -1043,6 +1088,17 @@ impl<S: DatasetStore> ParquetExportService<S> {
             first_seen_at: dataset.first_seen_at.to_rfc3339(),
             language,
             is_duplicate,
+            resources: DatasetSchema::from_metadata(metadata)
+                .resources
+                .into_iter()
+                .map(|resource| FlatResource {
+                    name: resource.name,
+                    format: resource.format,
+                    media_type: resource.media_type,
+                    url: resource.url,
+                    field_count: resource.fields.len() as u64,
+                })
+                .collect(),
         }
     }
 }
@@ -1069,7 +1125,31 @@ fn arrow_schema() -> Arc<Schema> {
         Field::new("first_seen_at", DataType::Utf8, false),
         Field::new("language", DataType::Utf8, true),
         Field::new("is_duplicate", DataType::Boolean, false),
+        Field::new(
+            "resources",
+            DataType::List(resource_list_item_field()),
+            false,
+        ),
     ]))
+}
+
+/// Fields published for each item in the `resources` list.
+fn resource_struct_fields() -> Fields {
+    vec![
+        Field::new("name", DataType::Utf8, true),
+        Field::new("format", DataType::Utf8, true),
+        Field::new("media_type", DataType::Utf8, true),
+        Field::new("url", DataType::Utf8, true),
+        Field::new("field_count", DataType::UInt64, false),
+    ]
+    .into()
+}
+
+fn resource_list_item_field() -> Arc<Field> {
+    Arc::new(Field::new_list_field(
+        DataType::Struct(resource_struct_fields()),
+        false,
+    ))
 }
 
 /// Returns the Arrow schema for the slim `identity.parquet` snapshot fingerprint.
@@ -1150,6 +1230,12 @@ fn build_record_batch(
     let mut first_seen_at = StringBuilder::with_capacity(len, len * 32);
     let mut language = StringBuilder::with_capacity(len, len * 8);
     let mut is_duplicate = BooleanBuilder::with_capacity(len);
+    let resource_count = records.iter().map(|record| record.resources.len()).sum();
+    let mut resources = ListBuilder::new(StructBuilder::from_fields(
+        resource_struct_fields(),
+        resource_count,
+    ))
+    .with_field(resource_list_item_field());
 
     for r in records {
         original_id.append_value(&r.original_id);
@@ -1167,6 +1253,31 @@ fn build_record_batch(
         first_seen_at.append_value(&r.first_seen_at);
         language.append_value(&r.language);
         is_duplicate.append_value(r.is_duplicate);
+        for resource in &r.resources {
+            let values = resources.values();
+            values
+                .field_builder::<StringBuilder>(0)
+                .expect("resource name builder must match the Arrow schema")
+                .append_option(resource.name.as_deref());
+            values
+                .field_builder::<StringBuilder>(1)
+                .expect("resource format builder must match the Arrow schema")
+                .append_option(resource.format.as_deref());
+            values
+                .field_builder::<StringBuilder>(2)
+                .expect("resource media_type builder must match the Arrow schema")
+                .append_option(resource.media_type.as_deref());
+            values
+                .field_builder::<StringBuilder>(3)
+                .expect("resource url builder must match the Arrow schema")
+                .append_option(resource.url.as_deref());
+            values
+                .field_builder::<UInt64Builder>(4)
+                .expect("resource field_count builder must match the Arrow schema")
+                .append_value(resource.field_count);
+            values.append(true);
+        }
+        resources.append(true);
     }
 
     RecordBatch::try_new(
@@ -1187,6 +1298,7 @@ fn build_record_batch(
             Arc::new(first_seen_at.finish()),
             Arc::new(language.finish()),
             Arc::new(is_duplicate.finish()),
+            Arc::new(resources.finish()),
         ],
     )
     .map_err(|e| AppError::ExportError(format!("Failed to build RecordBatch: {}", e)))
@@ -1832,10 +1944,17 @@ mod tests {
             first_seen_at: "2025-01-01T00:00:00Z".to_string(),
             language: "en".to_string(),
             is_duplicate: false,
+            resources: vec![FlatResource {
+                name: Some("data.csv".to_string()),
+                format: Some("CSV".to_string()),
+                media_type: Some("text/csv".to_string()),
+                url: Some("https://example.com/data.csv".to_string()),
+                field_count: 2,
+            }],
         }];
 
         let batch = build_record_batch(&records, &schema).unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 15);
+        assert_eq!(batch.num_columns(), 16);
     }
 }

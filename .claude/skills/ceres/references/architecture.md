@@ -72,11 +72,12 @@ Curated Parquet export for HuggingFace dataset publication:
 
 - `all.parquet` (canonical complete index) plus per-portal subset files with human-readable names; subset row counts repeat rows from `all.parquet`
 - `identity.parquet` slim snapshot fingerprint (`source_portal`, `original_id`, `content_hash`) for snapshot-to-snapshot diffs
+- Snapshot schema v2 adds a normalized `resources` list to `all.parquet` and every per-portal subset; each item carries `name`, `format`, `media_type`, `url`, and `field_count`
 - Cross-portal duplicate **flagging** via `is_duplicate` (same title across canonicalized portals); duplicates are kept, not removed
 - Noise filtering (short titles, placeholder descriptions)
 - Flattened schema (no nested JSON)
 - Portal naming and language resolution from `portals.toml` when available
-- Versioned snapshot manifest `metadata.json`: stable `snapshot_id`, UTC `generated_at`, Ceres version/commit, portal-config checksum, alias-aware duplicate-detection provenance, curation row counts, per-portal inclusion status, and SHA-256 checksums for every file
+- Versioned snapshot manifest `metadata.json`: stable `snapshot_id`, UTC `generated_at`, Ceres version/commit, portal-config checksum, dataset-schema documentation, alias-aware duplicate-detection provenance, curation row counts, per-portal inclusion status, and SHA-256 checksums for every file
 - Coverage and quality reports `reports.json` (machine-readable) and `report.md` (human-readable): coverage by portal/type/profile/language, field-completeness rates, and curation outcomes — derived from the same pass so figures agree with the manifest
 - Snapshot changelogs `changelog.json` and `changelog.md` when a previous snapshot directory is supplied
 

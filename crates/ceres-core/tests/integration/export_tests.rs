@@ -3,12 +3,14 @@
 //! These tests verify the export functionality using mock implementations.
 
 use crate::integration::common::{MockDatasetStore, MockPortalData};
+use arrow::array::{Array, ListArray, StringArray, StructArray, UInt64Array};
 use ceres_core::export::{ExportFormat, ExportService};
 use ceres_core::models::NewDataset;
 use ceres_core::traits::DatasetStore;
 use ceres_core::{
     ParquetExportConfig, ParquetExportService, PortalEntry, PortalType, PortalsConfig,
 };
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use sha2::{Digest, Sha256};
 
 const TEST_PORTAL_URL: &str = "https://test-portal.example.com";
@@ -223,7 +225,21 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
         title: "Public transport routes".to_string(),
         description: Some("Route and stop information for public transport.".to_string()),
         embedding: None,
-        metadata: serde_json::json!({"tags": [{"name": "transport"}]}),
+        metadata: serde_json::json!({
+            "tags": [{"name": "transport"}],
+            "resources": [{
+                "name": "routes.csv",
+                "format": "CSV",
+                "mimetype": "text/csv",
+                "url": "https://cdn.example.com/routes.csv",
+                "schema": {
+                    "fields": [
+                        {"name": "route_id", "type": "text"},
+                        {"name": "stop_id", "type": "text"}
+                    ]
+                }
+            }]
+        }),
         content_hash: NewDataset::compute_content_hash(
             "Public transport routes",
             Some("Route and stop information for public transport."),
@@ -258,7 +274,13 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
         serde_json::from_slice(&std::fs::read(output.path().join("metadata.json")).unwrap())
             .unwrap();
 
-    assert_eq!(manifest["schema_version"], "1.0.0");
+    assert_eq!(manifest["schema_version"], "2.0.0");
+    assert_eq!(manifest["dataset_schema"]["version"], "2.0.0");
+    assert_eq!(
+        manifest["dataset_schema"]["resources"]["data_type"],
+        "list<struct<name: string?, format: string?, media_type: string?, url: string?, field_count: uint64>>"
+    );
+    assert_eq!(manifest["dataset_schema"]["resources"]["nullable"], false);
     assert_eq!(manifest["snapshot_id"], result.snapshot_id);
     assert_eq!(manifest["ceres"]["git_commit"], "abc123def");
     assert_eq!(manifest["canonical_file"], "all.parquet");
@@ -309,6 +331,70 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
     assert_eq!(portal["status"], "included");
     assert_eq!(portal["portal_type"], "ckan");
     assert_eq!(portal["file"], "data/test-portal.parquet");
+
+    // The normalized resource contract is present and populated in both the
+    // canonical file and its per-portal convenience subset.
+    for parquet_path in [
+        output.path().join("all.parquet"),
+        output.path().join("data/test-portal.parquet"),
+    ] {
+        let file = std::fs::File::open(parquet_path).unwrap();
+        let mut reader = ParquetRecordBatchReaderBuilder::try_new(file)
+            .unwrap()
+            .build()
+            .unwrap();
+        let batch = reader.next().unwrap().unwrap();
+        let resources = batch
+            .column_by_name("resources")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        assert!(!resources.is_null(0));
+        assert_eq!(resources.value_length(0), 1);
+
+        let resource_values = resources.value(0);
+        let resource = resource_values
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let name = resource
+            .column_by_name("name")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let format = resource
+            .column_by_name("format")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let media_type = resource
+            .column_by_name("media_type")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let url = resource
+            .column_by_name("url")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let field_count = resource
+            .column_by_name("field_count")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+
+        assert_eq!(name.value(0), "routes.csv");
+        assert_eq!(format.value(0), "CSV");
+        assert_eq!(media_type.value(0), "text/csv");
+        assert_eq!(url.value(0), "https://cdn.example.com/routes.csv");
+        assert_eq!(field_count.value(0), 2);
+    }
 }
 
 #[tokio::test]

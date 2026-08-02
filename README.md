@@ -287,9 +287,14 @@ A Parquet export produces one portable snapshot directory:
 - `all.parquet` is the **canonical complete index**.
 - `data/<portal>.parquet` files are convenience subsets and intentionally repeat
   rows from `all.parquet`; do not add their row counts to the canonical total.
+- Both dataset file variants use snapshot schema v2, including a non-null
+  `resources` list of `{name, format, media_type, url, field_count}` structs
+  normalized from the source metadata. An empty list means the portal exposed no
+  usable resource detail; the optional strings remain null when a facet is absent.
 - `metadata.json` is a versioned manifest with the snapshot ID, UTC generation
-  time, Ceres version and commit, portal-config checksum, curation counts,
-  per-portal inclusion status, and SHA-256 checksums for every Parquet file.
+  time, Ceres version and commit, portal-config checksum, dataset schema
+  documentation, curation counts, per-portal inclusion status, and SHA-256
+  checksums for every Parquet file.
 - `reports.json` is a versioned coverage and quality report: dataset coverage by
   portal, portal type/profile, and language; field-completeness rates for
   description, license, organization, tags, and modification date; and curation
