@@ -14,10 +14,11 @@ use crate::state::AppState;
 
 /// Get a dataset by ID.
 ///
-/// Returns dataset details including source-specific raw metadata. The
-/// `metadata` shape is source-specific and best-effort, and is not a stable
-/// resource/distribution contract. Use `GET /api/v1/datasets/{id}/schema` for
-/// normalized resource metadata.
+/// Returns dataset details including source-specific raw metadata after
+/// configured sensitive keys are removed recursively. The `metadata` shape is
+/// source-specific and best-effort, and is not a stable resource/distribution
+/// contract. Use `GET /api/v1/datasets/{id}/schema` for normalized resource
+/// metadata.
 #[utoipa::path(
     get,
     path = "/api/v1/datasets/{id}",
@@ -42,7 +43,10 @@ pub async fn get_dataset_by_id(
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Dataset not found: {}", id)))?;
 
-    Ok(Json(DatasetResponse::from(dataset)))
+    let mut response = DatasetResponse::from(dataset);
+    state.metadata_redactor.redact(&mut response.metadata);
+
+    Ok(Json(response))
 }
 
 /// Get the resource schema for a dataset.

@@ -17,11 +17,13 @@ pub mod config;
 pub mod dto;
 pub mod error;
 pub mod handlers;
+pub mod metadata_hygiene;
 pub mod openapi;
 pub mod router;
 pub mod state;
 
 pub use config::ServerConfig;
 pub use error::ApiError;
+pub use metadata_hygiene::MetadataRedactor;
 pub use router::create_router;
 pub use state::AppState;

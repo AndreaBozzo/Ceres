@@ -23,9 +23,10 @@ semantic search capabilities using vector embeddings.
 
 ## Dataset metadata contracts
 
-`GET /api/v1/datasets/{id}` includes source-specific raw `metadata`. Its shape
-is portal-specific and best-effort. Use `GET /api/v1/datasets/{id}/schema` as
-the supported public contract for normalized resources and distributions.
+`GET /api/v1/datasets/{id}` includes source-specific raw `metadata` after
+configured sensitive keys are removed recursively. Its shape is portal-specific
+and best-effort. Use `GET /api/v1/datasets/{id}/schema` as the supported public
+contract for normalized resources and distributions.
 
 ## Features
 

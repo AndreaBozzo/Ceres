@@ -361,8 +361,13 @@ Set `CERES_ADMIN_TOKEN` to enable protected write endpoints.
 normalized resources, distributions, and column fields. The `metadata` object
 returned by `GET /api/v1/datasets/{id}` preserves source-specific detail for
 inspection and debugging; its shape is best-effort and may vary between portal
-families. See the [REST API contract](website/src/content/docs/API.md) for the
-response shape, nullability rules, and a populated example.
+families. Before serving that public response, Ceres recursively strips
+configured sensitive keys (`maintainer_email`, `author_email`, and `contact_*`
+by default). Set `CERES_METADATA_REDACT_KEYS` to replace the comma-separated,
+case-insensitive rules; a trailing `*` matches a key prefix. Stored metadata,
+authenticated exports, and Parquet snapshots remain unchanged. See the
+[REST API contract](website/src/content/docs/API.md) for the response shape,
+nullability rules, and a populated example.
 
 Server-triggered harvest jobs use the matching `portals.toml` entry for both
 `POST /api/v1/portals/{name}/harvest` and `POST /api/v1/harvest`: portal
