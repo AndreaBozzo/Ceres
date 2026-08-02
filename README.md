@@ -357,6 +357,13 @@ Available endpoints:
 
 Set `CERES_ADMIN_TOKEN` to enable protected write endpoints.
 
+`GET /api/v1/datasets/{id}/schema` is the supported public contract for
+normalized resources, distributions, and column fields. The `metadata` object
+returned by `GET /api/v1/datasets/{id}` preserves source-specific detail for
+inspection and debugging; its shape is best-effort and may vary between portal
+families. See the [REST API contract](website/src/content/docs/API.md) for the
+response shape, nullability rules, and a populated example.
+
 Server-triggered harvest jobs use the matching `portals.toml` entry for both
 `POST /api/v1/portals/{name}/harvest` and `POST /api/v1/harvest`: portal
 `type`, DCAT `profile`, language, URL template, and optional

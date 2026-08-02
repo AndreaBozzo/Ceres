@@ -132,6 +132,20 @@ Swagger UI: `http://127.0.0.1:3000/swagger-ui`
 
 Authentication: `Authorization: Bearer <CERES_ADMIN_TOKEN>`. If `CERES_ADMIN_TOKEN` is unset, admin endpoints return 403 Forbidden.
 
+### Raw metadata vs. normalized resource contract
+
+`GET /api/v1/datasets/:id/schema` is the supported public contract for
+resource and distribution consumers. Its top-level identifiers and `resources`
+array are always present. Every resource includes `name`, `format`,
+`media_type`, `url`, `description`, and `fields`; unavailable scalar values are
+serialized as `null`, while unavailable resource or field collections are
+empty arrays.
+
+The `metadata` object on `GET /api/v1/datasets/:id` preserves source-specific
+detail for inspection and debugging. Its nested shape varies by portal family
+and is best-effort, so consumers should not treat it as a stable cross-portal
+resource contract.
+
 ### Example Requests
 
 ```bash

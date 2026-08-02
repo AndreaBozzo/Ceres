@@ -285,47 +285,87 @@ impl From<ceres_core::Dataset> for DatasetResponse {
     }
 }
 
-/// Normalized resource schema for a dataset.
+/// Stable, normalized resource schema for a dataset.
 ///
-/// Derived on read from the dataset's harvested `metadata` (CKAN resources or
-/// DCAT distributions); see [`ceres_core::DatasetSchema`].
+/// This is the supported public contract for consuming resource and
+/// distribution metadata. It is derived on read from the dataset's harvested
+/// raw `metadata`; see [`ceres_core::DatasetSchema`].
 #[derive(Debug, Serialize, ToSchema)]
+#[schema(example = json!({
+    "id": "2f1c1b44-6957-4c61-8823-3d77e91b024a",
+    "original_id": "air-quality-2024",
+    "source_portal": "https://data.example.org",
+    "resources": [{
+        "name": "Air quality observations",
+        "format": "CSV",
+        "media_type": "text/csv",
+        "url": "https://data.example.org/download/air-quality.csv",
+        "description": "Hourly station observations",
+        "fields": [{
+            "name": "station_id",
+            "type": "string",
+            "description": "Monitoring station identifier"
+        }]
+    }]
+}))]
 pub struct DatasetSchemaResponse {
     /// Dataset UUID
+    #[schema(example = "2f1c1b44-6957-4c61-8823-3d77e91b024a")]
     pub id: Uuid,
     /// Original ID from source portal
+    #[schema(example = "air-quality-2024")]
     pub original_id: String,
     /// Source portal URL
+    #[schema(example = "https://data.example.org")]
     pub source_portal: String,
-    /// Resources/distributions that make up the dataset
+    /// Resources/distributions that make up the dataset; always present and
+    /// empty when the harvested metadata exposes no normalizable resources.
     pub resources: Vec<DatasetResourceDto>,
 }
 
-/// A single resource (CKAN) or distribution (DCAT) within a dataset.
+/// A normalized resource or distribution within a dataset.
+///
+/// Nullable properties are always present in the JSON response and contain
+/// `null` when the source portal did not provide a value.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DatasetResourceDto {
-    /// Resource name/title
+    /// Resource name/title, or `null` when unavailable.
+    #[schema(required = true, nullable, example = "Air quality observations")]
     pub name: Option<String>,
-    /// File format (e.g. "CSV", "JSON")
+    /// File format (e.g. "CSV", "JSON"), or `null` when unavailable.
+    #[schema(required = true, nullable, example = "CSV")]
     pub format: Option<String>,
-    /// MIME / media type (e.g. "text/csv")
+    /// MIME / media type (e.g. "text/csv"), or `null` when unavailable.
+    #[schema(required = true, nullable, example = "text/csv")]
     pub media_type: Option<String>,
-    /// Direct access URL for the resource
+    /// Direct access URL for the resource, or `null` when unavailable.
+    #[schema(
+        required = true,
+        nullable,
+        example = "https://data.example.org/download/air-quality.csv"
+    )]
     pub url: Option<String>,
-    /// Resource description
+    /// Resource description, or `null` when unavailable.
+    #[schema(required = true, nullable, example = "Hourly station observations")]
     pub description: Option<String>,
-    /// Column-level schema, when the portal exposed it inline
+    /// Column-level schema; always present and empty when unavailable.
     pub fields: Vec<ResourceFieldDto>,
 }
 
 /// A single field (column) within a resource's schema.
+///
+/// Nullable properties are always present in the JSON response and contain
+/// `null` when the source portal did not provide a value.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ResourceFieldDto {
     /// Field/column name
+    #[schema(example = "station_id")]
     pub name: String,
-    /// Declared data type, when available
+    /// Declared data type, or `null` when unavailable.
+    #[schema(required = true, nullable, example = "string")]
     pub r#type: Option<String>,
-    /// Optional field description
+    /// Field description, or `null` when unavailable.
+    #[schema(required = true, nullable, example = "Monitoring station identifier")]
     pub description: Option<String>,
 }
 
