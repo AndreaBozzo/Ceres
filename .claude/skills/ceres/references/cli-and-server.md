@@ -144,7 +144,13 @@ empty arrays.
 The `metadata` object on `GET /api/v1/datasets/:id` preserves source-specific
 detail for inspection and debugging. Its nested shape varies by portal family
 and is best-effort, so consumers should not treat it as a stable cross-portal
-resource contract.
+resource contract. Before serving this public response, Ceres recursively
+strips keys configured by `CERES_METADATA_REDACT_KEYS`. Matching is ASCII
+case-insensitive; comma-separated rules are exact unless they end in `*`, which
+matches a key prefix. The default is
+`maintainer_email,author_email,contact_*`; a configured value replaces the
+default. The filter logs neither keys nor values. Stored metadata, `/schema`
+derivation, authenticated exports, and Parquet snapshots remain unchanged.
 
 ### Example Requests
 
@@ -189,6 +195,7 @@ curl http://localhost:3000/api/v1/export \
 | `RATE_LIMIT_BURST` | `30` | Burst size for rate limiter |
 | `PORTALS_CONFIG` | `~/.config/ceres/portals.toml` | Portal configuration file path |
 | `CERES_ADMIN_TOKEN` | | Bearer token for admin endpoints |
+| `CERES_METADATA_REDACT_KEYS` | `maintainer_email,author_email,contact_*` | Comma-separated keys stripped recursively from public dataset metadata; matching is case-insensitive and trailing `*` matches a prefix |
 | `RUST_LOG` | `info` | Log level (tracing) |
 | `CB_FAILURE_THRESHOLD` | `5` | Circuit breaker failure threshold |
 | `CB_RECOVERY_TIMEOUT_SECS` | `30` | Circuit breaker recovery timeout |

@@ -8,7 +8,8 @@ use std::net::SocketAddr;
 use axum::Router;
 use axum::extract::ConnectInfo;
 use ceres_client::EmbeddingProviderEnum;
-use ceres_server::config::ServerConfig;
+use ceres_server::MetadataRedactor;
+use ceres_server::config::{DEFAULT_METADATA_REDACT_KEYS, ServerConfig};
 use ceres_server::create_router;
 use ceres_server::state::AppState;
 use sqlx::PgPool;
@@ -133,6 +134,7 @@ impl TestApp {
             portals_config,
             CancellationToken::new(),
             admin_token,
+            MetadataRedactor::default(),
         );
 
         // Build a ServerConfig with permissive rate limits for tests
@@ -151,6 +153,7 @@ impl TestApp {
             rate_limit_burst: 2000,
             max_connections: 5,
             admin_token: None,
+            metadata_redact_keys: DEFAULT_METADATA_REDACT_KEYS.to_string(),
         };
 
         // Wrap with a layer that injects ConnectInfo<SocketAddr> into request

@@ -19,13 +19,32 @@ The two dataset endpoints serve different purposes:
 
 | Endpoint | Intended use | Contract |
 |---|---|---|
-| `GET /api/v1/datasets/{id}` | Dataset details and source-specific raw metadata for inspection or debugging | The nested `metadata` shape is source-specific and best-effort. Do not build cross-portal resource integrations against it. |
+| `GET /api/v1/datasets/{id}` | Dataset details and source-specific raw metadata for inspection or debugging | The nested `metadata` shape is source-specific, best-effort, and filtered for configured sensitive keys. Do not build cross-portal resource integrations against it. |
 | `GET /api/v1/datasets/{id}/schema` | Resources, distributions, download or service URLs, and column fields | This is the supported public resource contract. Existing fields will not be removed, renamed, or change type without a versioned API change. Consumers should ignore additive fields they do not recognize. |
 
 Raw metadata varies because Ceres preserves what each portal family exposes.
 The schema endpoint derives one normalized response from those CKAN resources,
 DCAT distributions, Socrata columns, OpenDataSoft fields, ArcGIS services, OGC
 online resources, and STAC assets.
+
+### Raw metadata key hygiene
+
+Before returning `GET /api/v1/datasets/{id}`, Ceres recursively removes raw
+metadata keys matching `CERES_METADATA_REDACT_KEYS`. Matching is ASCII
+case-insensitive. Rules are comma-separated exact keys, or prefix patterns when
+they end in `*`.
+
+The default is:
+
+```text
+maintainer_email,author_email,contact_*
+```
+
+Setting `CERES_METADATA_REDACT_KEYS` replaces that default list, so include any
+default rules you want to retain. The filter never logs removed keys or values.
+It applies only to the public dataset-detail response: database rows, normalized
+`/schema` derivation, authenticated JSON/JSONL/CSV exports, and Parquet snapshots
+remain unchanged.
 
 ## Schema response
 

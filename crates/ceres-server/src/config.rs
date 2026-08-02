@@ -1,6 +1,9 @@
 use clap::Parser;
 use std::path::PathBuf;
 
+/// Sensitive raw-metadata keys removed from public dataset-detail responses by default.
+pub const DEFAULT_METADATA_REDACT_KEYS: &str = "maintainer_email,author_email,contact_*";
+
 /// Server configuration parsed from command line arguments and environment variables
 #[derive(Parser, Debug)]
 #[command(name = "ceres-server")]
@@ -63,4 +66,34 @@ pub struct ServerConfig {
     /// If unset, admin endpoints return 403 Forbidden.
     #[arg(long, env = "CERES_ADMIN_TOKEN")]
     pub admin_token: Option<String>,
+
+    /// Comma-separated raw-metadata keys to strip from public dataset responses.
+    /// Matching is case-insensitive; a trailing `*` matches a key prefix.
+    #[arg(
+        long,
+        env = "CERES_METADATA_REDACT_KEYS",
+        default_value = DEFAULT_METADATA_REDACT_KEYS
+    )]
+    pub metadata_redact_keys: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::ServerConfig;
+
+    #[test]
+    fn metadata_redact_keys_can_be_overridden_from_cli() {
+        let config = ServerConfig::try_parse_from([
+            "ceres-server",
+            "--database-url",
+            "postgresql://localhost/ceres",
+            "--metadata-redact-keys",
+            "secret,private_*",
+        ])
+        .expect("parse server configuration");
+
+        assert_eq!(config.metadata_redact_keys, "secret,private_*");
+    }
 }

@@ -260,7 +260,7 @@ pub struct DatasetResponse {
     pub description: Option<String>,
     /// Catalog record kind.
     pub record_kind: String,
-    /// Additional metadata
+    /// Source-specific raw metadata with configured sensitive keys removed
     pub metadata: serde_json::Value,
     /// First indexed timestamp
     pub first_seen_at: DateTime<Utc>,

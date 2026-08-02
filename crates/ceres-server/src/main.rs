@@ -23,7 +23,7 @@ use ceres_core::{
 };
 use ceres_db::DatasetRepository;
 
-use ceres_server::{AppState, ServerConfig, create_router};
+use ceres_server::{AppState, MetadataRedactor, ServerConfig, create_router};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -106,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
         portals_config,
         shutdown_token.clone(),
         config.admin_token.clone(),
+        MetadataRedactor::from_csv(&config.metadata_redact_keys),
     );
 
     // Build router with rate limiting and CORS configuration

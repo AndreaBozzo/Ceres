@@ -4,6 +4,8 @@ use ceres_client::{EmbeddingProviderEnum, PortalClientFactoryEnum};
 use ceres_core::{ExportService, HarvestPipeline, PortalsConfig, SearchService};
 use ceres_db::{DatasetRepository, JobRepository};
 
+use crate::metadata_hygiene::MetadataRedactor;
+
 /// Shared application state for all handlers.
 ///
 /// This is wrapped in Arc internally by Axum when using `with_state()`,
@@ -35,6 +37,9 @@ pub struct AppState {
 
     /// Admin API key for protecting write endpoints (None = admin endpoints disabled)
     pub admin_token: Option<String>,
+
+    /// Sensitive-key filter for raw metadata in public dataset responses
+    pub metadata_redactor: MetadataRedactor,
 }
 
 impl AppState {
@@ -45,6 +50,7 @@ impl AppState {
         portals_config: Option<PortalsConfig>,
         shutdown_token: CancellationToken,
         admin_token: Option<String>,
+        metadata_redactor: MetadataRedactor,
     ) -> Self {
         let dataset_repo = DatasetRepository::new(pool.clone());
         let job_repo = JobRepository::new(pool);
@@ -63,6 +69,7 @@ impl AppState {
             portals_config,
             shutdown_token,
             admin_token,
+            metadata_redactor,
         }
     }
 }

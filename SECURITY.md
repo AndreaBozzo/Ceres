@@ -28,6 +28,7 @@ When using Ceres:
 
 - **API Keys**: Never commit API keys or database credentials to version control
 - **Admin Endpoints**: Protect harvest and admin API endpoints with a strong `CERES_ADMIN_TOKEN` (Bearer token auth)
+- **Public Metadata**: `GET /api/v1/datasets/{id}` recursively strips keys configured by `CERES_METADATA_REDACT_KEYS`; stored metadata and authenticated exports remain unchanged
 - **CORS**: Keep `CORS_ALLOWED_ORIGINS=*` for local development only; production deployments should list explicit trusted origins
 - **Database**: Use strong passwords for PostgreSQL and restrict network access
 - **Input Validation**: Be cautious when harvesting from untrusted data portals

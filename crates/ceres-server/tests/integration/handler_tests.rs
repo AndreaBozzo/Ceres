@@ -311,8 +311,82 @@ async fn test_harvest_all_creates_jobs_for_supported_portal_configs() {
 }
 
 // =============================================================================
-// Dataset schema endpoint
+// Dataset endpoints
 // =============================================================================
+
+#[tokio::test]
+async fn test_dataset_response_strips_sensitive_metadata_at_api_boundary() {
+    let app = TestApp::new().await;
+    let metadata = serde_json::json!({
+        "maintainer_email": "maintainer@example.org",
+        "Author_Email": "author@example.org",
+        "title": "Public metadata title",
+        "nested": {
+            "contact_name": "A person",
+            "notes": "Public notes",
+            "items": [{
+                "contact_endpoint": "https://internal.example.org",
+                "public_url": "https://data.example.org/resource"
+            }]
+        }
+    });
+
+    let id: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO datasets (original_id, source_portal, url, title, description, metadata, content_hash) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+    )
+    .bind("ds-sensitive-1")
+    .bind("https://example.org")
+    .bind("https://example.org/dataset/ds-sensitive-1")
+    .bind("Dataset with contact metadata")
+    .bind(Some("desc"))
+    .bind(metadata)
+    .bind("hash-sensitive-1")
+    .fetch_one(&app.pool)
+    .await
+    .expect("failed to seed dataset");
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/datasets/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let json = body_json(response.into_body()).await;
+    assert_eq!(status, StatusCode::OK, "Response: {json:?}");
+
+    let served = &json["metadata"];
+    assert!(served.get("maintainer_email").is_none());
+    assert!(served.get("Author_Email").is_none());
+    assert_eq!(served["title"], "Public metadata title");
+    assert!(served["nested"].get("contact_name").is_none());
+    assert_eq!(served["nested"]["notes"], "Public notes");
+    assert!(
+        served["nested"]["items"][0]
+            .get("contact_endpoint")
+            .is_none()
+    );
+    assert_eq!(
+        served["nested"]["items"][0]["public_url"],
+        "https://data.example.org/resource"
+    );
+
+    let stored: serde_json::Value =
+        sqlx::query_scalar("SELECT metadata FROM datasets WHERE id = $1")
+            .bind(id)
+            .fetch_one(&app.pool)
+            .await
+            .expect("failed to reload stored metadata");
+    assert!(stored.get("maintainer_email").is_some());
+    assert!(stored["nested"].get("contact_name").is_some());
+}
 
 #[tokio::test]
 async fn test_dataset_schema_returns_normalized_resources() {
