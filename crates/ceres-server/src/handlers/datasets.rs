@@ -14,7 +14,10 @@ use crate::state::AppState;
 
 /// Get a dataset by ID.
 ///
-/// Returns the full dataset details including metadata.
+/// Returns dataset details including source-specific raw metadata. The
+/// `metadata` shape is source-specific and best-effort, and is not a stable
+/// resource/distribution contract. Use `GET /api/v1/datasets/{id}/schema` for
+/// normalized resource metadata.
 #[utoipa::path(
     get,
     path = "/api/v1/datasets/{id}",
@@ -44,9 +47,9 @@ pub async fn get_dataset_by_id(
 
 /// Get the resource schema for a dataset.
 ///
-/// Returns the normalized resources/distributions (format, access URL, and
-/// column-level fields when the portal exposed them inline), derived on read
-/// from the dataset's harvested metadata.
+/// Returns the supported, normalized resource/distribution contract (format,
+/// media type, access URL, description, and column-level fields when the
+/// portal exposed them), derived on read from harvested raw metadata.
 #[utoipa::path(
     get,
     path = "/api/v1/datasets/{id}/schema",
@@ -54,7 +57,7 @@ pub async fn get_dataset_by_id(
         ("id" = Uuid, Path, description = "Dataset UUID")
     ),
     responses(
-        (status = 200, description = "Schema derived", body = DatasetSchemaResponse),
+        (status = 200, description = "Normalized resource schema", body = DatasetSchemaResponse),
         (status = 404, description = "Dataset not found"),
         (status = 500, description = "Internal server error"),
     ),
