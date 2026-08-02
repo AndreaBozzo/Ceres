@@ -246,6 +246,21 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
         ),
     };
     store.upsert(&dataset).await.unwrap();
+    let dataset_without_resources = NewDataset {
+        record_kind: ceres_core::CatalogRecordKind::Dataset,
+        original_id: "transport-stops".to_string(),
+        source_portal: TEST_PORTAL_URL.to_string(),
+        url: format!("{TEST_PORTAL_URL}/dataset/transport-stops"),
+        title: "Public transport stops".to_string(),
+        description: Some("Stop locations without a published distribution.".to_string()),
+        embedding: None,
+        metadata: serde_json::json!({"resources": []}),
+        content_hash: NewDataset::compute_content_hash(
+            "Public transport stops",
+            Some("Stop locations without a published distribution."),
+        ),
+    };
+    store.upsert(&dataset_without_resources).await.unwrap();
 
     let portals = PortalsConfig {
         portals: vec![PortalEntry {
@@ -284,8 +299,8 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
     assert_eq!(manifest["snapshot_id"], result.snapshot_id);
     assert_eq!(manifest["ceres"]["git_commit"], "abc123def");
     assert_eq!(manifest["canonical_file"], "all.parquet");
-    assert_eq!(manifest["row_counts"]["raw"], 1);
-    assert_eq!(manifest["row_counts"]["exported"], 1);
+    assert_eq!(manifest["row_counts"]["raw"], 2);
+    assert_eq!(manifest["row_counts"]["exported"], 2);
     assert!(manifest["portal_config"]["sha256"].as_str().is_some());
     assert!(manifest.get("output_dir").is_none());
 
@@ -344,16 +359,30 @@ async fn test_parquet_export_writes_versioned_snapshot_manifest() {
             .build()
             .unwrap();
         let batch = reader.next().unwrap().unwrap();
+        let original_ids = batch
+            .column_by_name("original_id")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let populated_row = (0..original_ids.len())
+            .find(|&row| original_ids.value(row) == "transport-routes")
+            .unwrap();
+        let empty_row = (0..original_ids.len())
+            .find(|&row| original_ids.value(row) == "transport-stops")
+            .unwrap();
         let resources = batch
             .column_by_name("resources")
             .unwrap()
             .as_any()
             .downcast_ref::<ListArray>()
             .unwrap();
-        assert!(!resources.is_null(0));
-        assert_eq!(resources.value_length(0), 1);
+        assert!(!resources.is_null(populated_row));
+        assert_eq!(resources.value_length(populated_row), 1);
+        assert!(!resources.is_null(empty_row));
+        assert_eq!(resources.value_length(empty_row), 0);
 
-        let resource_values = resources.value(0);
+        let resource_values = resources.value(populated_row);
         let resource = resource_values
             .as_any()
             .downcast_ref::<StructArray>()
