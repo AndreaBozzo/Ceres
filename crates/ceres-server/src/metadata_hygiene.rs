@@ -48,20 +48,28 @@ impl MetadataRedactor {
 
     /// Removes denied keys in place, including keys nested in objects or arrays.
     pub fn redact(&self, metadata: &mut Value) {
+        if self.rules.is_empty() {
+            return;
+        }
+
+        self.redact_value(metadata);
+    }
+
+    fn redact_value(&self, metadata: &mut Value) {
         match metadata {
             Value::Object(object) => {
                 object.retain(|key, value| {
                     if self.denies(key) {
                         false
                     } else {
-                        self.redact(value);
+                        self.redact_value(value);
                         true
                     }
                 });
             }
             Value::Array(values) => {
                 for value in values {
-                    self.redact(value);
+                    self.redact_value(value);
                 }
             }
             _ => {}
@@ -150,5 +158,19 @@ mod tests {
         assert!(metadata.get("maintainer_email").is_none());
         assert!(metadata.get("contact_phone").is_none());
         assert!(metadata.get("title").is_some());
+    }
+
+    #[test]
+    fn empty_policy_leaves_metadata_unchanged() {
+        let redactor = MetadataRedactor::from_csv("");
+        let mut metadata = json!({
+            "maintainer_email": "preserve",
+            "nested": [{"contact_phone": "preserve"}]
+        });
+        let original = metadata.clone();
+
+        redactor.redact(&mut metadata);
+
+        assert_eq!(metadata, original);
     }
 }
