@@ -97,10 +97,10 @@ pub use harvest::{HarvestService, SyncOptions};
 pub use parquet_export::{
     CeresBuildInfo, CoverageBucket, CoverageReport, CurationReport, FieldCompleteness,
     FieldCompletenessReport, ParquetExportConfig, ParquetExportResult, ParquetExportService,
-    PortalConfigProvenance, PortalExportStats, SNAPSHOT_DATA_SCHEMA_VERSION,
-    SNAPSHOT_MANIFEST_SCHEMA_VERSION, SNAPSHOT_REPORT_SCHEMA_VERSION, SnapshotColumnDefinition,
-    SnapshotDatasetSchema, SnapshotFile, SnapshotManifest, SnapshotPortal, SnapshotReport,
-    SnapshotRowCounts,
+    PortalConfigProvenance, PortalExportStats, PortalResourceQualityReport,
+    SNAPSHOT_DATA_SCHEMA_VERSION, SNAPSHOT_MANIFEST_SCHEMA_VERSION, SNAPSHOT_REPORT_SCHEMA_VERSION,
+    SnapshotColumnDefinition, SnapshotDatasetSchema, SnapshotFile, SnapshotManifest,
+    SnapshotPortal, SnapshotReport, SnapshotRowCounts,
 };
 pub use pipeline::HarvestPipeline;
 pub use search::SearchService;

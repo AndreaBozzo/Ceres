@@ -78,7 +78,7 @@ Curated Parquet export for HuggingFace dataset publication:
 - Flattened schema (no nested JSON)
 - Portal naming and language resolution from `portals.toml` when available
 - Versioned snapshot manifest `metadata.json`: stable `snapshot_id`, UTC `generated_at`, Ceres version/commit, portal-config checksum, dataset-schema documentation, alias-aware duplicate-detection provenance, curation row counts, per-portal inclusion status, and SHA-256 checksums for every file
-- Coverage and quality reports `reports.json` (machine-readable) and `report.md` (human-readable): coverage by portal/type/profile/language, field-completeness rates, and curation outcomes — derived from the same pass so figures agree with the manifest
+- Coverage and quality reports `reports.json` (machine-readable) and `report.md` (human-readable): coverage by portal/type/profile/language, field-completeness rates, global and per-portal resource/schema completeness, format/media-type distributions, and curation outcomes — derived from the same pass so figures agree with the manifest
 - Snapshot changelogs `changelog.json` and `changelog.md` when a previous snapshot directory is supplied
 
 ### WorkerService

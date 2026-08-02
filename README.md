@@ -295,11 +295,12 @@ A Parquet export produces one portable snapshot directory:
   time, Ceres version and commit, portal-config checksum, dataset schema
   documentation, curation counts, per-portal inclusion status, and SHA-256
   checksums for every Parquet file.
-- `reports.json` is a versioned coverage and quality report: dataset coverage by
-  portal, portal type/profile, and language; field-completeness rates for
-  description, license, organization, tags, and modification date; and curation
-  outcomes (raw, exported, filtered, duplicate-flagged, and excluded portals). It
-  is derived from the same export pass, so its figures match `metadata.json`.
+- `reports.json` schema v2 is a versioned coverage and quality report: dataset coverage by
+  portal, portal type/profile, and language; field-completeness rates; global and
+  per-portal resource/schema completeness; resource format and media-type
+  distributions (counting resources, not datasets); and curation outcomes (raw, exported, filtered,
+  duplicate-flagged, and excluded portals). It is derived from the same export
+  pass, so its figures match `metadata.json`.
 - `report.md` is a human-readable summary of `reports.json` for the dataset card
   and release notes.
 
