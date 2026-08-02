@@ -598,6 +598,10 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     assert!(report_md.contains("# Ceres Snapshot Report"));
     assert!(report_md.contains("Field completeness"));
     assert!(report_md.contains("By resource format"));
+    assert!(
+        report_md
+            .contains("Resource format and media-type counts below count resources, not datasets.")
+    );
     assert!(report_md.contains("Resource quality by portal"));
     assert!(report_md.contains("| sparse-portal | 1 | 0 (0.0%) | 0 (0.0%) |"));
 }

@@ -1537,6 +1537,11 @@ fn render_report_markdown(report: &SnapshotReport) -> String {
     write_bucket_table(&mut out, "By portal type", &cov.by_portal_type);
     write_bucket_table(&mut out, "By profile", &cov.by_profile);
     write_bucket_table(&mut out, "By language", &cov.by_language);
+    let _ = writeln!(
+        out,
+        "_Resource format and media-type counts below count resources, not datasets._"
+    );
+    let _ = writeln!(out);
     write_bucket_table(&mut out, "By resource format", &cov.by_format);
     write_bucket_table(&mut out, "By resource media type", &cov.by_media_type);
 
