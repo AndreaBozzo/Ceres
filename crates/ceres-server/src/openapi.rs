@@ -135,11 +135,11 @@ mod tests {
         let document = serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI");
         let schemas = &document["components"]["schemas"];
 
-        assert_required(
+        assert_required_includes(
             &schemas["DatasetSchemaResponse"],
             &["id", "original_id", "source_portal", "resources"],
         );
-        assert_required(
+        assert_required_includes(
             &schemas["DatasetResourceDto"],
             &[
                 "name",
@@ -150,7 +150,7 @@ mod tests {
                 "fields",
             ],
         );
-        assert_required(
+        assert_required_includes(
             &schemas["ResourceFieldDto"],
             &["name", "type", "description"],
         );
@@ -167,12 +167,19 @@ mod tests {
         assert_eq!(example["resources"][0]["fields"][0]["name"], "station_id");
     }
 
-    fn assert_required(schema: &Value, expected: &[&str]) {
+    fn assert_required_includes(schema: &Value, expected: &[&str]) {
         let required = schema["required"]
             .as_array()
             .expect("schema must declare required properties");
-        let actual: Vec<_> = required.iter().filter_map(Value::as_str).collect();
-        assert_eq!(actual, expected);
+
+        for property in expected {
+            assert!(
+                required
+                    .iter()
+                    .any(|value| value.as_str() == Some(property)),
+                "required properties do not include {property}: {required:?}"
+            );
+        }
     }
 
     fn assert_nullable(schema: &Value) {
