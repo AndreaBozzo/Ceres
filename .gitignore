@@ -37,6 +37,7 @@ Thumbs.db
 !.claude/skills/
 .codex/
 .ceres-harvest-runs/
+/supabase/.temp/
 
 # Database
 /pgdata/
