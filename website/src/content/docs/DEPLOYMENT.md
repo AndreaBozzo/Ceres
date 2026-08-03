@@ -97,8 +97,8 @@ your host or cloud platform and use Supabase as the managed PostgreSQL service.
 ### Maintainer GitHub Actions deployment
 
 This repository includes `.github/workflows/scheduled-harvest.yml` as the
-maintainer-operated scheduler. It runs daily at 02:17 UTC and can also be
-started manually from the Actions tab. Each run builds the exact default-branch
+maintainer-operated scheduler. It runs weekly on Sunday at 02:17 UTC and can
+also be started manually from the Actions tab. Each run builds the exact default-branch
 commit, applies bundled migrations, harvests `examples/portals.toml`, retains
 the combined log for 14 days, and preserves the `ceres-job` exit status.
 

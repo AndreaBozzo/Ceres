@@ -2,8 +2,8 @@ name: Scheduled Harvest
 
 on:
   schedule:
-    # Daily, away from the top-of-hour load spike for scheduled workflows.
-    - cron: '17 2 * * *'
+    # Weekly on Sunday, away from the top-of-hour load spike for scheduled workflows.
+    - cron: '17 2 * * 0'
   workflow_dispatch:
     inputs:
       concurrency:
