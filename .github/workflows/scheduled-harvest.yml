@@ -1,0 +1,74 @@
+name: Scheduled Harvest
+
+on:
+  schedule:
+    # Daily, away from the top-of-hour load spike for scheduled workflows.
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      concurrency:
+        description: Maximum portals harvested concurrently
+        required: false
+        default: '4'
+
+concurrency:
+  group: scheduled-harvest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  harvest:
+    name: Harvest configured portals
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      CERES_BATCH_CONCURRENCY: ${{ inputs.concurrency || vars.CERES_BATCH_CONCURRENCY || '4' }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Require the Supabase connection secret
+        shell: bash
+        run: |
+          if [[ -z "$DATABASE_URL" ]]; then
+            echo "::error::Add the Supabase direct or session-pooler URL as the DATABASE_URL Actions secret."
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the scheduled-job image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ceres-scheduled:${{ github.sha }}
+          cache-from: type=gha,scope=scheduled-harvest
+          cache-to: type=gha,mode=max,scope=scheduled-harvest
+
+      - name: Run migrations and harvest
+        shell: bash
+        run: |
+          touch harvest.log
+          set -o pipefail
+          docker run --rm \
+            -e DATABASE_URL \
+            -e CERES_BATCH_CONCURRENCY \
+            -e CERES_LOG_FORMAT=json \
+            -e CERES_MIGRATE_ON_START=true \
+            -e PORTALS_CONFIG=/etc/ceres/portals.toml \
+            --mount "type=bind,source=${GITHUB_WORKSPACE}/examples/portals.toml,target=/etc/ceres/portals.toml,readonly" \
+            "ceres-scheduled:${GITHUB_SHA}" \
+            ceres-job 2>&1 | tee harvest.log
+
+      - name: Preserve the harvest log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduled-harvest-${{ github.run_id }}
+          path: harvest.log
+          if-no-files-found: ignore
+          retention-days: 14

@@ -351,7 +351,8 @@ database migrations for fresh managed PostgreSQL environments. See the
 [unattended container deployment guide](https://learnceres.pages.dev/deployment/)
 for Supabase/Neon connection guidance, finite scheduled jobs, secrets, exit
 codes, and server probes. Container schedulers can invoke `ceres-job` directly;
-it runs the metadata-only batch and preserves the CLI's exact exit code.
+it runs the metadata-only batch and preserves the CLI's exact exit code. The
+included daily/manual GitHub Actions workflow is the maintainer deployment.
 
 ## REST API
 

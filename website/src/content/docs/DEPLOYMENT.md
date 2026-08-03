@@ -94,6 +94,28 @@ Supabase Cron schedules SQL, database functions, HTTP requests, or Edge
 Functions; it does not run this Rust container. Use the container scheduler of
 your host or cloud platform and use Supabase as the managed PostgreSQL service.
 
+### Maintainer GitHub Actions deployment
+
+This repository includes `.github/workflows/scheduled-harvest.yml` as the
+maintainer-operated scheduler. It runs daily at 02:17 UTC and can also be
+started manually from the Actions tab. Each run builds the exact default-branch
+commit, applies bundled migrations, harvests `examples/portals.toml`, retains
+the combined log for 14 days, and preserves the `ceres-job` exit status.
+
+Add the Supabase direct connection URL (or session-pooler URL on an IPv4-only
+runner) as the encrypted repository secret named `DATABASE_URL`. Do not use the
+transaction pooler because the workflow also runs migrations. The optional
+repository variable `CERES_BATCH_CONCURRENCY` changes the scheduled default;
+manual runs also expose a concurrency input.
+
+```bash
+gh secret set DATABASE_URL
+gh variable set CERES_BATCH_CONCURRENCY --body 4
+gh workflow run scheduled-harvest.yml
+```
+
+`gh secret set` prompts for the value without placing it in shell history.
+
 ## Run the API server
 
 The default image command is `ceres-server`:
