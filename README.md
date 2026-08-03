@@ -353,6 +353,9 @@ for Supabase/Neon connection guidance, finite scheduled jobs, secrets, exit
 codes, and server probes. Container schedulers can invoke `ceres-job` directly;
 it runs the metadata-only batch and preserves the CLI's exact exit code. The
 included weekly/manual GitHub Actions workflow is the maintainer deployment.
+On Supabase Free, a separate lightweight Monday-Saturday database heartbeat
+reduces the risk of inactivity pausing; the Sunday harvest supplies that day's
+database activity and remains the only job that contacts portals.
 
 ## REST API
 

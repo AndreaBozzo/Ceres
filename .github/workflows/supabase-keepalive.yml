@@ -1,0 +1,41 @@
+name: Supabase Keepalive
+
+on:
+  schedule:
+    # The Sunday harvest supplies database activity for that day.
+    - cron: '41 5 * * 1-6'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: true
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - name: Require the database secret
+        shell: bash
+        run: |
+          if [[ -z "${DATABASE_URL}" ]]; then
+            echo "DATABASE_URL repository secret is required" >&2
+            exit 1
+          fi
+
+      - name: Send lightweight database activity
+        shell: bash
+        run: |
+          docker run --rm \
+            -e DATABASE_URL \
+            postgres:16-alpine \
+            sh -ec 'psql "$DATABASE_URL" --no-psqlrc --set=ON_ERROR_STOP=1 \
+              --command "SELECT 1;" \
+              --command "SELECT current_database();" \
+              --command "SELECT CURRENT_TIMESTAMP;"'

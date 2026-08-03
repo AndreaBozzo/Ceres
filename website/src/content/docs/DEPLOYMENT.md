@@ -108,6 +108,13 @@ transaction pooler because the workflow also runs migrations. The optional
 repository variable `CERES_BATCH_CONCURRENCY` changes the scheduled default;
 manual runs also expose a concurrency input.
 
+Supabase may pause Free Plan projects with low database activity over a seven-day
+window. The maintainer setup therefore includes
+`.github/workflows/supabase-keepalive.yml`, which sends three lightweight
+database queries Monday through Saturday. Sunday's harvest supplies that day's
+activity. The heartbeat never contacts a portal and can be disabled on paid
+Supabase plans, which are not paused for inactivity.
+
 ```bash
 gh secret set DATABASE_URL
 gh variable set CERES_BATCH_CONCURRENCY --body 4
