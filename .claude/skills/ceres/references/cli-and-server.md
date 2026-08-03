@@ -288,13 +288,31 @@ cargo run --bin ceres-server  # Start server
 ### Docker (production)
 
 ```bash
-docker build -t ceres-server .
+docker build -t ceres .
+
+# Initialize a fresh PostgreSQL + pgvector database from the image
+docker run --rm -e DATABASE_URL="$DATABASE_URL" ceres ceres-migrate
+
+# Finite scheduled batch; portals.toml is mounted read-only
+docker run --rm \
+  -e DATABASE_URL="$DATABASE_URL" \
+  -e PORTALS_CONFIG=/etc/ceres/portals.toml \
+  -e CERES_LOG_FORMAT=json \
+  -v "$PWD/examples/portals.toml:/etc/ceres/portals.toml:ro" \
+  ceres ceres harvest --metadata-only
+
+# Long-lived server (the image default)
 docker run -d \
   --env-file .env \
   -p 3000:3000 \
-  ceres-server
+  ceres
 ```
 
-The Dockerfile uses a multi-stage build (build in Rust image, run in minimal Debian image).
+The Dockerfile pins Rust 1.95 in a multi-stage build and copies the CLI, server,
+migrations, and `ceres-migrate` helper into a slim Debian runtime. For managed
+PostgreSQL, prefer a Supabase direct or session-pooler URL because the same URL
+must support migrations and a persistent SQLx client; Neon remains compatible.
+The container platform should probe `/api/v1/health/live` for liveness and
+`/api/v1/health/ready` for readiness.
 
 For local-first setups, pair the server or CLI with a local Ollama instance and keep harvesting and embedding as separate operational steps.

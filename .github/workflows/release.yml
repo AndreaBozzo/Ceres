@@ -188,6 +188,8 @@ jobs:
           context: .
           push: true
           tags: |
+            ghcr.io/${{ steps.owner.outputs.value }}/ceres:${{ needs.validate.outputs.version }}
+            ghcr.io/${{ steps.owner.outputs.value }}/ceres:latest
             ghcr.io/${{ steps.owner.outputs.value }}/ceres-server:${{ needs.validate.outputs.version }}
             ghcr.io/${{ steps.owner.outputs.value }}/ceres-server:latest
 

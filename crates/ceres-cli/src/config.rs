@@ -129,7 +129,7 @@ pub enum Command {
         portal: Option<String>,
 
         /// Custom path to portals.toml configuration file
-        #[arg(short, long, value_name = "PATH")]
+        #[arg(short, long, env = "PORTALS_CONFIG", value_name = "PATH")]
         config: Option<PathBuf>,
 
         /// Force full sync even if incremental sync is available
@@ -190,7 +190,7 @@ pub enum Command {
         #[arg(short, long, value_name = "DIR")]
         output: Option<std::path::PathBuf>,
         /// Custom path to portals.toml (for portal name resolution in parquet export)
-        #[arg(short, long, value_name = "PATH")]
+        #[arg(short, long, env = "PORTALS_CONFIG", value_name = "PATH")]
         config: Option<std::path::PathBuf>,
         /// Previous snapshot directory to diff against (parquet only). When set,
         /// writes changelog.json / changelog.md describing what changed.

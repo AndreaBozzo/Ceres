@@ -344,6 +344,14 @@ Embedding is fully decoupled from harvesting:
 
 That separation is what makes local-first embedding practical and keeps harvest jobs usable even when no embedder is configured.
 
+## Container deployment
+
+The production image contains both `ceres` and `ceres-server`, plus bundled
+database migrations for fresh managed PostgreSQL environments. See the
+[unattended container deployment guide](https://learnceres.pages.dev/deployment/)
+for Supabase/Neon connection guidance, finite scheduled jobs, secrets, exit
+codes, and server probes.
+
 ## REST API
 
 Start the server:
