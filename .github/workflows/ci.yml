@@ -95,6 +95,14 @@ jobs:
           context: .
           load: true
           tags: ceres-ci:latest
+          build-args: |
+            CERES_GIT_SHA=${{ github.sha }}
+
+      - name: Verify image provenance
+        shell: bash
+        run: |
+          VERSION=$(docker run --rm ceres-ci:latest ceres --version)
+          grep -F "commit: ${GITHUB_SHA:0:7}" <<<"${VERSION}"
 
       - name: Prepare finite CKAN batch fixture
         run: |

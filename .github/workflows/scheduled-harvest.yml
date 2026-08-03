@@ -46,6 +46,8 @@ jobs:
           context: .
           load: true
           tags: ceres-scheduled:${{ github.sha }}
+          build-args: |
+            CERES_GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=scheduled-harvest
           cache-to: type=gha,mode=max,scope=scheduled-harvest
 

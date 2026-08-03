@@ -33,7 +33,7 @@ embedding index before making the job unattended.
 Build the current checkout:
 
 ```bash
-docker build -t ceres .
+docker build --build-arg CERES_GIT_SHA="$(git rev-parse HEAD)" -t ceres .
 ```
 
 Release tags publish the image to GHCR as

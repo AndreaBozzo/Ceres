@@ -1,5 +1,7 @@
 FROM rust:1.95-slim-bookworm AS builder
 
+ARG CERES_GIT_SHA=unknown
+
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
@@ -10,7 +12,8 @@ RUN apt-get update && apt-get install -y \
 
 COPY . .
 
-RUN cargo build --release --locked --bin ceres --bin ceres-server
+RUN CERES_GIT_SHA="${CERES_GIT_SHA}" \
+    cargo build --release --locked --bin ceres --bin ceres-server
 
 FROM debian:bookworm-slim
 
