@@ -350,7 +350,8 @@ The production image contains both `ceres` and `ceres-server`, plus bundled
 database migrations for fresh managed PostgreSQL environments. See the
 [unattended container deployment guide](https://learnceres.pages.dev/deployment/)
 for Supabase/Neon connection guidance, finite scheduled jobs, secrets, exit
-codes, and server probes.
+codes, and server probes. Container schedulers can invoke `ceres-job` directly;
+it runs the metadata-only batch and preserves the CLI's exact exit code.
 
 ## REST API
 

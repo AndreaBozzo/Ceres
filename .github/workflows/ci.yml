@@ -96,12 +96,6 @@ jobs:
           load: true
           tags: ceres-ci:latest
 
-      - name: Migrate fresh pgvector database from the image
-        run: >-
-          docker run --rm --network host
-          -e DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/ceres_container
-          ceres-ci:latest ceres-migrate
-
       - name: Prepare finite CKAN batch fixture
         run: |
           mkdir -p .ci-smoke/http/api/3/action
@@ -110,10 +104,11 @@ jobs:
           python3 -m http.server 18080 --directory .ci-smoke/http > /tmp/ceres-fixture.log 2>&1 &
           curl --fail --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:18080/api/3/action/package_search
 
-      - name: Run finite batch harvest from the image
+      - name: Run unattended migration and batch job from the image
         run: >-
           docker run --rm --network host
           -e DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/ceres_container
           -e PORTALS_CONFIG=/etc/ceres/portals.toml
+          -e CERES_MIGRATE_ON_START=true
           -v "$PWD/.ci-smoke/portals.toml:/etc/ceres/portals.toml:ro"
-          ceres-ci:latest ceres harvest --metadata-only --log-format json
+          ceres-ci:latest ceres-job --concurrency 1

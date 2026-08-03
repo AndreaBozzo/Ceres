@@ -63,20 +63,27 @@ Mount `portals.toml` read-only and keep embedding out of the harvesting hot path
 docker run --rm \
   -e DATABASE_URL="$DATABASE_URL" \
   -e PORTALS_CONFIG=/etc/ceres/portals.toml \
-  -e CERES_LOG_FORMAT=json \
   -e CERES_BATCH_CONCURRENCY=4 \
   -v "$PWD/examples/portals.toml:/etc/ceres/portals.toml:ro" \
-  ceres ceres harvest --metadata-only
+  ceres ceres-job
 ```
 
-The command is finite and continues after individual portal failures. Exit `0`
+`ceres-job` is the finite scheduler entrypoint. It defaults logs to JSON, forces
+metadata-only harvesting, and passes any additional arguments to `ceres harvest`
+(for example, `ceres-job --concurrency 6 --full-sync`). It continues after
+individual portal failures. Exit `0`
 means all portals succeeded, `2` means the batch finished with failed portals,
 and `1` means a fatal configuration/database/command error. JSON logs include a
 `portal_outcome` event per configured portal and one final `batch_summary`.
 
+Run migrations as a separate deployment step with `ceres-migrate` when the
+scheduled harvest uses a least-privilege database role. For a self-contained
+first deployment, set `CERES_MIGRATE_ON_START=true`; `ceres-job` will migrate
+before harvesting and normalize a migration failure to fatal exit `1`.
+
 Configure any standard container-job scheduler with:
 
-- the image and `ceres harvest --metadata-only` command;
+- the image and `ceres-job` command;
 - `DATABASE_URL` from its secret manager;
 - a read-only `portals.toml` mount or equivalent injected file;
 - enough timeout for the widest portal set;

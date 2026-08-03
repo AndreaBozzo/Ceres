@@ -297,9 +297,8 @@ docker run --rm -e DATABASE_URL="$DATABASE_URL" ceres ceres-migrate
 docker run --rm \
   -e DATABASE_URL="$DATABASE_URL" \
   -e PORTALS_CONFIG=/etc/ceres/portals.toml \
-  -e CERES_LOG_FORMAT=json \
   -v "$PWD/examples/portals.toml:/etc/ceres/portals.toml:ro" \
-  ceres ceres harvest --metadata-only
+  ceres ceres-job
 
 # Long-lived server (the image default)
 docker run -d \
@@ -309,7 +308,7 @@ docker run -d \
 ```
 
 The Dockerfile pins Rust 1.95 in a multi-stage build and copies the CLI, server,
-migrations, and `ceres-migrate` helper into a slim Debian runtime. For managed
+migrations, `ceres-migrate`, and the finite `ceres-job` entrypoint into a slim Debian runtime. `ceres-job` defaults to JSON logs, forces metadata-only batch mode, preserves CLI exit codes, and optionally runs migrations first when `CERES_MIGRATE_ON_START=true`. For managed
 PostgreSQL, prefer a Supabase direct or session-pooler URL because the same URL
 must support migrations and a persistent SQLx client; Neon remains compatible.
 The container platform should probe `/api/v1/health/live` for liveness and

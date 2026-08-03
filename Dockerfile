@@ -26,8 +26,9 @@ COPY --from=builder /app/target/release/ceres /usr/local/bin/ceres
 COPY --from=builder /app/target/release/ceres-server /usr/local/bin/ceres-server
 COPY migrations /usr/local/share/ceres/migrations
 COPY scripts/container-migrate.sh /usr/local/bin/ceres-migrate
+COPY scripts/container-job.sh /usr/local/bin/ceres-job
 
-RUN chmod 0755 /usr/local/bin/ceres-migrate
+RUN chmod 0755 /usr/local/bin/ceres-migrate /usr/local/bin/ceres-job
 
 ENV HOST=0.0.0.0 \
     PORT=3000 \
@@ -40,5 +41,6 @@ USER ceres
 EXPOSE 3000
 
 # The server is the backward-compatible default. Override the command with
-# `ceres ...` for finite CLI jobs or `ceres-migrate` for schema migrations.
+# `ceres-job` for finite scheduled harvests, `ceres ...` for ad-hoc CLI jobs,
+# or `ceres-migrate` for schema migrations.
 CMD ["ceres-server"]
