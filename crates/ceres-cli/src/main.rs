@@ -20,6 +20,15 @@ use ceres_core::{
 use ceres_db::DatasetRepository;
 use ceres_search::{Command, Config, ExportFormat};
 
+struct HarvestRequest {
+    portal_url: Option<String>,
+    portal_type: PortalType,
+    profile: Option<String>,
+    portal_name: Option<String>,
+    config_path: Option<PathBuf>,
+    batch_concurrency: usize,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv().ok();
@@ -79,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
             full_sync,
             dry_run,
             metadata_only,
+            concurrency,
         } => {
             let mut harvest_config = HarvestConfig::default();
             if full_sync {
@@ -101,11 +111,14 @@ async fn main() -> anyhow::Result<()> {
             handle_harvest(
                 &harvest_service,
                 embedding_service.as_ref(),
-                portal_url,
-                portal_type,
-                profile,
-                portal,
-                config_path,
+                HarvestRequest {
+                    portal_url,
+                    portal_type,
+                    profile,
+                    portal_name: portal,
+                    config_path,
+                    batch_concurrency: concurrency,
+                },
             )
             .await?;
         }
@@ -173,12 +186,16 @@ async fn main() -> anyhow::Result<()> {
 async fn handle_harvest(
     harvest_service: &HarvestService<DatasetRepository, PortalClientFactoryEnum>,
     embedding_service: Option<&EmbeddingService<DatasetRepository, EmbeddingProviderEnum>>,
-    portal_url: Option<String>,
-    ad_hoc_portal_type: PortalType,
-    ad_hoc_profile: Option<String>,
-    portal_name: Option<String>,
-    config_path: Option<PathBuf>,
+    request: HarvestRequest,
 ) -> anyhow::Result<()> {
+    let HarvestRequest {
+        portal_url,
+        portal_type: ad_hoc_portal_type,
+        profile: ad_hoc_profile,
+        portal_name,
+        config_path,
+        batch_concurrency,
+    } = request;
     let reporter = TracingReporter;
     let metadata_only = embedding_service.is_none();
     let mode_label = if metadata_only {
@@ -276,14 +293,15 @@ async fn handle_harvest(
 
             info!("═══════════════════════════════════════════════════════");
             info!(
-                "Starting batch harvest{} of {} portals",
+                "Starting batch harvest{} of {} portals (concurrency: {})",
                 mode_label,
-                enabled.len()
+                enabled.len(),
+                batch_concurrency
             );
             info!("═══════════════════════════════════════════════════════");
 
             let summary = harvest_service
-                .batch_harvest_with_progress(&enabled, &reporter)
+                .batch_harvest_with_progress_concurrency(&enabled, &reporter, batch_concurrency)
                 .await;
             print_batch_summary(&summary);
 
@@ -324,6 +342,20 @@ fn print_batch_summary(summary: &BatchHarvestSummary) {
     info!("  Successful:          {}", summary.successful_count());
     info!("  Failed:              {}", summary.failed_count());
     info!("  Total datasets:      {}", summary.total_datasets());
+    info!("  Duration:            {} ms", summary.duration_ms);
+
+    info!("───────────────────────────────────────────────────────");
+    for result in &summary.results {
+        info!(
+            portal = result.portal_name,
+            portal_url = result.portal_url,
+            status = ?result.status,
+            datasets = result.stats.total(),
+            duration_ms = result.duration_ms,
+            error_class = result.error_class.as_deref().unwrap_or(""),
+            "Portal result"
+        );
+    }
 
     if summary.failed_count() > 0 {
         info!("───────────────────────────────────────────────────────");

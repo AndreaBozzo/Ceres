@@ -14,4 +14,4 @@
 ### Operational model
 * **Metadata-first**: `ceres harvest --metadata-only` keeps harvesting independent from embedding.
 * **Provider flexibility**: `ceres embed` backfills vectors without re-harvesting.
-* **Batch workflows**: `portals.toml` drives multi-portal harvest and export flows.
+* **Batch workflows**: `portals.toml` drives multi-portal harvest and export flows. `ceres harvest --concurrency N` bounds parallel portal work (default `4`, or `CERES_BATCH_CONCURRENCY`) and continues after individual portal failures.

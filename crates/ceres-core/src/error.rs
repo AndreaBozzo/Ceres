@@ -182,6 +182,33 @@ pub enum AppError {
 }
 
 impl AppError {
+    /// Returns a stable machine-readable category for structured run summaries.
+    pub fn class(&self) -> &'static str {
+        match self {
+            AppError::DatabaseError(_) => "database",
+            AppError::ClientError(_) => "client",
+            AppError::GeminiError(details) => match details.kind {
+                GeminiErrorKind::Authentication => "authentication",
+                GeminiErrorKind::RateLimit => "rate_limit",
+                GeminiErrorKind::QuotaExceeded => "quota",
+                GeminiErrorKind::ServerError => "upstream_server",
+                GeminiErrorKind::NetworkError => "network",
+                GeminiErrorKind::Unknown => "upstream_unknown",
+            },
+            AppError::SerializationError(_) => "serialization",
+            AppError::InvalidUrl(_) | AppError::InvalidPortalUrl(_) => "invalid_url",
+            AppError::DatasetNotFound(_) => "not_found",
+            AppError::EmptyResponse => "empty_response",
+            AppError::NetworkError(_) => "network",
+            AppError::Timeout(_) => "timeout",
+            AppError::RateLimitExceeded => "rate_limit",
+            AppError::ConfigError(_) => "configuration",
+            AppError::IoError(_) => "io",
+            AppError::ExportError(_) => "export",
+            AppError::Generic(_) => "generic",
+        }
+    }
+
     /// Returns a user-friendly error message suitable for CLI output.
     pub fn user_message(&self) -> String {
         match self {
@@ -373,6 +400,20 @@ mod tests {
     fn test_empty_response_error() {
         let err = AppError::EmptyResponse;
         assert_eq!(err.to_string(), "Empty response from API");
+    }
+
+    #[test]
+    fn test_error_class_is_stable_and_specific() {
+        assert_eq!(
+            AppError::DatabaseError("offline".into()).class(),
+            "database"
+        );
+        assert_eq!(AppError::Timeout(30).class(), "timeout");
+        assert_eq!(AppError::RateLimitExceeded.class(), "rate_limit");
+        assert_eq!(
+            AppError::ConfigError("bad portals.toml".into()).class(),
+            "configuration"
+        );
     }
 
     #[test]

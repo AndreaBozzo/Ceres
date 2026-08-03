@@ -124,6 +124,15 @@ pub enum Command {
         /// Only harvest metadata (no embedding). Does not require an API key.
         #[arg(long)]
         metadata_only: bool,
+
+        /// Maximum number of portals harvested concurrently in batch mode.
+        #[arg(
+            long,
+            env = "CERES_BATCH_CONCURRENCY",
+            default_value = "4",
+            value_parser = parse_positive_usize
+        )]
+        concurrency: usize,
     },
     /// Generate embeddings for datasets that don't have them yet
     #[command(after_help = "Examples:
@@ -173,6 +182,13 @@ pub enum Command {
     Stats,
 }
 
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    match value.parse::<usize>() {
+        Ok(value) if value > 0 => Ok(value),
+        _ => Err("value must be a positive integer".to_string()),
+    }
+}
+
 /// Supported export formats
 #[derive(Debug, Clone, ValueEnum)]
 pub enum ExportFormat {
@@ -188,7 +204,8 @@ pub enum ExportFormat {
 
 #[cfg(test)]
 mod tests {
-    use super::version_info;
+    use super::{Command, Config, version_info};
+    use clap::Parser;
 
     #[test]
     fn test_version_info_contains_expected_fields() {
@@ -197,5 +214,36 @@ mod tests {
         assert!(info.contains("built:"));
         assert!(info.contains("target:"));
         assert!(info.contains("rustc:"));
+    }
+
+    #[test]
+    fn batch_concurrency_defaults_to_four() {
+        let config = Config::try_parse_from([
+            "ceres",
+            "--database-url",
+            "postgresql://localhost/ceres",
+            "harvest",
+            "--metadata-only",
+        ])
+        .expect("valid CLI");
+
+        let Command::Harvest { concurrency, .. } = config.command else {
+            panic!("expected harvest command");
+        };
+        assert_eq!(concurrency, 4);
+    }
+
+    #[test]
+    fn batch_concurrency_rejects_zero() {
+        let result = Config::try_parse_from([
+            "ceres",
+            "--database-url",
+            "postgresql://localhost/ceres",
+            "harvest",
+            "--concurrency",
+            "0",
+        ]);
+
+        assert!(result.is_err());
     }
 }

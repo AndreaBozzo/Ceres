@@ -38,6 +38,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
@@ -473,6 +474,25 @@ where
             portals,
             reporter,
             CancellationToken::new(), // never cancelled
+        )
+        .await
+    }
+
+    /// Harvests multiple portals with bounded portal-level concurrency.
+    ///
+    /// Results retain configuration order even though portal work may finish out
+    /// of order. A concurrency of zero is treated as one for library callers.
+    pub async fn batch_harvest_with_progress_concurrency<R: ProgressReporter>(
+        &self,
+        portals: &[&PortalEntry],
+        reporter: &R,
+        max_concurrency: usize,
+    ) -> BatchHarvestSummary {
+        self.batch_harvest_with_progress_cancellable_concurrency(
+            portals,
+            reporter,
+            CancellationToken::new(),
+            max_concurrency,
         )
         .await
     }
@@ -1275,101 +1295,142 @@ where
         reporter: &R,
         cancel_token: CancellationToken,
     ) -> BatchHarvestSummary {
+        self.batch_harvest_with_progress_cancellable_concurrency(portals, reporter, cancel_token, 1)
+            .await
+    }
+
+    /// Harvests multiple portals concurrently with progress and cancellation.
+    pub async fn batch_harvest_with_progress_cancellable_concurrency<R: ProgressReporter>(
+        &self,
+        portals: &[&PortalEntry],
+        reporter: &R,
+        cancel_token: CancellationToken,
+        max_concurrency: usize,
+    ) -> BatchHarvestSummary {
         let mut summary = BatchHarvestSummary::new();
         let total = portals.len();
+        let batch_started = Instant::now();
 
         reporter.report(HarvestEvent::BatchStarted {
             total_portals: total,
         });
 
-        for (i, portal) in portals.iter().enumerate() {
-            // Check cancellation before starting each portal
-            if cancel_token.is_cancelled() {
-                reporter.report(HarvestEvent::BatchCancelled {
-                    completed_portals: i,
-                    total_portals: total,
-                });
-                break;
-            }
+        let jobs = stream::iter(portals.iter().enumerate())
+            .map(|(i, portal)| {
+                let portal = *portal;
+                let cancel_token = cancel_token.clone();
 
-            reporter.report(HarvestEvent::PortalStarted {
-                portal_index: i,
-                total_portals: total,
-                portal_name: &portal.name,
-                portal_url: &portal.url,
-            });
-
-            match self
-                .sync_portal_with_progress_cancellable(
-                    &portal.url,
-                    portal.url_template.as_deref(),
-                    portal.language(),
-                    reporter,
-                    cancel_token.clone(),
-                    portal.portal_type,
-                    portal.profile(),
-                    portal.sparql_endpoint(),
-                    portal.ogc_endpoint(),
-                )
-                .await
-            {
-                Ok(result) => {
-                    if result.is_cancelled() {
-                        reporter.report(HarvestEvent::PortalCancelled {
-                            portal_index: i,
-                            total_portals: total,
-                            portal_name: &portal.name,
-                            stats: &result.stats,
-                        });
-                        summary.add(PortalHarvestResult::success(
-                            portal.name.clone(),
-                            portal.url.clone(),
-                            result.stats,
-                        ));
-                        // Don't continue to next portal after cancellation
-                        reporter.report(HarvestEvent::BatchCancelled {
-                            completed_portals: i + 1,
-                            total_portals: total,
-                        });
-                        break;
-                    } else {
-                        reporter.report(HarvestEvent::PortalCompleted {
-                            portal_index: i,
-                            total_portals: total,
-                            portal_name: &portal.name,
-                            stats: &result.stats,
-                        });
-                        summary.add(PortalHarvestResult::success(
-                            portal.name.clone(),
-                            portal.url.clone(),
-                            result.stats,
-                        ));
+                async move {
+                    // A queued job never starts after cancellation.
+                    if cancel_token.is_cancelled() {
+                        return None;
                     }
-                }
-                Err(e) => {
-                    let error_str = e.to_string();
-                    reporter.report(HarvestEvent::PortalFailed {
+
+                    reporter.report(HarvestEvent::PortalStarted {
                         portal_index: i,
                         total_portals: total,
                         portal_name: &portal.name,
-                        error: &error_str,
+                        portal_url: &portal.url,
                     });
-                    summary.add(PortalHarvestResult::failure(
-                        portal.name.clone(),
-                        portal.url.clone(),
-                        error_str,
-                    ));
+
+                    let portal_started = Instant::now();
+                    let result = self
+                        .sync_portal_with_progress_cancellable(
+                            &portal.url,
+                            portal.url_template.as_deref(),
+                            portal.language(),
+                            reporter,
+                            cancel_token,
+                            portal.portal_type,
+                            portal.profile(),
+                            portal.sparql_endpoint(),
+                            portal.ogc_endpoint(),
+                        )
+                        .await;
+                    let duration_ms = duration_millis(portal_started);
+
+                    let portal_result = match result {
+                        Ok(result) if result.is_cancelled() => {
+                            reporter.report(HarvestEvent::PortalCancelled {
+                                portal_index: i,
+                                total_portals: total,
+                                portal_name: &portal.name,
+                                stats: &result.stats,
+                            });
+                            PortalHarvestResult::cancelled(
+                                portal.name.clone(),
+                                portal.url.clone(),
+                                result.stats,
+                                duration_ms,
+                            )
+                        }
+                        Ok(result) => {
+                            reporter.report(HarvestEvent::PortalCompleted {
+                                portal_index: i,
+                                total_portals: total,
+                                portal_name: &portal.name,
+                                stats: &result.stats,
+                            });
+                            PortalHarvestResult::success_with_duration(
+                                portal.name.clone(),
+                                portal.url.clone(),
+                                result.stats,
+                                duration_ms,
+                            )
+                        }
+                        Err(error) => {
+                            let error_class = error.class();
+                            let error_message = error.to_string();
+                            reporter.report(HarvestEvent::PortalFailed {
+                                portal_index: i,
+                                total_portals: total,
+                                portal_name: &portal.name,
+                                error: &error_message,
+                            });
+                            PortalHarvestResult::failure_with_details(
+                                portal.name.clone(),
+                                portal.url.clone(),
+                                error_class,
+                                error_message,
+                                duration_ms,
+                            )
+                        }
+                    };
+
+                    Some((i, portal_result))
                 }
+            })
+            .buffer_unordered(max_concurrency.max(1));
+
+        futures::pin_mut!(jobs);
+        let mut indexed_results = Vec::with_capacity(total);
+        while let Some(result) = jobs.next().await {
+            if let Some(result) = result {
+                indexed_results.push(result);
             }
         }
 
-        // Only report BatchCompleted if we weren't cancelled
-        if !cancel_token.is_cancelled() {
+        indexed_results.sort_by_key(|(index, _)| *index);
+        for (_, result) in indexed_results {
+            summary.add(result);
+        }
+        summary.set_duration_ms(duration_millis(batch_started));
+
+        if cancel_token.is_cancelled() {
+            reporter.report(HarvestEvent::BatchCancelled {
+                completed_portals: summary.total_portals(),
+                total_portals: total,
+            });
+        } else {
             reporter.report(HarvestEvent::BatchCompleted { summary: &summary });
         }
 
         summary
     }
+}
+
+fn duration_millis(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

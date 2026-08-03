@@ -356,8 +356,20 @@ pub fn needs_reprocessing(
 // Batch Harvest Types
 // =============================================================================
 
+/// Final state of one portal in a batch harvest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortalHarvestStatus {
+    /// The portal completed normally.
+    Success,
+    /// The portal returned a fatal error, while the batch continued.
+    Failed,
+    /// The portal stopped after the batch cancellation token was triggered.
+    Cancelled,
+}
+
 /// Result of harvesting a single portal in batch mode.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PortalHarvestResult {
     /// Portal name identifier.
     pub portal_name: String,
@@ -365,6 +377,12 @@ pub struct PortalHarvestResult {
     pub portal_url: String,
     /// Sync statistics for this portal.
     pub stats: SyncStats,
+    /// Final state of this portal run.
+    pub status: PortalHarvestStatus,
+    /// Wall-clock duration of this portal run in milliseconds.
+    pub duration_ms: u64,
+    /// Stable machine-readable error category, when the portal failed.
+    pub error_class: Option<String>,
     /// Error message if harvest failed, None if successful.
     pub error: Option<String>,
 }
@@ -376,7 +394,23 @@ impl PortalHarvestResult {
             portal_name: name,
             portal_url: url,
             stats,
+            status: PortalHarvestStatus::Success,
+            duration_ms: 0,
+            error_class: None,
             error: None,
+        }
+    }
+
+    /// Creates a successful harvest result with its elapsed duration.
+    pub fn success_with_duration(
+        name: String,
+        url: String,
+        stats: SyncStats,
+        duration_ms: u64,
+    ) -> Self {
+        Self {
+            duration_ms,
+            ..Self::success(name, url, stats)
         }
     }
 
@@ -386,21 +420,58 @@ impl PortalHarvestResult {
             portal_name: name,
             portal_url: url,
             stats: SyncStats::default(),
+            status: PortalHarvestStatus::Failed,
+            duration_ms: 0,
+            error_class: None,
             error: Some(error),
+        }
+    }
+
+    /// Creates a failed harvest result with stable error details and duration.
+    pub fn failure_with_details(
+        name: String,
+        url: String,
+        error_class: impl Into<String>,
+        error: String,
+        duration_ms: u64,
+    ) -> Self {
+        Self {
+            portal_name: name,
+            portal_url: url,
+            stats: SyncStats::default(),
+            status: PortalHarvestStatus::Failed,
+            duration_ms,
+            error_class: Some(error_class.into()),
+            error: Some(error),
+        }
+    }
+
+    /// Creates a cancelled harvest result with partial statistics.
+    pub fn cancelled(name: String, url: String, stats: SyncStats, duration_ms: u64) -> Self {
+        Self {
+            portal_name: name,
+            portal_url: url,
+            stats,
+            status: PortalHarvestStatus::Cancelled,
+            duration_ms,
+            error_class: None,
+            error: None,
         }
     }
 
     /// Returns true if the harvest was successful.
     pub fn is_success(&self) -> bool {
-        self.error.is_none()
+        self.status == PortalHarvestStatus::Success
     }
 }
 
 /// Aggregated results from batch harvesting multiple portals.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct BatchHarvestSummary {
     /// Results for each portal.
     pub results: Vec<PortalHarvestResult>,
+    /// Wall-clock duration of the complete batch in milliseconds.
+    pub duration_ms: u64,
 }
 
 impl BatchHarvestSummary {
@@ -414,6 +485,11 @@ impl BatchHarvestSummary {
         self.results.push(result);
     }
 
+    /// Records the wall-clock duration for the complete batch.
+    pub fn set_duration_ms(&mut self, duration_ms: u64) {
+        self.duration_ms = duration_ms;
+    }
+
     /// Returns the count of successful harvests.
     pub fn successful_count(&self) -> usize {
         self.results.iter().filter(|r| r.is_success()).count()
@@ -421,7 +497,18 @@ impl BatchHarvestSummary {
 
     /// Returns the count of failed harvests.
     pub fn failed_count(&self) -> usize {
-        self.results.iter().filter(|r| !r.is_success()).count()
+        self.results
+            .iter()
+            .filter(|r| r.status == PortalHarvestStatus::Failed)
+            .count()
+    }
+
+    /// Returns the count of cancelled portal runs.
+    pub fn cancelled_count(&self) -> usize {
+        self.results
+            .iter()
+            .filter(|r| r.status == PortalHarvestStatus::Cancelled)
+            .count()
     }
 
     /// Returns the total number of datasets across all successful portals.
@@ -574,14 +661,35 @@ mod tests {
 
     #[test]
     fn test_portal_harvest_result_failure() {
-        let result = PortalHarvestResult::failure(
+        let result = PortalHarvestResult::failure_with_details(
             "test".to_string(),
             "https://example.com".to_string(),
+            "timeout",
             "Connection timeout".to_string(),
+            125,
         );
         assert!(!result.is_success());
         assert_eq!(result.error, Some("Connection timeout".to_string()));
+        assert_eq!(result.error_class.as_deref(), Some("timeout"));
+        assert_eq!(result.duration_ms, 125);
         assert_eq!(result.stats.total(), 0);
+    }
+
+    #[test]
+    fn test_batch_summary_serializes_stable_status_fields() {
+        let mut summary = BatchHarvestSummary::new();
+        summary.add(PortalHarvestResult::success_with_duration(
+            "test".to_string(),
+            "https://example.com".to_string(),
+            SyncStats::default(),
+            42,
+        ));
+        summary.set_duration_ms(50);
+
+        let value = serde_json::to_value(&summary).expect("serializable batch summary");
+        assert_eq!(value["duration_ms"], 50);
+        assert_eq!(value["results"][0]["status"], "success");
+        assert_eq!(value["results"][0]["duration_ms"], 42);
     }
 
     // =========================================================================

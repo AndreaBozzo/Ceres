@@ -237,6 +237,9 @@ requests return `403`.
 # All enabled portals from config
 ceres harvest
 
+# Bound portal-level concurrency (default: 4; env: CERES_BATCH_CONCURRENCY)
+ceres harvest --metadata-only --concurrency 6
+
 # Ad-hoc harvests by portal type
 ceres harvest https://dati.comune.milano.it
 ceres harvest https://data.public.lu --type dcat
@@ -255,6 +258,10 @@ ceres harvest --portal milano --full-sync
 # Dry run
 ceres harvest --portal milano --dry-run --metadata-only
 ```
+
+Batch mode isolates portal failures, preserves configuration order in its final
+summary, and reports each portal's status, dataset count, duration, and stable
+error class. One failed portal does not stop the remaining portals.
 
 ### Embed
 

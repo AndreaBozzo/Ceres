@@ -102,7 +102,7 @@ pub trait DatasetStore: Send + Sync + Clone {
 | `JobStatus` | `ceres_core::job` | Enum: Pending, Running, Completed, Failed, Cancelled |
 | `SyncStats` | `ceres_core::sync` | created, updated, unchanged, failed, skipped counts |
 | `SyncOutcome` | `ceres_core::sync` | Per-dataset outcome: Created, Updated, Unchanged, Failed, Skipped |
-| `BatchHarvestSummary` | `ceres_core::sync` | Aggregated results from batch harvesting multiple portals |
+| `BatchHarvestSummary` | `ceres_core::sync` | Timed, serializable batch results; each portal has status, counts, duration, and error class |
 | `PortalEntry` | `ceres_core::config` | Portal config: name, url, type, enabled, url_template, language, profile, sparql_endpoint, ogc_endpoint |
 | `AppError` | `ceres_core::error` | Error enum with `is_retryable()` and `should_trip_circuit()` |
 | `EmbeddingStats` | `ceres_core::embedding` | embedded, failed, skipped, total counts from an embedding run |

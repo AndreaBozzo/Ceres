@@ -80,8 +80,8 @@ pub use schema::{DatasetResource, DatasetSchema, ResourceField};
 // Sync types and business logic
 pub use sync::{
     AlwaysReprocessDetector, AtomicSyncStats, BatchHarvestSummary, ContentHashDetector,
-    DeltaDetector, PortalHarvestResult, ReprocessingDecision, SyncMode, SyncOutcome, SyncResult,
-    SyncStats, SyncStatus, needs_reprocessing,
+    DeltaDetector, PortalHarvestResult, PortalHarvestStatus, ReprocessingDecision, SyncMode,
+    SyncOutcome, SyncResult, SyncStats, SyncStatus, needs_reprocessing,
 };
 
 // Progress reporting

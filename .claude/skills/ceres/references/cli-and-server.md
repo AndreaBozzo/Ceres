@@ -15,6 +15,7 @@ ceres harvest --portal milano               # Harvest portal by name from config
 ceres harvest --config ~/custom.toml        # Use custom config file
 ceres harvest --full-sync                   # Force full sync (ignore incremental)
 ceres harvest --dry-run                     # Preview without DB writes or embedding calls
+ceres harvest --metadata-only --concurrency 6 # Batch with at most six portals in flight
 ```
 
 | Flag | Short | Description |
@@ -27,6 +28,7 @@ ceres harvest --dry-run                     # Preview without DB writes or embed
 | `--full-sync` | | Force full sync even if incremental is available |
 | `--dry-run` | | Preview what would happen without DB writes |
 | `--metadata-only` | | Harvest metadata only, no embedding (no API key needed) |
+| `--concurrency <N>` | | Maximum concurrent portals in batch mode (default `4`; env `CERES_BATCH_CONCURRENCY`) |
 
 Metadata-only harvesting is the normal operational mode when you want to build or refresh the catalog without touching embeddings.
 
