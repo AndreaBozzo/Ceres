@@ -32,6 +32,13 @@ ceres harvest --metadata-only --concurrency 6 # Batch with at most six portals i
 
 Metadata-only harvesting is the normal operational mode when you want to build or refresh the catalog without touching embeddings.
 
+Scheduler contract for batch mode:
+
+- `--log-format json` or `CERES_LOG_FORMAT=json` emits newline-delimited JSON, including `portal_outcome`, `batch_summary`, and `fatal` events.
+- exit `0`: all configured portals succeeded
+- exit `2`: the batch completed with one or more failed portals
+- exit `1`: fatal setup failure (configuration, database connection, or another command-level error)
+
 ### `ceres embed` — Generate embeddings for pending datasets
 
 ```bash
@@ -115,7 +122,9 @@ Swagger UI: `http://127.0.0.1:3000/swagger-ui`
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/health` | Health check (DB connectivity) |
+| GET | `/api/v1/health` | Backward-compatible readiness check (DB connectivity; 503 when unavailable) |
+| GET | `/api/v1/health/live` | Process liveness; independent of database health |
+| GET | `/api/v1/health/ready` | Database readiness; 200 when ready, 503 when unavailable |
 | GET | `/api/v1/stats` | Database statistics |
 | GET | `/api/v1/search?q=...&limit=10` | Semantic search |
 | GET | `/api/v1/datasets/:id` | Get dataset by UUID |
@@ -199,6 +208,8 @@ curl http://localhost:3000/api/v1/export \
 | `CERES_ADMIN_TOKEN` | | Bearer token for admin endpoints |
 | `CERES_METADATA_REDACT_KEYS` | `maintainer_email,author_email,contact_*` | Comma-separated keys stripped recursively from public dataset metadata; matching is case-insensitive and trailing `*` matches a prefix |
 | `RUST_LOG` | `info` | Log level (tracing) |
+| `CERES_LOG_FORMAT` | `pretty` | CLI log encoding: `pretty` or newline-delimited `json` |
+| `CERES_BATCH_CONCURRENCY` | `4` | Maximum concurrent portals in a CLI batch harvest |
 | `CB_FAILURE_THRESHOLD` | `5` | Circuit breaker failure threshold |
 | `CB_RECOVERY_TIMEOUT_SECS` | `30` | Circuit breaker recovery timeout |
 | `CB_SUCCESS_THRESHOLD` | `2` | Circuit breaker success threshold |

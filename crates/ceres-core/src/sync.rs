@@ -368,6 +368,17 @@ pub enum PortalHarvestStatus {
     Cancelled,
 }
 
+impl PortalHarvestStatus {
+    /// Returns the stable string used in structured logs and summaries.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 /// Result of harvesting a single portal in batch mode.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PortalHarvestResult {

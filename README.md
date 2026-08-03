@@ -263,6 +263,11 @@ Batch mode isolates portal failures, preserves configuration order in its final
 summary, and reports each portal's status, dataset count, duration, and stable
 error class. One failed portal does not stop the remaining portals.
 
+For schedulers, set `CERES_LOG_FORMAT=json` (or pass `--log-format json`) to
+emit newline-delimited JSON events. Batch exit codes are stable: `0` means every
+portal succeeded, `2` means one or more portals failed, and `1` means a fatal
+startup/configuration/database error.
+
 ### Embed
 
 ```bash
@@ -350,6 +355,8 @@ cargo run --bin ceres-server
 Available endpoints:
 
 - `GET /api/v1/health`
+- `GET /api/v1/health/live`
+- `GET /api/v1/health/ready`
 - `GET /api/v1/stats`
 - `GET /api/v1/search`
 - `GET /api/v1/portals`

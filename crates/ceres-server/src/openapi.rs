@@ -4,7 +4,7 @@ use utoipa::OpenApi;
 
 use crate::dto::{
     DatasetResourceDto, DatasetResponse, DatasetSchemaResponse, ExportQuery, HarvestJobResponse,
-    HarvestStatusResponse, HealthResponse, PortalInfoResponse, PortalStatsResponse,
+    HarvestStatusResponse, HealthResponse, PortalInfoResponse, PortalStatsResponse, ProbeResponse,
     ResourceFieldDto, SearchQuery, SearchResponse, SearchResultDto, ServiceStatus, StatsResponse,
     SyncStatsDto, TriggerHarvestRequest,
 };
@@ -56,6 +56,8 @@ contract for normalized resources and distributions.
     ),
     paths(
         health::health_check,
+        health::liveness_check,
+        health::readiness_check,
         stats::get_stats,
         search::search,
         portals::list_portals,
@@ -75,6 +77,7 @@ contract for normalized resources and distributions.
             TriggerHarvestRequest,
             // Response types
             HealthResponse,
+            ProbeResponse,
             ServiceStatus,
             StatsResponse,
             SearchResponse,

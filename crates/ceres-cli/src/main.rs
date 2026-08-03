@@ -1,13 +1,14 @@
 use std::io;
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use anyhow::Context;
 use clap::Parser;
 use dotenvy::dotenv;
 use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
-use tracing::{Level, error, info};
-use tracing_subscriber::FmtSubscriber;
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
 use ceres_client::{EmbeddingConfig, EmbeddingProviderEnum, PortalClientFactoryEnum};
 use ceres_core::traits::EmbeddingProvider;
@@ -18,7 +19,34 @@ use ceres_core::{
     SearchService, SyncStats, TracingReporter, load_portals_config,
 };
 use ceres_db::DatasetRepository;
-use ceres_search::{Command, Config, ExportFormat};
+use ceres_search::{Command, Config, ExportFormat, LogFormat};
+
+const EXIT_SUCCESS: u8 = 0;
+const EXIT_FATAL: u8 = 1;
+const EXIT_PARTIAL: u8 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunOutcome {
+    Success,
+    Partial,
+}
+
+impl RunOutcome {
+    fn from_batch_summary(summary: &BatchHarvestSummary) -> Self {
+        if summary.failed_count() == 0 {
+            Self::Success
+        } else {
+            Self::Partial
+        }
+    }
+
+    fn exit_code(self) -> u8 {
+        match self {
+            Self::Success => EXIT_SUCCESS,
+            Self::Partial => EXIT_PARTIAL,
+        }
+    }
+}
 
 struct HarvestRequest {
     portal_url: Option<String>,
@@ -30,17 +58,49 @@ struct HarvestRequest {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> ExitCode {
     dotenv().ok();
-
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .with_writer(std::io::stderr)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-
     let config = Config::parse();
 
+    if let Err(error) = init_logging(config.log_format) {
+        eprintln!("Failed to initialize logging: {error:#}");
+        return ExitCode::from(EXIT_FATAL);
+    }
+
+    match run(config).await {
+        Ok(outcome) => ExitCode::from(outcome.exit_code()),
+        Err(error) => {
+            error!(event = "fatal", error = ?error, "Ceres command failed");
+            ExitCode::from(EXIT_FATAL)
+        }
+    }
+}
+
+fn init_logging(format: LogFormat) -> anyhow::Result<()> {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    match format {
+        LogFormat::Pretty => tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_writer(std::io::stderr)
+                .finish(),
+        ),
+        LogFormat::Json => tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_writer(std::io::stderr)
+                .json()
+                .flatten_event(true)
+                .with_current_span(false)
+                .with_span_list(false)
+                .finish(),
+        ),
+    }
+    .context("setting global tracing subscriber")
+}
+
+async fn run(config: Config) -> anyhow::Result<RunOutcome> {
     info!("Connecting to database...");
     let db_config = DbConfig::default();
     let pool = PgPoolOptions::new()
@@ -78,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
 
     let portal_factory = PortalClientFactoryEnum::new();
 
-    match config.command {
+    let outcome = match config.command {
         Command::Harvest {
             portal_url,
             r#type: portal_type,
@@ -120,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
                     batch_concurrency: concurrency,
                 },
             )
-            .await?;
+            .await?
         }
         Command::Embed { portal } => {
             let embedding_client = create_and_validate_embedding().await?;
@@ -131,11 +191,13 @@ async fn main() -> anyhow::Result<()> {
                 .embed_pending(portal.as_deref(), &reporter, cancel_token)
                 .await?;
             print_embedding_summary(&stats);
+            RunOutcome::Success
         }
         Command::Search { query, limit } => {
             let embedding_client = create_and_validate_embedding().await?;
             let search_service = SearchService::new(repo.clone(), embedding_client);
             search(&search_service, &query, limit).await?;
+            RunOutcome::Success
         }
         Command::Export {
             format,
@@ -144,42 +206,46 @@ async fn main() -> anyhow::Result<()> {
             output,
             config: config_path,
             previous,
-        } => match format {
-            ExportFormat::Parquet => {
-                let output_dir = output.ok_or_else(|| {
-                    anyhow::anyhow!("--output <DIR> is required for parquet format")
-                })?;
-                if portal.is_some() {
-                    eprintln!(
-                        "Warning: --portal is ignored for parquet export (all portals are exported as separate files)"
+        } => {
+            match format {
+                ExportFormat::Parquet => {
+                    let output_dir = output.ok_or_else(|| {
+                        anyhow::anyhow!("--output <DIR> is required for parquet format")
+                    })?;
+                    if portal.is_some() {
+                        eprintln!(
+                            "Warning: --portal is ignored for parquet export (all portals are exported as separate files)"
+                        );
+                    }
+                    if limit.is_some() {
+                        eprintln!("Warning: --limit is ignored for parquet export");
+                    }
+                    let portals_config = load_portals_config(config_path)?;
+                    let parquet_service = ParquetExportService::new(
+                        repo.clone(),
+                        portals_config,
+                        ParquetExportConfig::default()
+                            .with_git_commit(option_env!("VERGEN_GIT_SHA").unwrap_or("unknown")),
                     );
+                    let result = parquet_service
+                        .export_to_directory_with_previous(&output_dir, previous.as_deref())
+                        .await?;
+                    print_parquet_export_summary(&result);
                 }
-                if limit.is_some() {
-                    eprintln!("Warning: --limit is ignored for parquet export");
+                _ => {
+                    let export_service = ExportService::new(repo.clone());
+                    export(&export_service, format, portal.as_deref(), limit).await?;
                 }
-                let portals_config = load_portals_config(config_path)?;
-                let parquet_service = ParquetExportService::new(
-                    repo.clone(),
-                    portals_config,
-                    ParquetExportConfig::default()
-                        .with_git_commit(option_env!("VERGEN_GIT_SHA").unwrap_or("unknown")),
-                );
-                let result = parquet_service
-                    .export_to_directory_with_previous(&output_dir, previous.as_deref())
-                    .await?;
-                print_parquet_export_summary(&result);
             }
-            _ => {
-                let export_service = ExportService::new(repo.clone());
-                export(&export_service, format, portal.as_deref(), limit).await?;
-            }
-        },
+            RunOutcome::Success
+        }
         Command::Stats => {
             show_stats(&repo).await?;
+            RunOutcome::Success
         }
-    }
+    };
 
-    Ok(())
+    Ok(outcome)
 }
 
 /// Handle the harvest command: harvest metadata, then optionally embed.
@@ -187,7 +253,7 @@ async fn handle_harvest(
     harvest_service: &HarvestService<DatasetRepository, PortalClientFactoryEnum>,
     embedding_service: Option<&EmbeddingService<DatasetRepository, EmbeddingProviderEnum>>,
     request: HarvestRequest,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RunOutcome> {
     let HarvestRequest {
         portal_url,
         portal_type: ad_hoc_portal_type,
@@ -203,6 +269,7 @@ async fn handle_harvest(
     } else {
         ""
     };
+    let mut outcome = RunOutcome::Success;
 
     if ad_hoc_profile.is_some() && ad_hoc_portal_type != PortalType::Dcat {
         anyhow::bail!("--profile is only valid with --type dcat");
@@ -288,7 +355,7 @@ async fn handle_harvest(
             if enabled.is_empty() {
                 info!("No enabled portals found in configuration.");
                 info!("Add portals to ~/.config/ceres/portals.toml or use: ceres harvest <url>");
-                return Ok(());
+                return Ok(RunOutcome::Success);
             }
 
             info!("═══════════════════════════════════════════════════════");
@@ -304,6 +371,7 @@ async fn handle_harvest(
                 .batch_harvest_with_progress_concurrency(&enabled, &reporter, batch_concurrency)
                 .await;
             print_batch_summary(&summary);
+            outcome = RunOutcome::from_batch_summary(&summary);
 
             if let Some(es) = embedding_service {
                 let embed_stats = es
@@ -316,7 +384,7 @@ async fn handle_harvest(
         (Some(_), Some(_)) => unreachable!("portal_url and portal are mutually exclusive"),
     }
 
-    Ok(())
+    Ok(outcome)
 }
 
 /// Print a summary of embedding results.
@@ -334,6 +402,16 @@ fn print_embedding_summary(stats: &EmbeddingStats) {
 
 /// Print a summary of batch harvesting results.
 fn print_batch_summary(summary: &BatchHarvestSummary) {
+    info!(
+        event = "batch_summary",
+        total_portals = summary.total_portals(),
+        successful_portals = summary.successful_count(),
+        failed_portals = summary.failed_count(),
+        cancelled_portals = summary.cancelled_count(),
+        total_datasets = summary.total_datasets(),
+        duration_ms = summary.duration_ms,
+        "Batch harvest complete"
+    );
     info!("");
     info!("═══════════════════════════════════════════════════════");
     info!("BATCH HARVEST COMPLETE");
@@ -347,10 +425,16 @@ fn print_batch_summary(summary: &BatchHarvestSummary) {
     info!("───────────────────────────────────────────────────────");
     for result in &summary.results {
         info!(
-            portal = result.portal_name,
-            portal_url = result.portal_url,
-            status = ?result.status,
+            event = "portal_outcome",
+            portal = %result.portal_name,
+            portal_url = %result.portal_url,
+            status = result.status.as_str(),
             datasets = result.stats.total(),
+            created = result.stats.created,
+            updated = result.stats.updated,
+            unchanged = result.stats.unchanged,
+            failed = result.stats.failed,
+            skipped = result.stats.skipped,
             duration_ms = result.duration_ms,
             error_class = result.error_class.as_deref().unwrap_or(""),
             "Portal result"
@@ -558,6 +642,28 @@ async fn export(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_exit_codes_are_stable() {
+        assert_eq!(RunOutcome::Success.exit_code(), 0);
+        assert_eq!(RunOutcome::Partial.exit_code(), 2);
+        assert_eq!(EXIT_FATAL, 1);
+
+        let mut partial = BatchHarvestSummary::new();
+        partial.add(ceres_core::PortalHarvestResult::failure(
+            "broken".into(),
+            "https://broken.example".into(),
+            "offline".into(),
+        ));
+        assert_eq!(
+            RunOutcome::from_batch_summary(&partial),
+            RunOutcome::Partial
+        );
+        assert_eq!(
+            RunOutcome::from_batch_summary(&BatchHarvestSummary::new()),
+            RunOutcome::Success
+        );
+    }
 
     #[test]
     fn test_create_similarity_bar_full() {

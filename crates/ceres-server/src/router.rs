@@ -24,6 +24,8 @@ pub fn create_router(state: AppState, config: &ServerConfig) -> Router {
     // Public routes (no authentication required)
     let public_routes = Router::new()
         .route("/health", get(health::health_check))
+        .route("/health/live", get(health::liveness_check))
+        .route("/health/ready", get(health::readiness_check))
         .route("/stats", get(stats::get_stats))
         .route("/search", get(search::search))
         .route("/portals", get(portals::list_portals))

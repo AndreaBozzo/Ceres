@@ -65,8 +65,27 @@ pub struct Config {
     #[arg(long, env = "OLLAMA_ENDPOINT")]
     pub ollama_endpoint: Option<String>,
 
+    /// Log output format: pretty text for humans or newline-delimited JSON.
+    #[arg(
+        long,
+        env = "CERES_LOG_FORMAT",
+        value_enum,
+        default_value_t = LogFormat::Pretty,
+        global = true
+    )]
+    pub log_format: LogFormat,
+
     #[command(subcommand)]
     pub command: Command,
+}
+
+/// CLI log encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum LogFormat {
+    /// Human-readable text logs.
+    Pretty,
+    /// Newline-delimited JSON logs for schedulers and log collectors.
+    Json,
 }
 
 /// Available CLI commands
@@ -204,7 +223,7 @@ pub enum ExportFormat {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, Config, version_info};
+    use super::{Command, Config, LogFormat, version_info};
     use clap::Parser;
 
     #[test]
@@ -245,5 +264,20 @@ mod tests {
         ]);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn json_log_format_can_be_set_after_subcommand() {
+        let config = Config::try_parse_from([
+            "ceres",
+            "--database-url",
+            "postgresql://localhost/ceres",
+            "harvest",
+            "--log-format",
+            "json",
+        ])
+        .expect("valid CLI");
+
+        assert_eq!(config.log_format, LogFormat::Json);
     }
 }
