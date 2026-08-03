@@ -34,7 +34,7 @@ clean: ## Clean build artifacts
 	cargo clean
 
 docker-build: ## Build the Docker image
-	docker build -t ceres-server .
+	docker build --build-arg CERES_GIT_SHA="$$(git rev-parse HEAD)" -t ceres .
 
 docker-up: ## Start services with docker compose
 	docker compose up -d

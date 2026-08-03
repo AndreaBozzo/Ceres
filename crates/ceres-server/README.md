@@ -13,6 +13,6 @@
 * **Docker Ready**: Production multi-stage Docker image included.
 
 ### Deployment role
-* **Public read surface**: health, stats, search, dataset, and portal endpoints.
+* **Public read surface**: distinct `/health/live` and `/health/ready` container probes (plus the readiness-compatible `/health` alias), stats, search, dataset, and portal endpoints.
 * **Protected write surface**: harvest triggers and exports behind `CERES_ADMIN_TOKEN`.
 * **Job-aware operations**: integrates with the persistent harvest queue and status reporting.

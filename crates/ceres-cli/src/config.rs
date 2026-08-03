@@ -65,8 +65,27 @@ pub struct Config {
     #[arg(long, env = "OLLAMA_ENDPOINT")]
     pub ollama_endpoint: Option<String>,
 
+    /// Log output format: pretty text for humans or newline-delimited JSON.
+    #[arg(
+        long,
+        env = "CERES_LOG_FORMAT",
+        value_enum,
+        default_value_t = LogFormat::Pretty,
+        global = true
+    )]
+    pub log_format: LogFormat,
+
     #[command(subcommand)]
     pub command: Command,
+}
+
+/// CLI log encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum LogFormat {
+    /// Human-readable text logs.
+    Pretty,
+    /// Newline-delimited JSON logs for schedulers and log collectors.
+    Json,
 }
 
 /// Available CLI commands
@@ -110,7 +129,7 @@ pub enum Command {
         portal: Option<String>,
 
         /// Custom path to portals.toml configuration file
-        #[arg(short, long, value_name = "PATH")]
+        #[arg(short, long, env = "PORTALS_CONFIG", value_name = "PATH")]
         config: Option<PathBuf>,
 
         /// Force full sync even if incremental sync is available
@@ -124,6 +143,15 @@ pub enum Command {
         /// Only harvest metadata (no embedding). Does not require an API key.
         #[arg(long)]
         metadata_only: bool,
+
+        /// Maximum number of portals harvested concurrently in batch mode.
+        #[arg(
+            long,
+            env = "CERES_BATCH_CONCURRENCY",
+            default_value = "4",
+            value_parser = parse_positive_usize
+        )]
+        concurrency: usize,
     },
     /// Generate embeddings for datasets that don't have them yet
     #[command(after_help = "Examples:
@@ -162,7 +190,7 @@ pub enum Command {
         #[arg(short, long, value_name = "DIR")]
         output: Option<std::path::PathBuf>,
         /// Custom path to portals.toml (for portal name resolution in parquet export)
-        #[arg(short, long, value_name = "PATH")]
+        #[arg(short, long, env = "PORTALS_CONFIG", value_name = "PATH")]
         config: Option<std::path::PathBuf>,
         /// Previous snapshot directory to diff against (parquet only). When set,
         /// writes changelog.json / changelog.md describing what changed.
@@ -171,6 +199,13 @@ pub enum Command {
     },
     /// Show database statistics
     Stats,
+}
+
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    match value.parse::<usize>() {
+        Ok(value) if value > 0 => Ok(value),
+        _ => Err("value must be a positive integer".to_string()),
+    }
 }
 
 /// Supported export formats
@@ -188,7 +223,8 @@ pub enum ExportFormat {
 
 #[cfg(test)]
 mod tests {
-    use super::version_info;
+    use super::{Command, Config, LogFormat, version_info};
+    use clap::Parser;
 
     #[test]
     fn test_version_info_contains_expected_fields() {
@@ -197,5 +233,51 @@ mod tests {
         assert!(info.contains("built:"));
         assert!(info.contains("target:"));
         assert!(info.contains("rustc:"));
+    }
+
+    #[test]
+    fn batch_concurrency_defaults_to_four() {
+        let config = Config::try_parse_from([
+            "ceres",
+            "--database-url",
+            "postgresql://localhost/ceres",
+            "harvest",
+            "--metadata-only",
+        ])
+        .expect("valid CLI");
+
+        let Command::Harvest { concurrency, .. } = config.command else {
+            panic!("expected harvest command");
+        };
+        assert_eq!(concurrency, 4);
+    }
+
+    #[test]
+    fn batch_concurrency_rejects_zero() {
+        let result = Config::try_parse_from([
+            "ceres",
+            "--database-url",
+            "postgresql://localhost/ceres",
+            "harvest",
+            "--concurrency",
+            "0",
+        ]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn json_log_format_can_be_set_after_subcommand() {
+        let config = Config::try_parse_from([
+            "ceres",
+            "--database-url",
+            "postgresql://localhost/ceres",
+            "harvest",
+            "--log-format",
+            "json",
+        ])
+        .expect("valid CLI");
+
+        assert_eq!(config.log_format, LogFormat::Json);
     }
 }

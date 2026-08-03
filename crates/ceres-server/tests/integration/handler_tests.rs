@@ -65,6 +65,70 @@ async fn test_health_check() {
     assert_eq!(json["database"]["healthy"], true);
 }
 
+#[tokio::test]
+async fn test_container_probe_contract() {
+    let app = TestApp::new().await;
+
+    let live = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/health/live")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(live.status(), StatusCode::OK);
+    let live_json = body_json(live.into_body()).await;
+    assert_eq!(live_json["status"], "alive");
+
+    let ready = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/health/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ready.status(), StatusCode::OK);
+
+    app.pool.close().await;
+
+    let unavailable = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/health/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let unavailable_json = body_json(unavailable.into_body()).await;
+    assert_eq!(unavailable_json["status"], "unhealthy");
+    assert_eq!(unavailable_json["database"]["healthy"], false);
+
+    let still_live = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/health/live")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(still_live.status(), StatusCode::OK);
+}
+
 // =============================================================================
 // Search endpoint
 // =============================================================================

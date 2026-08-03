@@ -137,6 +137,12 @@ impl CkanClient {
     /// Maximum backoff delay for rate-limited retries within `request_with_retry`.
     const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
+    /// Honor an upstream retry hint without allowing one portal to park an
+    /// entire scheduled batch beyond Ceres' bounded backoff contract.
+    fn retry_after_delay(seconds: u64) -> Duration {
+        Duration::from_secs(seconds).min(Self::MAX_RETRY_DELAY)
+    }
+
     /// Cooldown when a page request is rate-limited after exhausting low-level retries.
     /// The pagination loop waits this long before retrying the same page.
     const PAGE_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(60);
@@ -728,7 +734,7 @@ impl CkanClient {
                                 .get("retry-after")
                                 .and_then(|v| v.to_str().ok())
                                 .and_then(|v| v.parse::<u64>().ok())
-                                .map(Duration::from_secs)
+                                .map(Self::retry_after_delay)
                                 .unwrap_or_else(|| {
                                     (base_delay * 2_u32.pow(attempt)).min(Self::MAX_RETRY_DELAY)
                                 });
@@ -1207,6 +1213,15 @@ mod tests {
     #[test]
     fn test_is_page_size_reducible_timeout() {
         assert!(CkanClient::is_page_size_reducible(&AppError::Timeout(30)));
+    }
+
+    #[test]
+    fn retry_after_delay_is_capped() {
+        assert_eq!(CkanClient::retry_after_delay(10), Duration::from_secs(10));
+        assert_eq!(
+            CkanClient::retry_after_delay(3_600),
+            CkanClient::MAX_RETRY_DELAY
+        );
     }
 
     #[test]

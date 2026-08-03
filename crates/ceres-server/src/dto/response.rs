@@ -11,6 +11,15 @@ use ceres_core::{DatabaseStats, HarvestJob, SearchResult, SyncStats};
 // Health & Stats
 // =============================================================================
 
+/// Process liveness response.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProbeResponse {
+    /// Probe status (`alive`).
+    pub status: String,
+    /// Server version.
+    pub version: String,
+}
+
 /// Health check response.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct HealthResponse {

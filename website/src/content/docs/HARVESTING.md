@@ -230,6 +230,22 @@ The harvest pipeline streams datasets through processing stages instead of loadi
 
 Embedding is no longer part of the mandatory hot path. When enabled, it runs through a separate service and can batch texts according to provider capabilities.
 
+### Batch Harvesting
+
+Run `ceres harvest --metadata-only` without a URL or `--portal` to refresh every
+enabled entry in `portals.toml`. Portal failures are isolated, so the run
+continues and emits a final per-portal summary with status, dataset counts,
+duration, and a stable error class.
+
+Portal-level concurrency is bounded to four by default. Override it with
+`--concurrency N` or `CERES_BATCH_CONCURRENCY=N`; per-portal paging and retry
+behavior remains unchanged.
+
+Scheduled runs can set `CERES_LOG_FORMAT=json` for newline-delimited
+`portal_outcome`, `batch_summary`, and `fatal` events. Exit `0` means all
+portals succeeded, `2` means the batch completed with portal failures, and `1`
+means the command failed before or outside the recoverable per-portal loop.
+
 ### Tier 1: Incremental Sync
 
 When a portal supports modified-since querying, Ceres fetches only datasets changed since the last successful sync. The last sync timestamp is stored in `portal_sync_status`.

@@ -102,7 +102,7 @@ pub trait DatasetStore: Send + Sync + Clone {
 | `JobStatus` | `ceres_core::job` | Enum: Pending, Running, Completed, Failed, Cancelled |
 | `SyncStats` | `ceres_core::sync` | created, updated, unchanged, failed, skipped counts |
 | `SyncOutcome` | `ceres_core::sync` | Per-dataset outcome: Created, Updated, Unchanged, Failed, Skipped |
-| `BatchHarvestSummary` | `ceres_core::sync` | Aggregated results from batch harvesting multiple portals |
+| `BatchHarvestSummary` | `ceres_core::sync` | Timed, serializable batch results; each portal has status, counts, duration, and error class |
 | `PortalEntry` | `ceres_core::config` | Portal config: name, url, type, enabled, url_template, language, profile, sparql_endpoint, ogc_endpoint |
 | `AppError` | `ceres_core::error` | Error enum with `is_retryable()` and `should_trip_circuit()` |
 | `EmbeddingStats` | `ceres_core::embedding` | embedded, failed, skipped, total counts from an embedding run |
@@ -169,6 +169,9 @@ ceres stats
 - Supports Ollama, Gemini, and OpenAI embeddings
 - Parquet export publishes a portable snapshot: schema v2 adds a normalized `resources` list (`name`, `format`, `media_type`, `url`, `field_count`) to `all.parquet` and per-portal subsets; exports also include `identity.parquet`, a versioned snapshot manifest (`metadata.json` with `snapshot_id`, dataset-schema documentation, provenance, alias-aware duplicate metadata, and SHA-256 checksums), coverage/quality reports (`reports.json`, `report.md`) with global and per-portal resource/schema completeness plus format/media-type distributions, and snapshot changelogs (`changelog.json`, `changelog.md` when `--previous` is supplied)
 - `GET /api/v1/datasets/{id}/schema` is the supported cross-portal resource contract; its arrays are always present and unavailable scalar resource/field properties serialize as `null`. The `metadata` object on `GET /api/v1/datasets/{id}` remains source-specific, best-effort raw detail for inspection and debugging, with keys matching `CERES_METADATA_REDACT_KEYS` stripped recursively at that public API boundary. Stored metadata and export paths remain unchanged.
+- Scheduled CLI batches support newline-delimited JSON logs (`CERES_LOG_FORMAT=json`) and stable exits (`0` success, `2` partial portal failure, `1` fatal). Server container probes are `/api/v1/health/live` and `/api/v1/health/ready`; the legacy `/api/v1/health` remains a readiness alias.
+- The multi-stage image contains `ceres`, `ceres-server`, bundled migrations, `ceres-migrate`, and `ceres-job`. It defaults to the server; schedulers override the command with `ceres-job` and mount `PORTALS_CONFIG` read-only.
+- `ceres-job` is the finite container scheduler entrypoint: JSON logs by default, metadata-only batch mode, exact CLI exit propagation, and optional `CERES_MIGRATE_ON_START=true` for self-contained first deployment.
 - v0.6.0 coverage foundations shipped: CKAN, DCAT (`udata_rest`/`sparql`/`static_json`), Socrata, OpenDataSoft, ArcGIS Hub, OGC CSW, and collection-level STAC, plus at least one opt-in live smoke test per profile (`cargo test -p ceres-client -- --ignored smoke`; most take a `CERES_*_SMOKE_URL` override, STAC uses `CERES_STAC_*_URL`, and the OGC CSW smokes hard-code their endpoints) and a reproducible metadata-only coverage validation set documented in `website/src/content/docs/PORTALS.md`
 - v0.7.0 milestone focus (next): resource-level metadata depth tracked in issue #68
 - HuggingFace dataset: `AndreaBozzo/ceres-open-data-index`

@@ -237,6 +237,9 @@ requests return `403`.
 # All enabled portals from config
 ceres harvest
 
+# Bound portal-level concurrency (default: 4; env: CERES_BATCH_CONCURRENCY)
+ceres harvest --metadata-only --concurrency 6
+
 # Ad-hoc harvests by portal type
 ceres harvest https://dati.comune.milano.it
 ceres harvest https://data.public.lu --type dcat
@@ -255,6 +258,15 @@ ceres harvest --portal milano --full-sync
 # Dry run
 ceres harvest --portal milano --dry-run --metadata-only
 ```
+
+Batch mode isolates portal failures, preserves configuration order in its final
+summary, and reports each portal's status, dataset count, duration, and stable
+error class. One failed portal does not stop the remaining portals.
+
+For schedulers, set `CERES_LOG_FORMAT=json` (or pass `--log-format json`) to
+emit newline-delimited JSON events. Batch exit codes are stable: `0` means every
+portal succeeded, `2` means one or more portals failed, and `1` means a fatal
+startup/configuration/database error.
 
 ### Embed
 
@@ -332,6 +344,19 @@ Embedding is fully decoupled from harvesting:
 
 That separation is what makes local-first embedding practical and keeps harvest jobs usable even when no embedder is configured.
 
+## Container deployment
+
+The production image contains both `ceres` and `ceres-server`, plus bundled
+database migrations for fresh managed PostgreSQL environments. See the
+[unattended container deployment guide](https://learnceres.pages.dev/deployment/)
+for Supabase/Neon connection guidance, finite scheduled jobs, secrets, exit
+codes, and server probes. Container schedulers can invoke `ceres-job` directly;
+it runs the metadata-only batch and preserves the CLI's exact exit code. The
+included weekly/manual GitHub Actions workflow is the maintainer deployment.
+On Supabase Free, a separate lightweight Monday-Saturday database heartbeat
+reduces the risk of inactivity pausing; the Sunday harvest supplies that day's
+database activity and remains the only job that contacts portals.
+
 ## REST API
 
 Start the server:
@@ -343,6 +368,8 @@ cargo run --bin ceres-server
 Available endpoints:
 
 - `GET /api/v1/health`
+- `GET /api/v1/health/live`
+- `GET /api/v1/health/ready`
 - `GET /api/v1/stats`
 - `GET /api/v1/search`
 - `GET /api/v1/portals`

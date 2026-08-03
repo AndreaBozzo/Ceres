@@ -137,7 +137,7 @@ This converges faster than halving (5 vs 8 iterations) and handles portals with 
 
 ## Batch Harvesting
 
-`HarvestService::batch_harvest_with_progress()` processes all enabled portals from `portals.toml` sequentially, producing a `BatchHarvestSummary` with per-portal results. The CLI and server both use this for bulk harvesting.
+`HarvestService::batch_harvest_with_progress()` preserves the sequential library path. `batch_harvest_with_progress_concurrency()` adds bounded portal-level concurrency for scheduler runs. Both isolate portal failures and produce a `BatchHarvestSummary`; timed results retain configuration order and include status, dataset counts, duration, and a stable error class. The CLI defaults to four concurrent portals and accepts `--concurrency` / `CERES_BATCH_CONCURRENCY`.
 
 Current production-facing portal support in the factory is CKAN, DCAT udata REST, SPARQL-backed DCAT, static Project Open Data `data.json`, Socrata, OpenDataSoft, ArcGIS Hub, OGC CSW, and STAC Collections. For ad-hoc SPARQL DCAT harvests, use `--type dcat --profile sparql`; for config-driven harvests, set `profile = "sparql"` and optionally `sparql_endpoint`. ArcGIS Hub sites whose injected `catalogV2` has an empty item scope are rejected because their search endpoint returns global ArcGIS content instead of datasets belonging to that portal. STAC harvesting follows landing-page and pagination links but never follows Collection `items` links.
 

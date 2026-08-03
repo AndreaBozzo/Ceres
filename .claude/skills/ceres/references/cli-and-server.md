@@ -15,6 +15,7 @@ ceres harvest --portal milano               # Harvest portal by name from config
 ceres harvest --config ~/custom.toml        # Use custom config file
 ceres harvest --full-sync                   # Force full sync (ignore incremental)
 ceres harvest --dry-run                     # Preview without DB writes or embedding calls
+ceres harvest --metadata-only --concurrency 6 # Batch with at most six portals in flight
 ```
 
 | Flag | Short | Description |
@@ -27,8 +28,16 @@ ceres harvest --dry-run                     # Preview without DB writes or embed
 | `--full-sync` | | Force full sync even if incremental is available |
 | `--dry-run` | | Preview what would happen without DB writes |
 | `--metadata-only` | | Harvest metadata only, no embedding (no API key needed) |
+| `--concurrency <N>` | | Maximum concurrent portals in batch mode (default `4`; env `CERES_BATCH_CONCURRENCY`) |
 
 Metadata-only harvesting is the normal operational mode when you want to build or refresh the catalog without touching embeddings.
+
+Scheduler contract for batch mode:
+
+- `--log-format json` or `CERES_LOG_FORMAT=json` emits newline-delimited JSON, including `portal_outcome`, `batch_summary`, and `fatal` events.
+- exit `0`: all configured portals succeeded
+- exit `2`: the batch completed with one or more failed portals
+- exit `1`: fatal setup failure (configuration, database connection, or another command-level error)
 
 ### `ceres embed` — Generate embeddings for pending datasets
 
@@ -113,7 +122,9 @@ Swagger UI: `http://127.0.0.1:3000/swagger-ui`
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/health` | Health check (DB connectivity) |
+| GET | `/api/v1/health` | Backward-compatible readiness check (DB connectivity; 503 when unavailable) |
+| GET | `/api/v1/health/live` | Process liveness; independent of database health |
+| GET | `/api/v1/health/ready` | Database readiness; 200 when ready, 503 when unavailable |
 | GET | `/api/v1/stats` | Database statistics |
 | GET | `/api/v1/search?q=...&limit=10` | Semantic search |
 | GET | `/api/v1/datasets/:id` | Get dataset by UUID |
@@ -197,6 +208,8 @@ curl http://localhost:3000/api/v1/export \
 | `CERES_ADMIN_TOKEN` | | Bearer token for admin endpoints |
 | `CERES_METADATA_REDACT_KEYS` | `maintainer_email,author_email,contact_*` | Comma-separated keys stripped recursively from public dataset metadata; matching is case-insensitive and trailing `*` matches a prefix |
 | `RUST_LOG` | `info` | Log level (tracing) |
+| `CERES_LOG_FORMAT` | `pretty` | CLI log encoding: `pretty` or newline-delimited `json` |
+| `CERES_BATCH_CONCURRENCY` | `4` | Maximum concurrent portals in a CLI batch harvest |
 | `CB_FAILURE_THRESHOLD` | `5` | Circuit breaker failure threshold |
 | `CB_RECOVERY_TIMEOUT_SECS` | `30` | Circuit breaker recovery timeout |
 | `CB_SUCCESS_THRESHOLD` | `2` | Circuit breaker success threshold |
@@ -275,13 +288,30 @@ cargo run --bin ceres-server  # Start server
 ### Docker (production)
 
 ```bash
-docker build -t ceres-server .
+docker build -t ceres .
+
+# Initialize a fresh PostgreSQL + pgvector database from the image
+docker run --rm -e DATABASE_URL="$DATABASE_URL" ceres ceres-migrate
+
+# Finite scheduled batch; portals.toml is mounted read-only
+docker run --rm \
+  -e DATABASE_URL="$DATABASE_URL" \
+  -e PORTALS_CONFIG=/etc/ceres/portals.toml \
+  -v "$PWD/examples/portals.toml:/etc/ceres/portals.toml:ro" \
+  ceres ceres-job
+
+# Long-lived server (the image default)
 docker run -d \
   --env-file .env \
   -p 3000:3000 \
-  ceres-server
+  ceres
 ```
 
-The Dockerfile uses a multi-stage build (build in Rust image, run in minimal Debian image).
+The Dockerfile pins Rust 1.95 in a multi-stage build and copies the CLI, server,
+migrations, `ceres-migrate`, and the finite `ceres-job` entrypoint into a slim Debian runtime. `ceres-job` defaults to JSON logs, forces metadata-only batch mode, preserves CLI exit codes, and optionally runs migrations first when `CERES_MIGRATE_ON_START=true`. For managed
+PostgreSQL, prefer a Supabase direct or session-pooler URL because the same URL
+must support migrations and a persistent SQLx client; Neon remains compatible.
+The container platform should probe `/api/v1/health/live` for liveness and
+`/api/v1/health/ready` for readiness.
 
 For local-first setups, pair the server or CLI with a local Ollama instance and keep harvesting and embedding as separate operational steps.

@@ -100,7 +100,9 @@ it does not mean the dataset itself is empty.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/health` | Database health |
+| GET | `/api/v1/health` | Backward-compatible database readiness; returns 503 when unavailable |
+| GET | `/api/v1/health/live` | Process liveness, independent of the database |
+| GET | `/api/v1/health/ready` | Database readiness; returns 200 or 503 |
 | GET | `/api/v1/stats` | Catalog statistics |
 | GET | `/api/v1/search?q=...&limit=10` | Semantic search |
 | GET | `/api/v1/portals` | Configured portals |

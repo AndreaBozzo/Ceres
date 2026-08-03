@@ -187,7 +187,11 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            CERES_GIT_SHA=${{ github.sha }}
           tags: |
+            ghcr.io/${{ steps.owner.outputs.value }}/ceres:${{ needs.validate.outputs.version }}
+            ghcr.io/${{ steps.owner.outputs.value }}/ceres:latest
             ghcr.io/${{ steps.owner.outputs.value }}/ceres-server:${{ needs.validate.outputs.version }}
             ghcr.io/${{ steps.owner.outputs.value }}/ceres-server:latest
 

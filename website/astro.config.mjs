@@ -32,6 +32,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Supported portals', slug: 'portals' },
 						{ label: 'Harvesting architecture', slug: 'harvesting' },
+						{ label: 'Deployment', slug: 'deployment' },
 						{ label: 'REST API', slug: 'api' },
 						{ label: 'Embeddings and costs', slug: 'cost' },
 					],
