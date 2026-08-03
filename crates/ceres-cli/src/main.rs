@@ -436,7 +436,7 @@ fn print_batch_summary(summary: &BatchHarvestSummary) {
             failed = result.stats.failed,
             skipped = result.stats.skipped,
             duration_ms = result.duration_ms,
-            error_class = result.error_class.as_deref().unwrap_or(""),
+            error_class = result.error_class.as_deref(),
             "Portal result"
         );
     }
