@@ -8,7 +8,33 @@ use futures::{StreamExt, stream::BoxStream};
 use reqwest::{Client, Url};
 use roxmltree::{Document, Node};
 use serde_json::{Value, json};
-use tokio::sync::OnceCell;
+use tokio::{sync::OnceCell, time::sleep};
+
+/// Delay before each narrowing retry, growing with the attempt.
+///
+/// Narrowing multiplies requests exactly when a service is least able to serve
+/// them: a failing window costs four. Without a pause, a struggling backend gets
+/// four times the load and the client's own retries deepen the problem — which
+/// is what happened to `geocatalogue.fr`, whose Elasticsearch backend began
+/// failing under an hour of unbroken 100-record ISO windows.
+const NARROW_BACKOFF: &[Duration] = &[
+    Duration::from_secs(0),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+];
+
+/// Consecutive skipped records after which the catalogue is judged unwell.
+///
+/// One unreadable record is a record. Several in a row, at different offsets,
+/// is the service — and stepping through a failing catalogue one record at a
+/// time would issue four requests each for as long as it kept failing. Stopping
+/// reports a truncated harvest, which is honest and actionable, instead of
+/// hours of futile pressure on someone else's server.
+const MAX_CONSECUTIVE_SKIPS: usize = 3;
+
+/// Per-request budget for the largest window, scaled down as windows narrow.
+const WINDOW_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Window sizes tried in turn, largest first; the first is the normal page size.
 ///
@@ -96,6 +122,10 @@ pub struct OgcRecordsClient {
     language: String,
     bindings: Arc<OnceCell<CswBindings>>,
     profile: Arc<OnceCell<CswProfile>>,
+    /// Delay before each narrowing retry. A field rather than a constant so the
+    /// tests can exercise the narrowing logic without waiting out the real
+    /// backoff; production always uses [`NARROW_BACKOFF`].
+    backoff: &'static [Duration],
 }
 
 impl OgcRecordsClient {
@@ -117,6 +147,7 @@ impl OgcRecordsClient {
             language: language.to_string(),
             bindings: Arc::new(OnceCell::new()),
             profile: Arc::new(OnceCell::new()),
+            backoff: NARROW_BACKOFF,
         })
     }
 
@@ -124,12 +155,14 @@ impl OgcRecordsClient {
         &self,
         mut url: Url,
         params: &[(&str, String)],
+        timeout: Duration,
     ) -> Result<String, AppError> {
         url.query_pairs_mut()
             .extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())));
         let response = self
             .client
             .get(url.clone())
+            .timeout(timeout)
             .send()
             .await
             .map_err(|error| AppError::ClientError(error.to_string()))?;
@@ -177,11 +210,22 @@ impl OgcRecordsClient {
                             ("version", "2.0.2".into()),
                             ("request", "GetCapabilities".into()),
                         ],
+                        WINDOW_TIMEOUT,
                     )
                     .await?;
                 parse_capabilities(&xml, &self.endpoint)
             })
             .await
+    }
+
+    /// Builds a client that does not wait between narrowing retries.
+    ///
+    /// The waiting is what protects a struggling service, not what makes the
+    /// narrowing correct, so the tests skip it and assert on the narrowing.
+    #[cfg(test)]
+    fn without_backoff(mut self) -> Self {
+        self.backoff = &[];
+        self
     }
 
     /// Fetches one window of `size` records in `profile`.
@@ -202,7 +246,11 @@ impl OgcRecordsClient {
             ("maxRecords", size.to_string()),
         ];
         params.extend(profile.query());
-        let xml = self.bounded_get(endpoint, &params).await?;
+        // A one-record window has no business taking as long as a hundred, and
+        // waiting the full budget on each narrowing step is most of why a
+        // failing offset is slow to give up on.
+        let timeout = window_timeout(size);
+        let xml = self.bounded_get(endpoint, &params, timeout).await?;
         parse_get_records(&xml, self.base_url.as_str(), &self.language)
     }
 
@@ -246,6 +294,11 @@ impl OgcRecordsClient {
     async fn page_resiliently(&self, start: usize) -> Result<Option<(Page, usize)>, AppError> {
         let mut last: Option<AppError> = None;
         for (attempt, &size) in PAGE_SIZE_LADDER.iter().enumerate() {
+            if let Some(delay) = self.backoff.get(attempt).copied()
+                && !delay.is_zero()
+            {
+                sleep(delay).await;
+            }
             match self.page(start, size).await {
                 Ok(page) => {
                     if attempt > 0 {
@@ -299,6 +352,7 @@ impl OgcRecordsClient {
             pages: usize,
             seen: HashSet<usize>,
             skipped: usize,
+            consecutive_skips: usize,
             done: bool,
         }
         Box::pin(futures::stream::unfold(
@@ -309,6 +363,7 @@ impl OgcRecordsClient {
                     pages: 0,
                     seen: HashSet::new(),
                     skipped: 0,
+                    consecutive_skips: 0,
                     done: false,
                 },
             ),
@@ -328,6 +383,7 @@ impl OgcRecordsClient {
                 state.pages += 1;
                 match client.page_resiliently(state.start).await {
                     Ok(Some((page, size))) => {
+                        state.consecutive_skips = 0;
                         // The walk is the only place that knows the catalogue is
                         // finished *and* how much of it was unreadable, so the
                         // tally is reported here rather than lost in the state.
@@ -354,10 +410,24 @@ impl OgcRecordsClient {
                         Some((Ok(page.records), (client, state)))
                     }
                     // One unreadable record: step over it and keep going, rather
-                    // than losing every record after it.
+                    // than losing every record after it. Several in a row means
+                    // the service is failing, not the records, and stepping
+                    // through it one at a time would cost four requests each for
+                    // as long as it stayed down.
                     Ok(None) => {
                         state.skipped += 1;
+                        state.consecutive_skips += 1;
                         state.start += 1;
+                        if state.consecutive_skips >= MAX_CONSECUTIVE_SKIPS {
+                            state.done = true;
+                            return Some((
+                                Err(AppError::ClientError(format!(
+                                    "CSW catalogue failed {} windows in a row around record {};                                      stopping rather than stepping through a service that is down",
+                                    state.consecutive_skips, state.start
+                                ))),
+                                (client, state),
+                            ));
+                        }
                         Some((Ok(Vec::new()), (client, state)))
                     }
                     Err(error) => {
@@ -403,6 +473,7 @@ impl PortalClient for OgcRecordsClient {
                     output_schema,
                     ("id", id.into()),
                 ],
+                WINDOW_TIMEOUT,
             )
             .await?;
         parse_single_record(&xml, self.base_url.as_str(), &self.language)
@@ -776,6 +847,18 @@ fn classify_kind(value: &str) -> CatalogRecordKind {
         _ => CatalogRecordKind::Other,
     }
 }
+/// Scales the request budget to the window size.
+///
+/// The full budget is for a full window. Narrowed retries get proportionally
+/// less — floored at 15 seconds, which is generous for a handful of records —
+/// so giving up on a failing offset takes a bounded amount of time instead of
+/// four full timeouts.
+fn window_timeout(size: usize) -> Duration {
+    let largest = PAGE_SIZE_LADDER[0].max(1);
+    let scaled = WINDOW_TIMEOUT.mul_f64(size as f64 / largest as f64);
+    scaled.max(Duration::from_secs(15))
+}
+
 fn local<'a, 'input>(node: Node<'a, 'input>) -> &'input str {
     node.tag_name().name()
 }
@@ -1106,7 +1189,9 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint)).unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
         let page = client.page(1, PAGE_SIZE_LADDER[0]).await.unwrap();
         assert_eq!(page.records.len(), 3);
         assert_eq!(client.profile.get(), Some(&CswProfile::DublinCore));
@@ -1171,7 +1256,9 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint)).unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
         let page = client.page(1, PAGE_SIZE_LADDER[0]).await.unwrap();
         assert_eq!(page.records.len(), 3);
         assert_eq!(client.profile.get(), Some(&CswProfile::DublinCore));
@@ -1192,7 +1279,9 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
         let error = client.page(1, PAGE_SIZE_LADDER[0]).await.unwrap_err();
         assert!(error.to_string().contains("503"), "{error}");
         // An outage must not be mistaken for a profile problem.
@@ -1232,7 +1321,9 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
         let error = client.page(1, PAGE_SIZE_LADDER[0]).await.unwrap_err();
         assert!(error.to_string().contains("400"), "{error}");
         assert!(
@@ -1353,7 +1444,9 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
         let records = client.search_all_datasets().await.unwrap();
         assert_eq!(
             records.len(),
@@ -1406,10 +1499,85 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
         let records = client.search_all_datasets().await.unwrap();
         let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
         assert_eq!(ids, ["record-1", "record-3"]);
+    }
+
+    /// One unreadable record is a record; several in a row is the service.
+    ///
+    /// `geocatalogue.fr` began returning `ElasticsearchStatusException` for
+    /// nearly every window after an hour of harvesting. Skipping forward one
+    /// record at a time would have issued four requests each, indefinitely,
+    /// against a backend already failing — so the walk stops and reports a
+    /// truncated harvest instead.
+    #[tokio::test]
+    async fn a_failing_service_stops_the_walk_rather_than_being_stepped_through() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        };
+
+        let server = MockServer::start().await;
+        let xml = |body: String| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/xml")
+                .set_body_string(body)
+        };
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetCapabilities"))
+            .respond_with(xml(capabilities_for(&server.uri())))
+            .mount(&server)
+            .await;
+        // The first window works; everything after it fails, as a degraded
+        // backend does.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "1"))
+            .respond_with(xml(iso_page(1, 1, 10_000)))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetRecords"))
+            .respond_with(xml(concat!(
+                r#"<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows">"#,
+                r#"<ows:Exception exceptionCode="NoApplicableCode"><ows:ExceptionText>"#,
+                "java.lang.RuntimeException: ElasticsearchStatusException",
+                "</ows:ExceptionText></ows:Exception></ows:ExceptionReport>",
+            )
+            .to_string()))
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+
+        let mut stream = client.paginate_stream();
+        let mut pages = 0usize;
+        let mut ended_with_error = false;
+        while let Some(page) = stream.next().await {
+            pages += 1;
+            if page.is_err() {
+                ended_with_error = true;
+                break;
+            }
+            // A degraded service must not be walked forever.
+            assert!(pages < 20, "the walk kept going through a failing service");
+        }
+        assert!(
+            ended_with_error,
+            "a failing service should end the walk as an error, so the harvest \
+             reports truncated rather than complete"
+        );
+        // Bounded: one good window, then at most MAX_CONSECUTIVE_SKIPS skips.
+        assert!(pages <= 1 + MAX_CONSECUTIVE_SKIPS, "pages = {pages}");
     }
 
     /// The same exception means two different things depending on when it
@@ -1469,7 +1637,9 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
         let records = client.search_all_datasets().await.unwrap();
         let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
         assert_eq!(
@@ -1527,7 +1697,9 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint)).unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
         let page = client.page_resiliently(1).await.unwrap().unwrap().0;
         assert_eq!(page.records.len(), 3);
     }
