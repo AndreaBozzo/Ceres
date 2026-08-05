@@ -156,6 +156,17 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             },
         ),
         (
+            // The mandatory Dublin Core profile has no `CI_OnlineResource`; its
+            // links are `dct:references`, whose `scheme` supplies the format for
+            // an OGC service and nothing for the catalogue's own metadata views.
+            // No media type: `scheme` names a service, not a MIME type.
+            "ogc_csw_dublin_core",
+            Expect {
+                facets: &[Facet::Format, Facet::Url],
+                fields: false,
+            },
+        ),
+        (
             // A dataflow's one resource is the `/data/{flowRef}` query the same
             // service answers, named by the flow reference. Format and media
             // type are protocol constants rather than payload values. No fields:
@@ -198,6 +209,7 @@ async fn every_client_family_matches_its_documented_resource_reachability() {
         ("stac", harvest_stac().await),
         ("sdmx", harvest_sdmx().await),
         ("ogc_csw", harvest_ogc_csw().await),
+        ("ogc_csw_dublin_core", harvest_ogc_csw_dublin_core().await),
     ]);
 
     let expectations = expectations();
@@ -508,6 +520,70 @@ async fn harvest_ogc_csw() -> Vec<NewDataset> {
     let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
     normalize(client.search_all_datasets().await.unwrap(), |record| {
         OgcRecordsClient::into_new_dataset(record, &portal_url, None, "en")
+    })
+}
+
+/// The same client against a catalogue that refuses the ISO profile, so the
+/// Dublin Core path is measured end to end rather than assumed from a parser
+/// unit test.
+async fn harvest_ogc_csw_dublin_core() -> Vec<NewDataset> {
+    const RECORDS: &str = include_str!("fixtures/csw_dublin_core.xml");
+
+    let server = MockServer::start().await;
+    let capabilities = format!(
+        r#"<ows:Capabilities xmlns:ows="http://www.opengis.net/ows" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <ows:OperationsMetadata>
+    <ows:Operation name="GetRecords">
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="{base}/csw"/></ows:HTTP></ows:DCP>
+    </ows:Operation>
+    <ows:Operation name="GetRecordById">
+      <ows:DCP><ows:HTTP><ows:Get xlink:href="{base}/csw"/></ows:HTTP></ows:DCP>
+    </ows:Operation>
+  </ows:OperationsMetadata>
+</ows:Capabilities>"#,
+        base = server.uri()
+    );
+    Mock::given(method("GET"))
+        .and(path("/csw"))
+        .and(query_param("request", "GetCapabilities"))
+        .respond_with(xml_body(&capabilities))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/csw"))
+        .and(query_param("typeNames", "gmd:MD_Metadata"))
+        .respond_with(xml_body(
+            r#"<ExceptionReport xmlns="http://www.opengis.net/ows">
+                 <Exception exceptionCode="InvalidParameterValue" locator="typeNames">
+                   <ExceptionText>CSW: The typeNames parameter must be csw:Record</ExceptionText>
+                 </Exception>
+               </ExceptionReport>"#,
+        ))
+        .mount(&server)
+        .await;
+    // The fixture keeps RNDT's real header (23,663 matched, nextRecord 4) as
+    // evidence of the live catalogue. A mock that re-serves it would never
+    // terminate, so this one page is presented as the whole catalogue.
+    let terminal = RECORDS.replace(
+        r#"numberOfRecordsMatched="23663" numberOfRecordsReturned="3" nextRecord="4""#,
+        r#"numberOfRecordsMatched="3" numberOfRecordsReturned="3" nextRecord="0""#,
+    );
+    assert_ne!(
+        terminal, RECORDS,
+        "the fixture header moved; the mock never terminates"
+    );
+    Mock::given(method("GET"))
+        .and(path("/csw"))
+        .and(query_param("typeNames", "csw:Record"))
+        .respond_with(xml_body(&terminal))
+        .mount(&server)
+        .await;
+
+    let endpoint = format!("{}/csw", server.uri());
+    let portal_url = server.uri();
+    let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint)).unwrap();
+    normalize(client.search_all_datasets().await.unwrap(), |record| {
+        OgcRecordsClient::into_new_dataset(record, &portal_url, None, "it")
     })
 }
 

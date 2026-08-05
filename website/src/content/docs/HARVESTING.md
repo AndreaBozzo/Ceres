@@ -65,6 +65,7 @@ point them at any portal of that family; the exceptions are noted in the table:
 | OGC CSW | `ogc_records::tests::emodnet_csw_smoke` | — (endpoint hard-coded) | EMODnet GeoNetwork |
 | STAC | `stac::tests::copernicus_stac_smoke` | `CERES_STAC_COPERNICUS_URL` | `stac.dataspace.copernicus.eu` |
 | SDMX | `sdmx::tests::sdmx_smoke_catalog` | `CERES_SDMX_SMOKE_URL` | `data.norges-bank.no` |
+| OGC CSW (Dublin Core) | `ogc_records::tests::rndt_dublin_core_smoke` | `CERES_CSW_DUBLIN_CORE_SMOKE_URL` | `geodati.gov.it/RNDT/CSW` |
 
 Some families ship a second `#[ignore]` smoke that the run-all command also
 picks up: ArcGIS adds `arcgis_rejects_global_scope_smoke` (a negative-path

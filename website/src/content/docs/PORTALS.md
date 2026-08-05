@@ -148,6 +148,7 @@ for a larger, curated configuration set.
 - Streams bounded record windows and preserves each complete source XML record
 - Resolves localized titles and abstracts, spatial/temporal extents, contacts, constraints, and online resources
 - Classifies datasets, series, services, and maps instead of treating every catalog record as a downloadable dataset
+- Asks for the ISO 19115 (`gmd:MD_Metadata`) profile and falls back per catalogue to the mandatory Dublin Core (`csw:Record`) profile when the service rejects it, which cannot be decided from `GetCapabilities` — Italy's RNDT advertises ISO and refuses it. Dublin Core records carry their links as `dct:references`, read as online resources so the profile still contributes resource depth
 
 ### STAC
 
