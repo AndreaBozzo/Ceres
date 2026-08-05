@@ -464,22 +464,34 @@ fn parse_record(
         })
         .unwrap_or_default();
     let record_kind = classify_kind(&scope);
-    // Dublin Core has no `CI_OnlineResource`; it carries the same links as
-    // `dct:references`, whose `scheme` attribute (`WMS`, `WFS`, `alternate.json`)
-    // occupies the slot ISO calls `protocol` — the same slot
-    // `ceres_core::schema` already reads a service type out of.
+    // Dublin Core has no `CI_OnlineResource`. It carries its links in one of
+    // two shapes, and both occur among the catalogues Ceres harvests, so both
+    // are read:
+    //
+    // * `dct:references scheme="WMS"` — Italy's RNDT;
+    // * `dc:URI protocol="OGC:WMS" name="…" description="…"` — GeoNetwork's own
+    //   output, which is richer and is what Eurac publishes.
+    //
+    // Either way the service identifier lands in the slot ISO calls `protocol`,
+    // the same slot `ceres_core::schema::split_protocol` reads a format or a
+    // media type out of.
     let dublin_core_resources: Vec<Value> = node
         .descendants()
-        .filter(|n| local(*n) == "references")
+        .filter(|n| matches!(local(*n), "references" | "URI"))
         .filter_map(|n| {
             let url = node_value(n)?;
-            let protocol = n.attribute("scheme").map(str::to_owned);
-            let downloadable = protocol.as_deref().is_some_and(|scheme| {
-                let scheme = scheme.to_ascii_lowercase();
-                scheme.contains("download") || scheme.contains("wfs")
+            let protocol = n
+                .attribute("scheme")
+                .or_else(|| n.attribute("protocol"))
+                .map(str::to_owned);
+            let downloadable = protocol.as_deref().is_some_and(|protocol| {
+                let protocol = protocol.to_ascii_lowercase();
+                protocol.contains("download") || protocol.contains("wfs")
             });
             Some(json!({
                 "url": url,
+                "name": n.attribute("name"),
+                "description": n.attribute("description"),
                 "protocol": protocol,
                 "function": Value::Null,
                 "downloadable": downloadable,
@@ -786,6 +798,58 @@ mod tests {
 
     const FIXTURE: &str = include_str!("../tests/fixtures/csw_get_records.xml");
     const DUBLIN_CORE: &str = include_str!("../tests/fixtures/csw_dublin_core.xml");
+    const DUBLIN_CORE_GEONETWORK: &str =
+        include_str!("../tests/fixtures/csw_dublin_core_geonetwork.xml");
+
+    /// GeoNetwork publishes links as `dc:URI protocol="OGC:WMS"` rather than
+    /// RNDT's `dct:references scheme="WMS"`. Reading only the latter left 362 of
+    /// Eurac's 363 harvested records with no reachable resource at all.
+    #[test]
+    fn geonetwork_dublin_core_uris_become_online_resources() {
+        use ceres_core::schema::DatasetSchema;
+
+        let page = parse_get_records(DUBLIN_CORE_GEONETWORK, "https://edp-portal.eurac.edu", "en")
+            .unwrap();
+        let record = &page.records[0];
+        assert_eq!(record.title, "World Land Cover Himalayas 2015");
+
+        let resources = record.metadata["online_resources"].as_array().unwrap();
+        assert!(!resources.is_empty());
+        let wms = resources
+            .iter()
+            .find(|r| r["protocol"] == "OGC:WMS")
+            .expect("the WMS service");
+        assert_eq!(wms["url"], "https://maps.eurac.edu/geoserver/ows");
+        // `name` and `description` are attributes here, unlike RNDT's shape,
+        // and they are what gives the normalized resource a usable label.
+        assert_eq!(wms["name"], "geonode:World_Land_Cover_Himalayas_2015_v1");
+
+        let normalized = DatasetSchema::from_metadata(
+            &OgcRecordsClient::into_new_dataset(
+                page.records.into_iter().next().unwrap(),
+                "https://edp-portal.eurac.edu",
+                None,
+                "en",
+            )
+            .metadata,
+        )
+        .resources;
+        assert!(!normalized.is_empty());
+        assert!(
+            normalized
+                .iter()
+                .any(|r| r.format.as_deref() == Some("WMS")),
+            "{normalized:?}"
+        );
+        // `protocol="image/png"` is a media type, not a service.
+        assert!(
+            normalized
+                .iter()
+                .any(|r| r.media_type.as_deref() == Some("image/png")),
+            "{normalized:?}"
+        );
+        assert!(normalized.iter().any(|r| r.name.is_some()));
+    }
 
     // -----------------------------------------------------------------------
     // Dublin Core profile (#242)
