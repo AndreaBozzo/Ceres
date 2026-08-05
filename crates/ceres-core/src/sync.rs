@@ -121,6 +121,14 @@ pub struct SyncResult {
     pub stats: SyncStats,
     /// Optional message providing context (e.g., cancellation reason).
     pub message: Option<String>,
+    /// Set when the portal's dataset stream ended early, so what was persisted
+    /// is a prefix of the catalog rather than all of it.
+    ///
+    /// This is not a failure — the datasets that were read are good, and stale
+    /// marking is already withheld when anything failed — but it is not a clean
+    /// sync either. Without it a portal that yielded 3,100 of 171,098 datasets
+    /// reports exactly like one that has 3,100 datasets.
+    pub truncated: bool,
 }
 
 impl SyncResult {
@@ -130,6 +138,17 @@ impl SyncResult {
             status: SyncStatus::Completed,
             stats,
             message: None,
+            truncated: false,
+        }
+    }
+
+    /// Creates a completed sync result for a stream that ended early.
+    pub fn truncated(stats: SyncStats, message: String) -> Self {
+        Self {
+            status: SyncStatus::Completed,
+            stats,
+            message: Some(message),
+            truncated: true,
         }
     }
 
@@ -139,6 +158,7 @@ impl SyncResult {
             status: SyncStatus::Cancelled,
             stats,
             message: Some("Operation cancelled - partial progress saved".to_string()),
+            truncated: false,
         }
     }
 
@@ -362,6 +382,9 @@ pub fn needs_reprocessing(
 pub enum PortalHarvestStatus {
     /// The portal completed normally.
     Success,
+    /// The portal harvested real datasets but its stream ended early, so the
+    /// catalog was only partly read.
+    Partial,
     /// The portal returned a fatal error, while the batch continued.
     Failed,
     /// The portal stopped after the batch cancellation token was triggered.
@@ -373,6 +396,7 @@ impl PortalHarvestStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Success => "success",
+            Self::Partial => "partial",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
         }
@@ -457,6 +481,29 @@ impl PortalHarvestResult {
         }
     }
 
+    /// Creates a result for a portal whose stream ended before the catalog did.
+    ///
+    /// The datasets that were read are good, so this is not a failure — but it
+    /// is not a clean run either, and it counts toward the batch's partial exit
+    /// so a shrinking harvest cannot pass unnoticed.
+    pub fn truncated(
+        name: String,
+        url: String,
+        stats: SyncStats,
+        error: String,
+        duration_ms: u64,
+    ) -> Self {
+        Self {
+            portal_name: name,
+            portal_url: url,
+            stats,
+            status: PortalHarvestStatus::Partial,
+            duration_ms,
+            error_class: Some("truncated_stream".to_string()),
+            error: Some(error),
+        }
+    }
+
     /// Creates a cancelled harvest result with partial statistics.
     pub fn cancelled(name: String, url: String, stats: SyncStats, duration_ms: u64) -> Self {
         Self {
@@ -504,6 +551,14 @@ impl BatchHarvestSummary {
     /// Returns the count of successful harvests.
     pub fn successful_count(&self) -> usize {
         self.results.iter().filter(|r| r.is_success()).count()
+    }
+
+    /// Returns the count of portals whose stream ended early.
+    pub fn partial_count(&self) -> usize {
+        self.results
+            .iter()
+            .filter(|r| r.status == PortalHarvestStatus::Partial)
+            .count()
     }
 
     /// Returns the count of failed harvests.

@@ -33,7 +33,10 @@ enum RunOutcome {
 
 impl RunOutcome {
     fn from_batch_summary(summary: &BatchHarvestSummary) -> Self {
-        if summary.failed_count() == 0 {
+        // A truncated portal harvested real datasets, so it is not a failure —
+        // but the catalog was only partly read, and a scheduler that treats that
+        // as a clean run will never notice coverage shrinking.
+        if summary.failed_count() == 0 && summary.partial_count() == 0 {
             Self::Success
         } else {
             Self::Partial
@@ -407,6 +410,7 @@ fn print_batch_summary(summary: &BatchHarvestSummary) {
         total_portals = summary.total_portals(),
         successful_portals = summary.successful_count(),
         failed_portals = summary.failed_count(),
+        partial_portals = summary.partial_count(),
         cancelled_portals = summary.cancelled_count(),
         total_datasets = summary.total_datasets(),
         duration_ms = summary.duration_ms,
@@ -419,6 +423,9 @@ fn print_batch_summary(summary: &BatchHarvestSummary) {
     info!("  Portals processed:   {}", summary.total_portals());
     info!("  Successful:          {}", summary.successful_count());
     info!("  Failed:              {}", summary.failed_count());
+    if summary.partial_count() > 0 {
+        info!("  Partial (truncated): {}", summary.partial_count());
+    }
     info!("  Total datasets:      {}", summary.total_datasets());
     info!("  Duration:            {} ms", summary.duration_ms);
 
@@ -663,6 +670,31 @@ mod tests {
             RunOutcome::from_batch_summary(&BatchHarvestSummary::new()),
             RunOutcome::Success
         );
+    }
+
+    /// A portal whose stream ended early harvested real datasets, so it is not
+    /// a failure — but a scheduler that sees exit 0 will never notice coverage
+    /// shrinking. `geocatalogue.fr` returned 3,101 of 171,098 datasets and the
+    /// batch reported success.
+    #[test]
+    fn a_truncated_portal_does_not_exit_clean() {
+        let mut summary = BatchHarvestSummary::new();
+        summary.add(ceres_core::PortalHarvestResult::truncated(
+            "geocatalogue-fr".into(),
+            "https://www.geocatalogue.fr".into(),
+            Default::default(),
+            "java.lang.NullPointerException".into(),
+            1_000,
+        ));
+
+        assert_eq!(summary.failed_count(), 0, "it is not a failure");
+        assert_eq!(summary.partial_count(), 1);
+        assert_eq!(summary.successful_count(), 0, "nor is it a clean run");
+        assert_eq!(
+            RunOutcome::from_batch_summary(&summary),
+            RunOutcome::Partial
+        );
+        assert_eq!(RunOutcome::from_batch_summary(&summary).exit_code(), 2);
     }
 
     #[test]
