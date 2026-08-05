@@ -20,6 +20,7 @@ Today the shipping portal clients cover:
 - ArcGIS Hub catalogs through the Hub Search API (via `--type arcgis`)
 - OGC CSW 2.0.2 catalogues (via `--type ogc_records`)
 - STAC APIs at Collection granularity (via `--type stac`)
+- SDMX REST services at dataflow granularity (via `--type sdmx`)
 
 OGC catalogues are capability-driven: Ceres reads `GetCapabilities`, follows
 the advertised record bindings, and streams bounded result windows. Configure
@@ -63,12 +64,15 @@ point them at any portal of that family; the exceptions are noted in the table:
 | ArcGIS Hub | `arcgis::tests::arcgis_smoke_catalog` | `CERES_ARCGIS_SMOKE_URL` | `opendata.dc.gov` |
 | OGC CSW | `ogc_records::tests::emodnet_csw_smoke` | — (endpoint hard-coded) | EMODnet GeoNetwork |
 | STAC | `stac::tests::copernicus_stac_smoke` | `CERES_STAC_COPERNICUS_URL` | `stac.dataspace.copernicus.eu` |
+| SDMX | `sdmx::tests::sdmx_smoke_catalog` | `CERES_SDMX_SMOKE_URL` | `data.norges-bank.no` |
 
 Some families ship a second `#[ignore]` smoke that the run-all command also
 picks up: ArcGIS adds `arcgis_rejects_global_scope_smoke` (a negative-path
 check that a known empty-scope Hub is rejected), OGC CSW adds
-`copernicus_marine_csw_smoke` (endpoint hard-coded), and STAC adds
-`canada_datacube_stac_smoke` (`CERES_STAC_CANADA_URL` override).
+`copernicus_marine_csw_smoke` (endpoint hard-coded), STAC adds
+`canada_datacube_stac_smoke` (`CERES_STAC_CANADA_URL` override), and SDMX adds
+`eurostat_sdmx_smoke` (`CERES_SDMX_EUROSTAT_URL` override), which reads the
+largest structure message in the family.
 
 ```bash
 # Single family, exact test name

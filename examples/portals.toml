@@ -1772,3 +1772,169 @@ type = "stac"
 language = "en"
 enabled = false
 description = "Element 84 Earth Search (AWS Open Data) STAC API (~9 collections)"
+
+# =============================================================================
+# August 2026 SDMX tranche (#183)
+#
+# Statistical dataflows from national statistics offices, central banks, and
+# international institutions. Each row is one SDMX *dataflow* — the unit these
+# services name and serve data for — never an observation. Counts are the
+# dataflows each service returned for `dataflow/all/all/latest` on 2026-08-05.
+#
+# Disabled by default, matching the July tranche: promote to the maintained set
+# after a second stability sync.
+# =============================================================================
+
+# ---- SDMX ----
+[[portals]]
+name = "eurostat-sdmx"
+url = "https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1"
+type = "sdmx"
+language = "en"
+enabled = false
+url_template = "https://ec.europa.eu/eurostat/databrowser/view/{id}/default/table"
+description = "Eurostat statistical dataflows (~8,150)"
+
+[[portals]]
+name = "statistics-lithuania-sdmx"
+url = "https://osp-rs.stat.gov.lt/rest_xml"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "Statistics Lithuania Official Statistics Portal (~9,500 dataflows)"
+
+[[portals]]
+name = "istat-sdmx"
+url = "https://esploradati.istat.it/SDMXWS/rest"
+type = "sdmx"
+language = "it"
+enabled = false
+description = "ISTAT EsploraDati statistical dataflows (~4,900)"
+
+[[portals]]
+name = "oecd-sdmx"
+url = "https://sdmx.oecd.org/public/rest"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "OECD Data Explorer statistical dataflows (~1,550)"
+
+[[portals]]
+name = "abs-sdmx"
+url = "https://data.api.abs.gov.au/rest"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "Australian Bureau of Statistics Data API dataflows (~1,220)"
+
+[[portals]]
+name = "ilostat-sdmx"
+url = "https://sdmx.ilo.org/rest"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "ILOSTAT labour statistics dataflows (~1,210)"
+
+[[portals]]
+name = "insee-sdmx"
+url = "https://bdm.insee.fr/series/sdmx"
+type = "sdmx"
+language = "fr"
+enabled = false
+description = "INSEE Banque de données macro-économiques dataflows (~245)"
+
+[[portals]]
+name = "imf-sdmx"
+url = "https://api.imf.org/external/sdmx/2.1"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "IMF Data statistical dataflows (~220)"
+
+[[portals]]
+name = "ecb-sdmx"
+url = "https://data-api.ecb.europa.eu/service"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "European Central Bank Data Portal dataflows (~215)"
+
+[[portals]]
+name = "pacific-data-hub-sdmx"
+url = "https://stats-nsi-stable.pacificdata.org/rest"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "Pacific Community (SPC) Pacific Data Hub .Stat dataflows (~130)"
+
+[[portals]]
+name = "ec-empl-sdmx"
+url = "https://webgate.ec.europa.eu/empl/redisstat/api/dissemination/sdmx/2.1"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "European Commission DG EMPL statistical dataflows (~75)"
+
+[[portals]]
+name = "unicef-sdmx"
+url = "https://sdmx.data.unicef.org/ws/public/sdmxapi/rest"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "UNICEF Data Warehouse dataflows (~50)"
+
+[[portals]]
+name = "bis-sdmx"
+url = "https://stats.bis.org/api/v1"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "Bank for International Settlements statistics dataflows (~30)"
+
+[[portals]]
+name = "norges-bank-sdmx"
+url = "https://data.norges-bank.no/api"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "Norges Bank statistics dataflows (~25)"
+
+[[portals]]
+name = "ec-grow-sdmx"
+url = "https://webgate.ec.europa.eu/grow/redisstat/api/dissemination/sdmx/2.1"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "European Commission DG GROW statistical dataflows (~20)"
+
+[[portals]]
+name = "unsd-sdmx"
+url = "https://data.un.org/WS/rest"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "UN Statistics Division dataflows (~15)"
+
+[[portals]]
+name = "eurostat-comext-sdmx"
+url = "https://ec.europa.eu/eurostat/api/comext/dissemination/sdmx/2.1"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "Eurostat Comext and Prodcom trade dataflows (~10)"
+
+[[portals]]
+name = "worldbank-wits-sdmx"
+url = "https://wits.worldbank.org/API/V1/SDMX/V21/rest"
+type = "sdmx"
+language = "en"
+enabled = false
+description = "World Bank World Integrated Trade Solution dataflows (~5)"
+
+[[portals]]
+name = "inegi-sdmx"
+url = "https://sdmx.snieg.mx/servicev6/rest"
+type = "sdmx"
+language = "es"
+enabled = false
+description = "INEGI / SNIEG Mexico statistical dataflows (~5)"

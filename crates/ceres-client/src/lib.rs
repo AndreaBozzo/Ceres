@@ -28,6 +28,7 @@
 //! | ArcGIS Hub | Supported | Hub Search API (`/api/search/v1/collections/dataset/items`) |
 //! | OGC Records | Supported | CSW 2.0.2 catalog service |
 //! | STAC | Supported | Collection-level STAC API harvesting |
+//! | SDMX | Supported | Dataflow-level SDMX REST (`/dataflow/all/all/latest`) |
 //!
 //! # Embedding Providers
 //!
@@ -52,6 +53,7 @@ pub mod openai;
 pub mod opendatasoft;
 pub mod portal;
 pub mod provider;
+pub mod sdmx;
 pub mod socrata;
 pub mod sparql;
 pub mod stac;
@@ -70,6 +72,7 @@ pub use portal::{PortalClientEnum, PortalClientFactoryEnum, PortalDataEnum};
 #[cfg(feature = "test-support")]
 pub use provider::MockEmbeddingClient;
 pub use provider::{EmbeddingConfig, EmbeddingProviderEnum};
+pub use sdmx::{SdmxClient, SdmxDataflow};
 pub use socrata::{SocrataClient, SocrataDataset};
 pub use sparql::SparqlDcatClient;
 pub use stac::{StacClient, StacCollection};

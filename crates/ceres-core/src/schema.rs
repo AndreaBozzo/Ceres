@@ -109,6 +109,7 @@ impl DatasetSchema {
         // invisible to the array walk below.
         resources.extend(stac_assets(metadata));
         resources.extend(arcgis_service(metadata));
+        resources.extend(sdmx_data_endpoint(metadata));
 
         for key in [
             "resources",
@@ -537,6 +538,43 @@ fn stac_assets(metadata: &Value) -> Vec<DatasetResource> {
             .filter(is_informative)
         })
         .collect()
+}
+
+/// Reads an SDMX dataflow's data query as its one normalized resource.
+///
+/// A dataflow publishes no files. What it offers is a data endpoint — the
+/// `/data/{flowRef}` query the same service answers — so that endpoint is the
+/// resource, exactly as an ArcGIS Hub item's resource is its service URL rather
+/// than a download.
+///
+/// The name is the flow reference (`ESTAT,NAMA_10_GDP,1.0`), which is what SDMX
+/// itself addresses the data by, not a second copy of the dataset title. Format
+/// and media type are stated rather than read from the payload because they are
+/// a property of the protocol: every SDMX 2.1 service answers a data query as
+/// SDMX-CSV under this media type. `fields` stays empty — a dataflow's
+/// dimensions live in its referenced data structure definition, and Ceres keeps
+/// the reference without following it, since resolving one DSD per dataflow
+/// would mean 8,000 extra requests against Eurostat alone.
+///
+/// Recognized by the `sdmx` object carrying both an agency and a dataflow id,
+/// a pairing no other supported family emits.
+fn sdmx_data_endpoint(metadata: &Value) -> Option<DatasetResource> {
+    let sdmx = metadata.get("sdmx").filter(|value| value.is_object())?;
+    if !["agency_id", "dataflow_id"]
+        .iter()
+        .all(|key| sdmx.get(*key).is_some_and(Value::is_string))
+    {
+        return None;
+    }
+
+    Some(DatasetResource {
+        name: first_str(sdmx, &["flow_ref"]),
+        format: Some("SDMX-CSV".to_string()),
+        media_type: Some("application/vnd.sdmx.data+csv".to_string()),
+        url: Some(first_str(sdmx, &["data_url"])?),
+        description: None,
+        fields: Vec::new(),
+    })
 }
 
 /// Zips Socrata's parallel `columns_*` arrays into column-level fields.
@@ -1372,6 +1410,61 @@ mod tests {
         let schema = DatasetSchema::from_metadata(&metadata);
         assert_eq!(schema.resources.len(), 1);
         assert_eq!(schema.resources[0].name.as_deref(), Some("data"));
+    }
+
+    fn sdmx_dataflow(sdmx: Value) -> Value {
+        json!({
+            "catalog_record_kind": "series",
+            "source_format": "application/vnd.sdmx.structure+xml",
+            "sdmx": sdmx,
+        })
+    }
+
+    #[test]
+    fn an_sdmx_dataflow_exposes_its_data_query_as_one_resource() {
+        let metadata = sdmx_dataflow(json!({
+            "agency_id": "ESTAT",
+            "dataflow_id": "NAMA_10_GDP",
+            "version": "1.0",
+            "flow_ref": "ESTAT,NAMA_10_GDP,1.0",
+            "data_url": "https://sdmx.test/rest/data/ESTAT,NAMA_10_GDP,1.0",
+        }));
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        assert_eq!(schema.resources.len(), 1);
+        assert_eq!(
+            schema.resources[0],
+            DatasetResource {
+                name: Some("ESTAT,NAMA_10_GDP,1.0".into()),
+                format: Some("SDMX-CSV".into()),
+                media_type: Some("application/vnd.sdmx.data+csv".into()),
+                url: Some("https://sdmx.test/rest/data/ESTAT,NAMA_10_GDP,1.0".into()),
+                description: None,
+                fields: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_sdmx_dataflow_without_a_data_url_yields_no_resource() {
+        // Format and media type are protocol constants, so a resource built
+        // without the endpoint would assert SDMX-CSV availability at no address.
+        let metadata = sdmx_dataflow(json!({
+            "agency_id": "ESTAT",
+            "dataflow_id": "NAMA_10_GDP",
+            "flow_ref": "ESTAT,NAMA_10_GDP,1.0",
+        }));
+        assert!(DatasetSchema::from_metadata(&metadata).resources.is_empty());
+    }
+
+    #[test]
+    fn sdmx_needs_the_dataflow_signature() {
+        // Some other payload that happens to carry an `sdmx` key must not
+        // acquire an invented SDMX-CSV endpoint.
+        let metadata = json!({
+            "sdmx": {"data_url": "https://example.org/data", "supported": true}
+        });
+        assert!(DatasetSchema::from_metadata(&metadata).resources.is_empty());
     }
 
     #[test]

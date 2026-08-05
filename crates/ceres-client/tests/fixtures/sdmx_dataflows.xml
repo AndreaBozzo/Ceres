@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A trimmed SDMX-ML 2.1 structure message assembled from three real services, so
+  one fixture covers the shapes the family actually publishes:
+
+  * ESTAT — Eurostat: rich annotations, a `structureURL`, a colon-less UTC
+    offset on its update timestamp, and no French name.
+  * SPC   — Pacific Data Hub (.Stat/NSI): namespace prefixes spelled out in
+    full, multilingual name and description, no `structureURL`.
+  * NB    — Norges Bank: identity carried only by the URN, and no name at all.
+-->
+<mes:Structure xmlns:mes="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/message"
+               xmlns:str="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/structure"
+               xmlns:com="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/common">
+  <mes:Header>
+    <mes:ID>IREF000001</mes:ID>
+    <mes:Test>false</mes:Test>
+    <mes:Prepared>2026-08-05T11:00:14.025+02:00</mes:Prepared>
+    <mes:Sender id="ESTAT"/>
+  </mes:Header>
+  <mes:Structures>
+    <str:Dataflows>
+      <str:Dataflow id="NAMA_10_GDP"
+                    urn="urn:sdmx:org.sdmx.infomodel.datastructure.Dataflow=ESTAT:NAMA_10_GDP(1.0)"
+                    agencyID="ESTAT" version="1.0" isFinal="false"
+                    structureURL="https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/dataflow/ESTAT/NAMA_10_GDP/1.0">
+        <com:Annotations>
+          <com:Annotation>
+            <com:AnnotationTitle>2026-01-07T23:00:00+0100</com:AnnotationTitle>
+            <com:AnnotationType>UPDATE_STRUCTURE</com:AnnotationType>
+          </com:Annotation>
+          <com:Annotation>
+            <com:AnnotationTitle>2026-04-16T23:00:00+0200</com:AnnotationTitle>
+            <com:AnnotationType>UPDATE_DATA</com:AnnotationType>
+          </com:Annotation>
+          <com:Annotation id="esms">
+            <com:AnnotationTitle>Explanatory texts (metadata)</com:AnnotationTitle>
+            <com:AnnotationType>ESMS_HTML</com:AnnotationType>
+            <com:AnnotationURL>https://ec.europa.eu/eurostat/cache/metadata/en/nama10_esms.htm</com:AnnotationURL>
+            <com:AnnotationText xml:lang="en">Explanatory texts</com:AnnotationText>
+            <com:AnnotationText xml:lang="de">Erläuterungen</com:AnnotationText>
+          </com:Annotation>
+        </com:Annotations>
+        <com:Name xml:lang="en">GDP and main aggregates</com:Name>
+        <com:Name xml:lang="de">BIP und Hauptaggregate</com:Name>
+        <com:Description xml:lang="en">Annual national accounts aggregates at current and constant prices.</com:Description>
+        <str:Structure>
+          <Ref id="NAMA_10_GDP" version="31.0" agencyID="ESTAT" package="datastructure" class="DataStructure"/>
+        </str:Structure>
+      </str:Dataflow>
+      <structure:Dataflow xmlns:structure="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/structure"
+                          xmlns:common="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/common"
+                          id="DF_ADBKI" agencyID="SPC" version="1.1" isFinal="false">
+        <common:Annotations>
+          <common:Annotation>
+            <common:AnnotationTitle>FREQ=A,LASTNPERIODS=5</common:AnnotationTitle>
+            <common:AnnotationType>DEFAULT</common:AnnotationType>
+          </common:Annotation>
+        </common:Annotations>
+        <common:Name xml:lang="en">Asian Development Bank Key Indicators</common:Name>
+        <common:Name xml:lang="fr">Indicateurs clés de la Banque asiatique de développement</common:Name>
+        <common:Description xml:lang="en">Selected ADB indicators for Pacific Island countries and territories.</common:Description>
+        <common:Description xml:lang="fr">Indicateurs sélectionnés pour les pays et territoires insulaires du Pacifique.</common:Description>
+        <structure:Structure>
+          <Ref id="DSD_ADBKI" version="1.1" agencyID="SPC" package="datastructure" class="DataStructure"/>
+        </structure:Structure>
+      </structure:Dataflow>
+      <str:Dataflow urn="urn:sdmx:org.sdmx.infomodel.datastructure.Dataflow=NB:ANN_FX_SPU(1.0)"
+                    isExternalReference="false" isFinal="false"/>
+    </str:Dataflows>
+  </mes:Structures>
+</mes:Structure>

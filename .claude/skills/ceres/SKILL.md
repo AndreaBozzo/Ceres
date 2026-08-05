@@ -1,6 +1,6 @@
 ---
 name: ceres
-description: Use when working with Ceres — a Rust harvest-first toolkit and public open data metadata index. Covers harvesting and synchronization, optional embedding and search, CKAN, DCAT udata, SPARQL-backed DCAT, Project Open Data data.json, Socrata Discovery, OpenDataSoft Explore, ArcGIS Hub, OGC CSW, and collection-level STAC portal support, Parquet snapshot manifests/reports/changelogs, Ollama or hosted providers, CLI commands, REST API endpoints, portal configuration, architecture, extending via traits, release workflow, and contributing to the Ceres codebase.
+description: Use when working with Ceres — a Rust harvest-first toolkit and public open data metadata index. Covers harvesting and synchronization, optional embedding and search, CKAN, DCAT udata, SPARQL-backed DCAT, Project Open Data data.json, Socrata Discovery, OpenDataSoft Explore, ArcGIS Hub, OGC CSW, collection-level STAC, and dataflow-level SDMX portal support, Parquet snapshot manifests/reports/changelogs, Ollama or hosted providers, CLI commands, REST API endpoints, portal configuration, architecture, extending via traits, release workflow, and contributing to the Ceres codebase.
 ---
 
 # Ceres — Harvest-First Toolkit for Open Data Portals
@@ -25,7 +25,7 @@ Harvesting and embedding are decoupled: `HarvestService` handles metadata, `Embe
 - Harvest first and keep metadata synchronized over time
 - Add embeddings later only if you want semantic retrieval
 - Prefer Ollama for local embedding, with Gemini and OpenAI still supported
-- Support CKAN, DCAT-AP udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, Socrata Discovery, OpenDataSoft Explore, ArcGIS Hub, OGC CSW, and collection-level STAC portals in the current client factory
+- Support CKAN, DCAT-AP udata REST, SPARQL-backed DCAT, Project Open Data `data.json`, Socrata Discovery, OpenDataSoft Explore, ArcGIS Hub, OGC CSW, collection-level STAC, and dataflow-level SDMX portals in the current client factory
 - Publish reproducible Parquet snapshots for the public Open Data Index
 - Expose search, export, and API workflows over the same harvested catalog
 
@@ -163,7 +163,7 @@ ceres stats
 - **crates.io package:** `ceres-search`
 - Harvesting and embedding are decoupled: `--metadata-only` harvests without API key, `embed` command generates embeddings separately
 - Ollama is the preferred local embedding path; Gemini and OpenAI remain available
-- Current portal client factory supports CKAN, Socrata, OpenDataSoft, ArcGIS Hub, OGC CSW, collection-level STAC, and DCAT (`udata_rest` default profile plus `sparql` and `static_json` profiles)
+- Current portal client factory supports CKAN, Socrata, OpenDataSoft, ArcGIS Hub, OGC CSW, collection-level STAC, dataflow-level SDMX, and DCAT (`udata_rest` default profile plus `sparql` and `static_json` profiles)
 - ArcGIS Hub clients reject empty `catalogV2` item scopes because those endpoints expose global ArcGIS search results rather than portal-owned datasets
 - Stale dataset detection: datasets removed from portals are soft-marked (`is_stale`) during full syncs
 - Supports Ollama, Gemini, and OpenAI embeddings
@@ -173,5 +173,5 @@ ceres stats
 - The multi-stage image contains `ceres`, `ceres-server`, bundled migrations, `ceres-migrate`, and `ceres-job`. It defaults to the server; schedulers override the command with `ceres-job` and mount `PORTALS_CONFIG` read-only.
 - `ceres-job` is the finite container scheduler entrypoint: JSON logs by default, metadata-only batch mode, exact CLI exit propagation, and optional `CERES_MIGRATE_ON_START=true` for self-contained first deployment.
 - v0.6.0 coverage foundations shipped: CKAN, DCAT (`udata_rest`/`sparql`/`static_json`), Socrata, OpenDataSoft, ArcGIS Hub, OGC CSW, and collection-level STAC, plus at least one opt-in live smoke test per profile (`cargo test -p ceres-client -- --ignored smoke`; most take a `CERES_*_SMOKE_URL` override, STAC uses `CERES_STAC_*_URL`, and the OGC CSW smokes hard-code their endpoints) and a reproducible metadata-only coverage validation set documented in `website/src/content/docs/PORTALS.md`
-- v0.7.0 milestone focus (next): resource-level metadata depth tracked in issue #68
+- v0.7.0 milestone focus: resource-level metadata depth tracked in issue #68, plus the SDMX client (#183) — `--type sdmx`, one `series` row per dataflow read from `dataflow/all/all/latest?detail=full&references=none`, identity `AGENCY:ID` without the version, SDMX-ML 2.1/3.0 only (no SDMX-JSON), full sync only (structure queries have no modified-since filter), and one normalized resource per dataflow pointing at its `/data/{flowRef}` query. Smoke: `CERES_SDMX_SMOKE_URL` (Norges Bank) and `CERES_SDMX_EUROSTAT_URL`.
 - HuggingFace dataset: `AndreaBozzo/ceres-open-data-index`

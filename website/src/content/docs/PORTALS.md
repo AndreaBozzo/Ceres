@@ -6,10 +6,14 @@ description: The portal APIs Ceres can harvest today, how to configure each one,
 # Supported portals
 
 Ceres currently harvests **300+ portals** into a single synchronized catalog of
-**2M+ datasets** — national portals, EU aggregators, US federal agencies, and
-city open data sites. Nine harvest paths are shipped today, and every one of
-them shares the same sync machinery: incremental sync, content-hash delta
-detection, streaming page-by-page processing, and stale dataset marking.
+**2M+ datasets** — national portals, EU aggregators, US federal agencies,
+statistics offices, and city open data sites. Ten harvest paths are shipped
+today, and every one of them shares the same sync machinery: incremental sync where the source
+supports it, content-hash delta detection, bounded streaming that keeps memory
+flat on multi-million-dataset catalogs, and stale dataset marking. Most families
+stream page by page; SDMX is the exception, because the standard defines no
+pagination for structure queries, so its catalog arrives in one bounded request
+and is emitted in fixed-size chunks.
 
 | Type | Selector | Serves | Example portals |
 |---|---|---|---|
@@ -22,6 +26,7 @@ detection, streaming page-by-page processing, and stale dataset marking.
 | ArcGIS Hub | `--type arcgis` | ArcGIS Hub Search API catalogs | opendata.dc.gov, opendata.gis.utah.gov |
 | OGC Records | `--type ogc_records` | CSW 2.0.2 / GeoNetwork catalogues | EMODnet, British Geological Survey |
 | STAC | `--type stac` | Collection-level STAC APIs | Copernicus Data Space, Canada DataCube |
+| SDMX | `--type sdmx` | Dataflow-level SDMX REST services | Eurostat, OECD, ILOSTAT, ISTAT, ECB |
 
 Every client preserves the complete source metadata payload, so downstream
 features like resource-schema extraction keep working no matter which portal a
@@ -56,6 +61,9 @@ ceres harvest https://emodnet.ec.europa.eu/geonetwork/emodnet/eng/csw --type ogc
 
 # STAC Collections (never individual Items)
 ceres harvest https://stac.dataspace.copernicus.eu/v1/ --type stac --metadata-only
+
+# SDMX dataflows (never individual observations)
+ceres harvest https://sdmx.oecd.org/public/rest --type sdmx --metadata-only
 ```
 
 Or configure them once in `portals.toml` and harvest in batch:
@@ -148,6 +156,17 @@ for a larger, curated configuration set.
 - Never follows Collection `items` links; item/scene-level indexing is intentionally out of scope
 - Supports STAC 1.0 and 1.1 APIs; public reads require no credentials unless the catalog itself is private
 
+### SDMX
+
+- Reads `dataflow/all/all/latest?detail=full&references=none` and stores one Ceres `series` record per SDMX **dataflow** — the unit these services name, document, and serve data for
+- Never queries the observation cubes behind a dataflow, mirroring the STAC decision to stop at Collections: one Eurostat dataflow alone holds millions of observations
+- Parses SDMX-ML structure messages by element local name, so both 2.1 and 3.0 services work; SDMX-JSON is deliberately not requested, since Eurostat and the ECB reject it outright and every probed service serves SDMX-ML
+- Resolves multilingual names and descriptions against the configured language, falling back to English and then to any published translation
+- Preserves every annotation, which is where services record update timestamps, observation counts, DOIs, and links to reference metadata
+- Identity is `AGENCY:ID` without the version, so a dataflow bumped from `1.0` to `1.1` keeps its row instead of retiring and reappearing
+- Exposes each dataflow's `/data/{flowRef}` query as its one normalized resource; the referenced data structure definition is kept as a reference and never followed
+- Structure queries carry no standard modified-since filter, so every sync is a full sync; public reads require no credentials
+
 ## Coverage validation set (v0.6.0)
 
 The v0.6.0 milestone is proven by a small, reproducible set of portals — one per
@@ -173,6 +192,7 @@ ceres harvest --config examples/portals.toml --portal ann-arbor --metadata-only
 | ArcGIS Hub | `--type arcgis` | `washington-dc` | ~1,500 | en | none | Manual smoke |
 | OGC CSW | `--type ogc_records` | `copernicus-marine-csw` | ~310 | en | none | Manual smoke |
 | STAC | `--type stac` | `canada-datacube-stac` | ~50 collections | en | none | CI smoke |
+| SDMX | `--type sdmx` | `norges-bank-sdmx` | ~25 dataflows | en | none | CI smoke |
 | SPARQL (scale) | `--type dcat --profile sparql` | `eu-open-data` | ~2M | en | none | Scale only |
 
 Notes:
@@ -186,8 +206,9 @@ Notes:
 - No entry requires embedding credentials. `SOCRATA_APP_TOKEN` and `ODS_API_KEY`
   only raise public rate limits and can be omitted.
 - Each profile has a matching opt-in live smoke test (most with a
-  `CERES_*_SMOKE_URL` override; STAC uses `CERES_STAC_*_URL` and the OGC CSW
-  smokes hard-code their endpoints), documented in
+  `CERES_*_SMOKE_URL` override; STAC uses `CERES_STAC_*_URL`, SDMX uses
+  `CERES_SDMX_*_URL`, and the OGC CSW smokes hard-code their endpoints),
+  documented in
   [Harvesting → Opt-in live smoke tests](/harvesting/#opt-in-live-smoke-tests).
 
 ## The published index
@@ -208,7 +229,9 @@ Coverage keeps expanding. The v0.6.0 milestone shipped the OGC CSW and
 collection-level STAC clients and the coverage validation set above; the
 [v0.7.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones) turns to
 resource-level metadata depth — making distribution/resource metadata
-first-class in published snapshots and the API.
+first-class in published snapshots and the API — and adds the SDMX client, which
+opens the statistical-portal family that none of the open-data-catalog APIs
+reached.
 
 Want a portal that none of the current clients cover? The client layer is
 trait-based and designed for extension — see
