@@ -39,7 +39,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use ceres_client::{
     ArcGisClient, CkanClient, DataJsonClient, DcatClient, OgcRecordsClient, OpenDataSoftClient,
-    SocrataClient, StacClient,
+    SdmxClient, SocrataClient, StacClient,
 };
 
 // ---------------------------------------------------------------------------
@@ -156,6 +156,18 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
             },
         ),
         (
+            // A dataflow's one resource is the `/data/{flowRef}` query the same
+            // service answers, named by the flow reference. Format and media
+            // type are protocol constants rather than payload values. No fields:
+            // the dimensions live in the referenced DSD, which is kept as a
+            // reference and never followed.
+            "sdmx",
+            Expect {
+                facets: &[Facet::Name, Facet::Format, Facet::MediaType, Facet::Url],
+                fields: false,
+            },
+        ),
+        (
             // The shared CSW fixture's records carry only link and download
             // access protocols, which describe how to fetch a resource rather
             // than what it is, so no format or media type is expected here. The
@@ -184,6 +196,7 @@ async fn every_client_family_matches_its_documented_resource_reachability() {
         ("opendatasoft", harvest_opendatasoft().await),
         ("arcgis", harvest_arcgis().await),
         ("stac", harvest_stac().await),
+        ("sdmx", harvest_sdmx().await),
         ("ogc_csw", harvest_ogc_csw().await),
     ]);
 
@@ -434,6 +447,27 @@ async fn harvest_stac() -> Vec<NewDataset> {
     let client = StacClient::new(&server.uri()).unwrap();
     normalize(client.search_all_datasets().await.unwrap(), |record| {
         StacClient::into_new_dataset(record, &portal_url, None, "en")
+    })
+}
+
+async fn harvest_sdmx() -> Vec<NewDataset> {
+    const FIXTURE: &str = include_str!("fixtures/sdmx_dataflows.xml");
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/dataflow/all/all/latest"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/vnd.sdmx.structure+xml")
+                .set_body_string(FIXTURE),
+        )
+        .mount(&server)
+        .await;
+
+    let portal_url = server.uri();
+    let client = SdmxClient::new(&format!("{}/rest", server.uri()), "en").unwrap();
+    normalize(client.search_all_datasets().await.unwrap(), |record| {
+        SdmxClient::into_new_dataset(record, &portal_url, None, "en")
     })
 }
 

@@ -263,7 +263,7 @@ Fields:
 |---|---|---|---|
 | `name` | Yes | | Portal identifier (used with `--portal` flag) |
 | `url` | Yes | | Portal API base URL |
-| `type` | No | `ckan` | Portal type (`ckan`, `dcat`, `socrata`, `opendatasoft`, `arcgis`, `ogc_records`, `stac`) |
+| `type` | No | `ckan` | Portal type (`ckan`, `dcat`, `socrata`, `opendatasoft`, `arcgis`, `ogc_records`, `stac`, `sdmx`) |
 | `profile` | No | | DCAT profile selector, e.g. `sparql`; omitted DCAT defaults to udata REST |
 | `sparql_endpoint` | No | | Override SPARQL endpoint for `profile = "sparql"` portals |
 | `ogc_endpoint` | No | | CSW service URL for `type = "ogc_records"` portals when it differs from `url` |

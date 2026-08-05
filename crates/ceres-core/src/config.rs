@@ -398,6 +398,8 @@ pub enum PortalType {
     OgcRecords,
     /// SpatioTemporal Asset Catalog API, harvested at Collection granularity.
     Stac,
+    /// SDMX REST service, harvested at dataflow granularity (statistics offices).
+    Sdmx,
 }
 
 impl fmt::Display for PortalType {
@@ -410,6 +412,7 @@ impl fmt::Display for PortalType {
             Self::ArcGis => write!(f, "arcgis"),
             Self::OgcRecords => write!(f, "ogc_records"),
             Self::Stac => write!(f, "stac"),
+            Self::Sdmx => write!(f, "sdmx"),
         }
     }
 }
@@ -426,8 +429,9 @@ impl FromStr for PortalType {
             "arcgis" => Ok(Self::ArcGis),
             "ogc_records" | "csw" => Ok(Self::OgcRecords),
             "stac" => Ok(Self::Stac),
+            "sdmx" => Ok(Self::Sdmx),
             _ => Err(AppError::ConfigError(format!(
-                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat, opendatasoft, arcgis, ogc_records, stac",
+                "Unknown portal type: '{}'. Valid options: ckan, socrata, dcat, opendatasoft, arcgis, ogc_records, stac, sdmx",
                 s
             ))),
         }
@@ -1215,6 +1219,23 @@ type = "stac"
 "#;
         let config: PortalsConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.portals[0].portal_type, PortalType::Stac);
+        assert!(config.portals[0].validate().is_ok());
+    }
+
+    #[test]
+    fn test_portal_type_sdmx_parse_display_deserialize() {
+        assert_eq!("sdmx".parse::<PortalType>().unwrap(), PortalType::Sdmx);
+        assert_eq!("SDMX".parse::<PortalType>().unwrap(), PortalType::Sdmx);
+        assert_eq!(PortalType::Sdmx.to_string(), "sdmx");
+
+        let toml = r#"
+[[portals]]
+name = "oecd"
+url = "https://sdmx.oecd.org/public/rest"
+type = "sdmx"
+"#;
+        let config: PortalsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.portals[0].portal_type, PortalType::Sdmx);
         assert!(config.portals[0].validate().is_ok());
     }
 

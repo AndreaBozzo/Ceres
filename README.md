@@ -20,7 +20,7 @@
 
 ---
 
-Open data is fragmented across thousands of portals speaking different APIs — CKAN, DCAT, SPARQL, `data.json`, Socrata, OGC CSW, and STAC. Ceres harvests them into **one synchronized PostgreSQL catalog**: incremental sync, delta detection, stale tracking, bounded memory on multi-million-dataset sources.
+Open data is fragmented across thousands of portals speaking different APIs — CKAN, DCAT, SPARQL, `data.json`, Socrata, OGC CSW, STAC, and SDMX. Ceres harvests them into **one synchronized PostgreSQL catalog**: incremental sync, delta detection, stale tracking, bounded memory on multi-million-dataset sources.
 
 Everything else is layered on top, and optional: local embeddings, semantic search, a REST API, and reproducible Parquet snapshots published as the public **[Ceres Open Data Index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index)**.
 
@@ -30,7 +30,7 @@ Everything else is layered on top, and optional: local embeddings, semantic sear
 
 - **300+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, data.slovensko.sk, govdata.de), cities (Milano, NYC, Zurich), and agencies
 - **2M+ datasets** in the live catalog and published snapshots
-- **9 harvest paths** shipped, including OGC CSW 2.0.2 and collection-level STAC alongside the major open-data portal families
+- **10 harvest paths** shipped, including OGC CSW 2.0.2, collection-level STAC, and dataflow-level SDMX alongside the major open-data portal families
 - **Metadata-only by default** — no embedding provider, API key, or GPU required to build and maintain a catalog
 - **Local-first embeddings** via Ollama when you want semantic search; Gemini and OpenAI supported
 - **Reproducible exports** — Parquet snapshots with versioned manifests, SHA-256 checksums, coverage/quality reports, and changelogs
@@ -62,6 +62,7 @@ Ceres splits the system accordingly:
 | ArcGIS Hub | `--type arcgis` | ArcGIS Hub Search API catalogs | opendata.dc.gov, opendata.gis.utah.gov |
 | OGC Records | `--type ogc_records` | CSW 2.0.2 / GeoNetwork catalogs | EMODnet, Copernicus Marine |
 | STAC | `--type stac` | Collection-level STAC APIs | Copernicus Data Space, Canada DataCube |
+| SDMX | `--type sdmx` | Dataflow-level SDMX REST services | Eurostat, OECD, ILOSTAT, ISTAT, ECB |
 
 All clients stream page-by-page, preserve the complete source metadata for downstream use, and share the same sync machinery (incremental sync, content-hash delta detection, stale marking).
 
@@ -114,6 +115,9 @@ cargo run --bin ceres -- harvest https://opendata.dc.gov --type arcgis --metadat
 
 # STAC API (one row per Collection; Items are never harvested)
 cargo run --bin ceres -- harvest https://stac.dataspace.copernicus.eu/v1/ --type stac --metadata-only
+
+# SDMX REST service (one row per dataflow; observations are never harvested)
+cargo run --bin ceres -- harvest https://sdmx.oecd.org/public/rest --type sdmx --metadata-only
 
 # All enabled portals from config
 cargo run --bin ceres -- harvest --config examples/portals.toml --metadata-only

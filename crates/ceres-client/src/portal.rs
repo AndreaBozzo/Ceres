@@ -24,6 +24,7 @@ use crate::datajson::{DataJsonClient, DataJsonDataset};
 use crate::dcat::{DcatClient, DcatDataset};
 use crate::ogc_records::{OgcRecord, OgcRecordsClient};
 use crate::opendatasoft::{OpenDataSoftClient, OpenDataSoftDataset};
+use crate::sdmx::{SdmxClient, SdmxDataflow};
 use crate::socrata::{SocrataClient, SocrataDataset};
 use crate::sparql::SparqlDcatClient;
 use crate::stac::{StacClient, StacCollection};
@@ -47,6 +48,8 @@ pub enum PortalDataEnum {
     OgcRecords(OgcRecord),
     /// Data from a STAC API Collection.
     Stac(StacCollection),
+    /// Data from an SDMX REST service dataflow.
+    Sdmx(SdmxDataflow),
 }
 
 /// Unified portal client that wraps concrete portal implementations.
@@ -73,6 +76,8 @@ pub enum PortalClientEnum {
     OgcRecords(OgcRecordsClient),
     /// Collection-level STAC API client.
     Stac(StacClient),
+    /// Dataflow-level SDMX REST client.
+    Sdmx(SdmxClient),
 }
 
 impl PortalClient for PortalClientEnum {
@@ -89,6 +94,7 @@ impl PortalClient for PortalClientEnum {
             Self::ArcGis(c) => c.portal_type(),
             Self::OgcRecords(c) => c.portal_type(),
             Self::Stac(c) => c.portal_type(),
+            Self::Sdmx(c) => c.portal_type(),
         }
     }
 
@@ -103,6 +109,7 @@ impl PortalClient for PortalClientEnum {
             Self::ArcGis(c) => c.base_url(),
             Self::OgcRecords(c) => c.base_url(),
             Self::Stac(c) => c.base_url(),
+            Self::Sdmx(c) => c.base_url(),
         }
     }
 
@@ -117,6 +124,7 @@ impl PortalClient for PortalClientEnum {
             Self::ArcGis(c) => c.list_dataset_ids().await,
             Self::OgcRecords(c) => c.list_dataset_ids().await,
             Self::Stac(c) => c.list_dataset_ids().await,
+            Self::Sdmx(c) => c.list_dataset_ids().await,
         }
     }
 
@@ -131,6 +139,7 @@ impl PortalClient for PortalClientEnum {
             Self::ArcGis(c) => c.get_dataset(id).await.map(PortalDataEnum::ArcGis),
             Self::OgcRecords(c) => c.get_dataset(id).await.map(PortalDataEnum::OgcRecords),
             Self::Stac(c) => c.get_dataset(id).await.map(PortalDataEnum::Stac),
+            Self::Sdmx(c) => c.get_dataset(id).await.map(PortalDataEnum::Sdmx),
         }
     }
 
@@ -164,6 +173,9 @@ impl PortalClient for PortalClientEnum {
             }
             PortalDataEnum::Stac(data) => {
                 StacClient::into_new_dataset(data, portal_url, url_template, language)
+            }
+            PortalDataEnum::Sdmx(data) => {
+                SdmxClient::into_new_dataset(data, portal_url, url_template, language)
             }
         }
     }
@@ -213,6 +225,10 @@ impl PortalClient for PortalClientEnum {
                 .search_modified_since(since)
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Stac).collect()),
+            Self::Sdmx(c) => c
+                .search_modified_since(since)
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Sdmx).collect()),
         }
     }
 
@@ -258,6 +274,10 @@ impl PortalClient for PortalClientEnum {
                 .search_all_datasets()
                 .await
                 .map(|datasets| datasets.into_iter().map(PortalDataEnum::Stac).collect()),
+            Self::Sdmx(c) => c
+                .search_all_datasets()
+                .await
+                .map(|datasets| datasets.into_iter().map(PortalDataEnum::Sdmx).collect()),
         }
     }
 
@@ -320,6 +340,9 @@ impl PortalClient for PortalClientEnum {
             Self::Stac(c) => Box::pin(StreamExt::map(c.paginate_stream(), |r| {
                 r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Stac).collect())
             })),
+            Self::Sdmx(c) => Box::pin(StreamExt::map(c.paginate_stream(), |r| {
+                r.map(|datasets| datasets.into_iter().map(PortalDataEnum::Sdmx).collect())
+            })),
         }
     }
 
@@ -343,6 +366,7 @@ impl PortalClient for PortalClientEnum {
             Self::Stac(_) => Err(AppError::Generic(
                 "dataset_count is not supported for STAC APIs".into(),
             )),
+            Self::Sdmx(c) => c.dataset_count().await,
         }
     }
 }
@@ -437,6 +461,9 @@ impl PortalClientFactory for PortalClientFactoryEnum {
                 ogc_endpoint,
             )?)),
             PortalType::Stac => Ok(PortalClientEnum::Stac(StacClient::new(portal_url)?)),
+            PortalType::Sdmx => Ok(PortalClientEnum::Sdmx(SdmxClient::new(
+                portal_url, language,
+            )?)),
             PortalType::Dcat => match profile.unwrap_or_default() {
                 DcatProfile::UdataRest => Ok(PortalClientEnum::Dcat(DcatClient::new(
                     portal_url, language,
@@ -724,6 +751,38 @@ mod tests {
             .unwrap();
         assert!(matches!(client, PortalClientEnum::Stac(_)));
         assert_eq!(client.portal_type(), "stac");
+    }
+
+    #[test]
+    fn test_factory_creates_sdmx_client() {
+        let factory = PortalClientFactoryEnum::new();
+        let client = factory
+            .create(
+                "https://sdmx.oecd.org/public/rest",
+                PortalType::Sdmx,
+                "en",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(matches!(client, PortalClientEnum::Sdmx(_)));
+        assert_eq!(client.portal_type(), "sdmx");
+    }
+
+    #[test]
+    fn test_factory_rejects_profile_on_sdmx_portal() {
+        let factory = PortalClientFactoryEnum::new();
+        let result = factory.create(
+            "https://sdmx.oecd.org/public/rest",
+            PortalType::Sdmx,
+            "en",
+            Some(DcatProfile::Sparql),
+            None,
+            None,
+        );
+        let err = result.err().expect("expected profile-on-sdmx error");
+        assert!(err.to_string().contains("only valid for 'dcat'"));
     }
 
     #[test]

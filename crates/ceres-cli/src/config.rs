@@ -102,6 +102,7 @@ pub enum Command {
   ceres harvest https://opendata.dc.gov --type arcgis  # Harvest ArcGIS Hub portal
   ceres harvest https://emodnet.ec.europa.eu/geonetwork/emodnet/eng/csw --type ogc_records
   ceres harvest https://stac.dataspace.copernicus.eu/v1/ --type stac
+  ceres harvest https://sdmx.oecd.org/public/rest --type sdmx  # Harvest SDMX dataflows
   ceres harvest --portal milano                       # Harvest portal by name from config
   ceres harvest --config ~/custom.toml                # Use custom config file
   ceres harvest --full-sync                           # Force full sync even if incremental is available")]
