@@ -33,10 +33,15 @@ enum RunOutcome {
 
 impl RunOutcome {
     fn from_batch_summary(summary: &BatchHarvestSummary) -> Self {
-        // A truncated portal harvested real datasets, so it is not a failure —
-        // but the catalog was only partly read, and a scheduler that treats that
-        // as a clean run will never notice coverage shrinking.
-        if summary.failed_count() == 0 && summary.partial_count() == 0 {
+        // Only a run where every portal finished is clean. A truncated portal
+        // harvested real datasets and a cancelled one saved partial progress, so
+        // neither is a failure — but neither read the whole catalog either, and
+        // a scheduler that treats them as success will never notice coverage
+        // shrinking.
+        if summary.failed_count() == 0
+            && summary.partial_count() == 0
+            && summary.cancelled_count() == 0
+        {
             Self::Success
         } else {
             Self::Partial
@@ -690,6 +695,26 @@ mod tests {
         assert_eq!(summary.failed_count(), 0, "it is not a failure");
         assert_eq!(summary.partial_count(), 1);
         assert_eq!(summary.successful_count(), 0, "nor is it a clean run");
+        assert_eq!(
+            RunOutcome::from_batch_summary(&summary),
+            RunOutcome::Partial
+        );
+        assert_eq!(RunOutcome::from_batch_summary(&summary).exit_code(), 2);
+    }
+
+    /// A run stopped part-way through is no more complete than a truncated one.
+    #[test]
+    fn a_cancelled_portal_does_not_exit_clean() {
+        let mut summary = BatchHarvestSummary::new();
+        summary.add(ceres_core::PortalHarvestResult::cancelled(
+            "interrupted".into(),
+            "https://interrupted.example".into(),
+            Default::default(),
+            1_000,
+        ));
+
+        assert_eq!(summary.failed_count(), 0);
+        assert_eq!(summary.cancelled_count(), 1);
         assert_eq!(
             RunOutcome::from_batch_summary(&summary),
             RunOutcome::Partial

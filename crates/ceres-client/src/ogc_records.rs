@@ -258,9 +258,20 @@ impl OgcRecordsClient {
                     }
                     return Ok(Some((page, size)));
                 }
-                // A rejected profile is a property of the catalogue, not of the
-                // window, so narrowing cannot help and the error is real.
-                Err(error) if is_profile_rejection(&error) => return Err(error),
+                // Before the profile is settled, a rejection describes the
+                // catalogue: narrowing cannot help, and the error has to reach
+                // `page()` so the Dublin Core fallback can act on it.
+                //
+                // Afterwards the same exception means something else entirely.
+                // Once pages have been read in a profile, the catalogue clearly
+                // supports it, so a later `OutputSchema` rejection is about one
+                // record that cannot be rendered in it — nationaalgeoregister.nl
+                // serves 2,600 ISO records and then one ISO 19110 feature
+                // catalogue. Treating that as catalogue-wide cost the remaining
+                // 7,000 records.
+                Err(error) if is_profile_rejection(&error) && self.profile.get().is_none() => {
+                    return Err(error);
+                }
                 Err(error) => {
                     tracing::warn!(
                         portal = self.base_url.as_str(),
@@ -1399,6 +1410,74 @@ mod tests {
         let records = client.search_all_datasets().await.unwrap();
         let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
         assert_eq!(ids, ["record-1", "record-3"]);
+    }
+
+    /// The same exception means two different things depending on when it
+    /// arrives. Once pages have been read in a profile, the catalogue plainly
+    /// supports it, so a later `OutputSchema` rejection is about one record —
+    /// `nationaalgeoregister.nl` serves 2,600 ISO records and then a single ISO
+    /// 19110 feature catalogue. Treating that as catalogue-wide cost the
+    /// remaining 7,000 records.
+    #[tokio::test]
+    async fn a_rejection_after_the_profile_is_settled_is_one_record_not_the_catalogue() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        };
+
+        let server = MockServer::start().await;
+        let xml = |body: String| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/xml")
+                .set_body_string(body)
+        };
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetCapabilities"))
+            .respond_with(xml(capabilities_for(&server.uri())))
+            .mount(&server)
+            .await;
+
+        // Record 1 settles the profile as ISO.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "1"))
+            .respond_with(xml(iso_page(1, 1, 3)))
+            .mount(&server)
+            .await;
+        // Record 2 is an ISO 19110 feature catalogue: it cannot be rendered as
+        // gmd at any window size, and the message names the record.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "2"))
+            .respond_with(xml(concat!(
+                r#"<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows">"#,
+                r#"<ows:Exception exceptionCode="NoApplicableCode"><ows:ExceptionText>"#,
+                "org.fao.geonet.csw.common.exceptions.InvalidParameterValueEx: ",
+                "code=InvalidParameterValue, locator=OutputSchema, message=OutputSchema ",
+                "'gmd' not supported for metadata with '70502292' (iso19110).",
+                "</ows:ExceptionText></ows:Exception></ows:ExceptionReport>",
+            )
+            .to_string()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "3"))
+            .respond_with(xml(iso_page(3, 1, 3)))
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
+        let records = client.search_all_datasets().await.unwrap();
+        let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["record-1", "record-3"],
+            "the unrenderable record should be skipped, not end the catalogue"
+        );
+        assert_eq!(client.profile.get(), Some(&CswProfile::Iso));
     }
 
     /// Narrowing is for windows. A rejected profile is a property of the whole
