@@ -8,8 +8,12 @@ description: The portal APIs Ceres can harvest today, how to configure each one,
 Ceres currently harvests **300+ portals** into a single synchronized catalog of
 **2M+ datasets** — national portals, EU aggregators, US federal agencies,
 statistics offices, and city open data sites. Ten harvest paths are shipped
-today, and every one of them shares the same sync machinery: incremental sync, content-hash delta
-detection, streaming page-by-page processing, and stale dataset marking.
+today, and every one of them shares the same sync machinery: incremental sync where the source
+supports it, content-hash delta detection, bounded streaming that keeps memory
+flat on multi-million-dataset catalogs, and stale dataset marking. Most families
+stream page by page; SDMX is the exception, because the standard defines no
+pagination for structure queries, so its catalog arrives in one bounded request
+and is emitted in fixed-size chunks.
 
 | Type | Selector | Serves | Example portals |
 |---|---|---|---|

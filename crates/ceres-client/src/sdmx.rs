@@ -121,12 +121,10 @@ impl SdmxClient {
             .send()
             .await
             .map_err(|error| AppError::ClientError(error.to_string()))?;
+        // Every non-success status is an error, 404 included: a service with
+        // nothing to publish answers with an empty `Dataflows` container, so a
+        // 404 means the endpoint is wrong, not that the catalog is empty.
         let status = response.status();
-        // A structure query for a catalog with no dataflows answers 404 in
-        // several implementations. That is an empty catalog, not a failure.
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Ok(String::new());
-        }
         if !status.is_success() {
             return Err(AppError::ClientError(format!("HTTP {status} from {url}")));
         }
@@ -165,9 +163,6 @@ impl SdmxClient {
                     .append_pair("detail", "full")
                     .append_pair("references", "none");
                 let xml = self.bounded_get(url).await?;
-                if xml.trim().is_empty() {
-                    return Ok(Vec::new());
-                }
                 parse_dataflows(&xml, &self.base_url, &self.language)
             })
             .await
@@ -771,8 +766,19 @@ mod tests {
         assert_eq!(client.dataset_count().await.unwrap(), 3);
     }
 
+    #[test]
+    fn a_service_with_nothing_to_publish_parses_as_empty() {
+        // The empty answer is an empty container, not a 404 — which is why a
+        // 404 is treated as the wrong endpoint rather than an empty catalog.
+        let xml = r#"<mes:Structure xmlns:mes="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/message"
+                                    xmlns:str="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/structure">
+          <mes:Structures><str:Dataflows /></mes:Structures>
+        </mes:Structure>"#;
+        assert!(parse_dataflows(xml, &base(), "en").unwrap().is_empty());
+    }
+
     #[tokio::test]
-    async fn a_catalog_with_no_dataflows_harvests_as_empty_rather_than_failing() {
+    async fn a_404_is_reported_rather_than_read_as_an_empty_catalog() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/dataflow/all/all/latest"))
@@ -781,7 +787,22 @@ mod tests {
             .await;
 
         let client = SdmxClient::new(&format!("{}/rest", server.uri()), "en").unwrap();
-        assert!(client.search_all_datasets().await.unwrap().is_empty());
+        let error = client.search_all_datasets().await.unwrap_err();
+        assert!(error.to_string().contains("404"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_dataflow_is_named_in_the_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/dataflow/NB/NOPE/latest"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = SdmxClient::new(&format!("{}/rest", server.uri()), "en").unwrap();
+        let error = client.get_dataset("NB:NOPE").await.unwrap_err();
+        assert!(error.to_string().contains("404"), "{error}");
     }
 
     #[tokio::test]
