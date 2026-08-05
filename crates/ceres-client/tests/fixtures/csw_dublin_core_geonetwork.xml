@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A real GeoNetwork Dublin Core record, taken verbatim from Eurac Research's
+  catalogue (edp-portal.eurac.edu) on 2026-08-05, wrapped in a GetRecords
+  envelope. One preview URL's `access_token` query parameter is replaced with
+  REDACTED; nothing else is altered.
+
+  This is the *other* Dublin Core link shape. Italy's RNDT publishes
+  `dct:references scheme="WMS"`; GeoNetwork publishes `dc:URI protocol="OGC:WMS"`
+  with a `name` and `description`. Generalizing from RNDT alone left 362 of
+  Eurac's 363 records with no reachable resource, which is what this fixture
+  exists to prevent recurring.
+-->
+<csw:GetRecordsResponse xmlns:csw="http://www.opengis.net/cat/csw/2.0.2" xmlns:ows="http://www.opengis.net/ows">
+  <csw:SearchStatus timestamp="2026-08-05T19:02:54Z"/>
+  <csw:SearchResults numberOfRecordsMatched="1" numberOfRecordsReturned="1" nextRecord="0" recordSchema="http://www.opengis.net/cat/csw/2.0.2" elementSet="full">
+    <csw:Record xmlns:geonet="http://www.fao.org/geonetwork" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:ows="http://www.opengis.net/ows" xmlns:dct="http://purl.org/dc/terms/">
+      <dc:identifier>1a25539e-21c9-11ec-bf18-0050568ebac4</dc:identifier>
+      <dc:date>2023-09-14T17:00:33Z</dc:date>
+      <dc:title>World Land Cover Himalayas 2015</dc:title>
+      <dc:type>dataset</dc:type>
+      <dc:subject>ecosystem</dc:subject>
+      <dc:subject>landcover</dc:subject>
+      <dc:subject>Asia</dc:subject>
+      <dc:subject>China</dc:subject>
+      <dc:subject>Nepal</dc:subject>
+      <dc:subject>environment</dc:subject>
+      <dct:abstract>Downscaled land cover component of the World Terrestrial Ecosystem maps of the AI4EBV project.</dct:abstract>
+      <dc:description>Downscaled land cover component of the World Terrestrial Ecosystem maps of the AI4EBV project.</dc:description>
+      <dc:rights>license</dc:rights>
+      <dc:rights />
+      <dc:language>eng</dc:language>
+      <dc:source />
+      <ows:BoundingBox crs="urn:ogc:def:crs:EPSG:6.6:4326">
+        <ows:LowerCorner>27.01973558522765 84.94856806237871</ows:LowerCorner>
+        <ows:UpperCorner>28.928245496281214 87.1001363021547</ows:UpperCorner>
+      </ows:BoundingBox>
+      <dc:URI protocol="WWW:LINK-1.0-http--link" description="Online link to the 'World Land Cover Himalayas 2015' description on GeoNode">https://maps.eurac.edu/layers/World_Land_Cover_Himalayas_2015_v1:geonode:World_Land_Cover_Himalayas_2015_v1</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.zip" description="World Land Cover Himalayas 2015 (Original Dataset Format)">https://maps.eurac.edu/download/781</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.jpg" description="World Land Cover Himalayas 2015 (JPEG Format)">https://maps.eurac.edu/geoserver/ows?service=WMS&amp;request=GetMap&amp;layers=geonode%3AWorld_Land_Cover_Himalayas_2015_v1&amp;format=image%2Fjpeg&amp;height=550&amp;width=550&amp;srs=EPSG%3A32645&amp;bbox=300000.000000000000000%2C2990220.000000000000000%2C509760.000000000000000%2C3200040.000000000000000</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.pdf" description="World Land Cover Himalayas 2015 (PDF Format)">https://maps.eurac.edu/geoserver/ows?service=WMS&amp;request=GetMap&amp;layers=geonode%3AWorld_Land_Cover_Himalayas_2015_v1&amp;format=application%2Fpdf&amp;height=550&amp;width=550&amp;srs=EPSG%3A32645&amp;bbox=300000.000000000000000%2C2990220.000000000000000%2C509760.000000000000000%2C3200040.000000000000000</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.png" description="World Land Cover Himalayas 2015 (PNG Format)">https://maps.eurac.edu/geoserver/ows?service=WMS&amp;request=GetMap&amp;layers=geonode%3AWorld_Land_Cover_Himalayas_2015_v1&amp;format=image%2Fpng&amp;height=550&amp;width=550&amp;srs=EPSG%3A32645&amp;bbox=300000.000000000000000%2C2990220.000000000000000%2C509760.000000000000000%2C3200040.000000000000000</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.x-gzip" description="World Land Cover Himalayas 2015 (GZIP Format)">https://maps.eurac.edu/geoserver/wcs?service=WCS&amp;request=GetCoverage&amp;coverageid=geonode__World_Land_Cover_Himalayas_2015_v1&amp;format=application%2Fx-gzip&amp;version=2.0.1&amp;srs=EPSG%3A32645&amp;bbox=300000.000000000000000%2C2990220.000000000000000%2C509760.000000000000000%2C3200040.000000000000000</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.geotiff" description="World Land Cover Himalayas 2015 (GeoTIFF Format)">https://maps.eurac.edu/geoserver/wcs?service=WCS&amp;request=GetCoverage&amp;coverageid=geonode__World_Land_Cover_Himalayas_2015_v1&amp;format=image%2Ftiff&amp;version=2.0.1&amp;srs=EPSG%3A32645&amp;bbox=300000.000000000000000%2C2990220.000000000000000%2C509760.000000000000000%2C3200040.000000000000000</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.png" description="World Land Cover Himalayas 2015 (Legend Format)">https://maps.eurac.edu/geoserver/ows?service=WMS&amp;request=GetLegendGraphic&amp;format=image/png&amp;WIDTH=20&amp;HEIGHT=20&amp;LAYER=geonode:World_Land_Cover_Himalayas_2015_v1&amp;STYLE=World_Land_Cover_Himalayas_2015_v1&amp;legend_options=fontAntiAliasing:true;fontSize:12;forceLabels:on</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.png" description="World Land Cover Himalayas 2015 (Remote Thumbnail Format)">https://maps.eurac.edu/geoserver/ows?service=WMS&amp;version=1.1.1&amp;request=GetMap&amp;layers=geonode:World_Land_Cover_Himalayas_2015_v1&amp;format=image/png8&amp;bbox=84.94856806237871,27.01973558522765,87.1001363021547,28.928245496281214&amp;crs=EPSG:4326&amp;width=240&amp;height=200&amp;access_token=REDACTED</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.png" description="World Land Cover Himalayas 2015 (Thumbnail Format)">https://maps.eurac.edu/uploaded/thumbs/layer-1a25539e-21c9-11ec-bf18-0050568ebac4-thumb.png</dc:URI>
+      <dc:URI protocol="WWW:DOWNLOAD-1.0-http--download" name="World_Land_Cover_Himalayas_2015_v1.png" description="World Land Cover Himalayas 2015 (Thumbnail Format)">https://maps.eurac.edu/uploaded/thumbs/layer-1a25539e-21c9-11ec-bf18-0050568ebac4-thumb.png?v=5b7b6bd9</dc:URI>
+      <dc:URI protocol="OGC:WMS" name="geonode:World_Land_Cover_Himalayas_2015_v1" description="geonode Service - Provides Layer: World Land Cover Himalayas 2015">https://maps.eurac.edu/geoserver/ows</dc:URI>
+      <dc:URI protocol="OGC:WCS" name="geonode:World_Land_Cover_Himalayas_2015_v1" description="geonode Service - Provides Layer: World Land Cover Himalayas 2015">https://maps.eurac.edu/geoserver/ows</dc:URI>
+      <dc:URI protocol="image/png" name="Thumbnail for 'World Land Cover Himalayas 2015'">https://maps.eurac.edu/uploaded/thumbs/layer-1a25539e-21c9-11ec-bf18-0050568ebac4-thumb.png?v=270fce37</dc:URI>
+    </csw:Record>
+  </csw:SearchResults>
+</csw:GetRecordsResponse>
