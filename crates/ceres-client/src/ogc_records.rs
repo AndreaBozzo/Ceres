@@ -13,6 +13,10 @@ use tokio::sync::OnceCell;
 const PAGE_SIZE: usize = 100;
 const MAX_PAGES: usize = 100_000;
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+/// An `ExceptionReport` is a few hundred bytes. The error path gets its own,
+/// far smaller budget than a record page: it exists to read a reason, not a
+/// catalog, so it should never be a route to a large allocation.
+const MAX_EXCEPTION_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 struct CswBindings {
@@ -128,18 +132,7 @@ impl OgcRecordsClient {
         // profile fallback depends on seeing it. Italy's RNDT is the live case.
         let status = response.status();
         if !status.is_success() {
-            let detail = response
-                .bytes()
-                .await
-                .ok()
-                .filter(|bytes| bytes.len() <= MAX_RESPONSE_BYTES)
-                .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
-                .and_then(|body| {
-                    Document::parse(&body)
-                        .ok()
-                        .filter(|doc| doc.descendants().any(|n| local(n) == "ExceptionReport"))
-                        .map(|doc| csw_exception(&doc).to_string())
-                });
+            let detail = read_exception_report(response).await;
             return Err(AppError::ClientError(match detail {
                 Some(detail) => format!("HTTP {status} from {url}: {detail}"),
                 None => format!("HTTP {status} from {url}"),
@@ -711,6 +704,41 @@ fn parse_date(value: &str) -> Option<DateTime<Utc>> {
 fn xml_error(error: roxmltree::Error) -> AppError {
     AppError::ClientError(format!("Invalid CSW XML: {error}"))
 }
+/// Reads an `ExceptionReport` body from a failing response, within a hard cap.
+///
+/// OWS signals a rejected parameter with HTTP 400 carrying the reason in the
+/// body, and the profile fallback depends on seeing it — a discarded body means
+/// the client only knows *that* the request failed, never *why*. Italy's RNDT is
+/// the live case.
+///
+/// The body is read in chunks and abandoned the moment it passes
+/// [`MAX_EXCEPTION_BYTES`], so a hostile or misbehaving endpoint cannot make an
+/// error path allocate without limit — `content_length` is consulted first but
+/// is not trusted on its own, since it can be absent or wrong. An exception
+/// report is a few hundred bytes; anything approaching the cap is not one, and
+/// the caller still reports the status.
+async fn read_exception_report(mut response: reqwest::Response) -> Option<String> {
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_EXCEPTION_BYTES as u64)
+    {
+        return None;
+    }
+    let mut body = Vec::new();
+    while let Ok(Some(chunk)) = response.chunk().await {
+        if body.len() + chunk.len() > MAX_EXCEPTION_BYTES {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let body = String::from_utf8(body).ok()?;
+    let document = Document::parse(&body).ok()?;
+    document
+        .descendants()
+        .any(|node| local(node) == "ExceptionReport")
+        .then(|| csw_exception(&document).to_string())
+}
+
 /// Whether a CSW exception says the request's record profile is unsupported.
 ///
 /// Two shapes occur in the wild and both have to be read:
@@ -1018,6 +1046,49 @@ mod tests {
         let error = client.page(1).await.unwrap_err();
         assert!(error.to_string().contains("503"), "{error}");
         // An outage must not be mistaken for a profile problem.
+        assert!(!is_profile_rejection(&error), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_oversized_error_body_is_abandoned_rather_than_buffered() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+
+        // A valid ExceptionReport padded past the cap. Reading it would mean an
+        // error path is a route to an unbounded allocation, so it is dropped and
+        // only the status survives — the fallback then does not fire, which is
+        // the safe direction.
+        let padding = "x".repeat(MAX_EXCEPTION_BYTES);
+        let oversized = format!(
+            r#"<ExceptionReport xmlns="http://www.opengis.net/ows">
+                 <Exception exceptionCode="InvalidParameterValue" locator="typeNames">
+                   <ExceptionText>must be csw:Record {padding}</ExceptionText>
+                 </Exception>
+               </ExceptionReport>"#
+        );
+        assert!(oversized.len() > MAX_EXCEPTION_BYTES);
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .insert_header("content-type", "application/xml")
+                    .set_body_string(oversized),
+            )
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
+        let error = client.page(1).await.unwrap_err();
+        assert!(error.to_string().contains("400"), "{error}");
+        assert!(
+            !error.to_string().contains("csw:Record"),
+            "the oversized body was buffered: {error}"
+        );
         assert!(!is_profile_rejection(&error), "{error}");
     }
 
