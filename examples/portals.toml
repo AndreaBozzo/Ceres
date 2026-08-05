@@ -1938,3 +1938,951 @@ type = "sdmx"
 language = "es"
 enabled = false
 description = "INEGI / SNIEG Mexico statistical dataflows (~5)"
+
+# =============================================================================
+# August 2026 discovery tranche
+#
+# Found by fingerprinting candidate hosts against every supported family
+# (dataportals.org, the OpenDataSoft federation hub, and stacindex.org) and
+# keeping only those that answered with a live catalog Ceres had not already
+# indexed. Metadata-only harvested on 2026-08-05; counts are measured, not
+# advertised. Disabled by default pending a second stability sync, matching the
+# July tranche.
+#
+# Six candidates that fingerprinted as live were dropped after harvesting
+# proved they were not:
+#
+#   data.london.gov.uk, leedsdatamill.org  — CKAN under the legacy /api/action
+#     path, reached only through a meta-refresh HTML redirect
+#   data.austintexas.gov, data.seattle.gov — Socrata aliases whose catalog API
+#     answers globally rather than for their own domain; the real catalogs are
+#     datahub.austintexas.gov and cos-data.seattle.gov, both already indexed
+#   www.datakc.org                         — domain repurposed, serves unrelated HTML
+#   earthengine.openeo.org                 — an openEO API; its landing page is
+#     not a STAC landing page and declares no conformance
+#
+# api.panoramax.xyz was also rejected: it is a STAC API, but its collections are
+# individual crowdsourced photo sequences (565,000 and growing), not catalog
+# entries. First-page collection counts do not predict a catalog's size.
+# =============================================================================
+
+
+# ---- CKAN ----
+[[portals]]
+name = "iatiregistry"
+url = "https://iatiregistry.org"
+type = "ckan"
+language = "en"
+enabled = false
+description = "~13,800 datasets"
+
+[[portals]]
+name = "catalogodatos-gub-uy"
+url = "https://catalogodatos.gub.uy"
+type = "ckan"
+language = "es"
+enabled = false
+description = "~2,700 datasets"
+
+[[portals]]
+name = "datosabiertos-malaga-eu"
+url = "https://datosabiertos.malaga.eu"
+type = "ckan"
+language = "es"
+enabled = false
+description = "~1,400 datasets"
+
+[[portals]]
+name = "datos-madrid-es"
+url = "https://datos.madrid.es"
+type = "ckan"
+language = "es"
+enabled = false
+description = "~670 datasets"
+
+[[portals]]
+name = "dados-pbh-br"
+url = "https://dados.pbh.gov.br"
+type = "ckan"
+language = "pt"
+enabled = false
+description = "~600 datasets"
+
+[[portals]]
+name = "dados-prefeitura-br"
+url = "https://dados.prefeitura.sp.gov.br"
+type = "ckan"
+language = "pt"
+enabled = false
+description = "~470 datasets"
+
+[[portals]]
+name = "data-buenosaires-ar"
+url = "https://data.buenosaires.gob.ar"
+type = "ckan"
+language = "es"
+enabled = false
+description = "~450 datasets"
+
+[[portals]]
+name = "donnees-ville-ca"
+url = "https://donnees.ville.montreal.qc.ca"
+type = "ckan"
+language = "fr"
+enabled = false
+description = "~400 datasets"
+
+[[portals]]
+name = "dados-rs-br"
+url = "https://dados.rs.gov.br"
+type = "ckan"
+language = "pt"
+enabled = false
+description = "~400 datasets"
+
+[[portals]]
+name = "data-ok"
+url = "https://data.ok.gov"
+type = "ckan"
+language = "en"
+enabled = false
+description = "~390 datasets"
+
+[[portals]]
+name = "dati-comune-it"
+url = "https://dati.comune.matera.it"
+type = "ckan"
+language = "it"
+enabled = false
+description = "~250 datasets"
+
+[[portals]]
+name = "opendata-transport-au"
+url = "https://opendata.transport.nsw.gov.au"
+type = "ckan"
+language = "en"
+enabled = false
+description = "~230 datasets"
+
+[[portals]]
+name = "dados-recife-br"
+url = "https://dados.recife.pe.gov.br"
+type = "ckan"
+language = "pt"
+enabled = false
+description = "~220 datasets"
+
+[[portals]]
+name = "data-zagreb-hr"
+url = "https://data.zagreb.hr"
+type = "ckan"
+language = "hr"
+enabled = false
+description = "~200 datasets"
+
+[[portals]]
+name = "data-sanjoseca"
+url = "https://data.sanjoseca.gov"
+type = "ckan"
+language = "en"
+enabled = false
+description = "~170 datasets"
+
+[[portals]]
+name = "opendata-comune-it"
+url = "https://opendata.comune.bari.it"
+type = "ckan"
+language = "it"
+enabled = false
+description = "~170 datasets"
+
+[[portals]]
+name = "transparenz-karlsruhe-de"
+url = "https://transparenz.karlsruhe.de"
+type = "ckan"
+language = "de"
+enabled = false
+description = "~150 datasets"
+
+[[portals]]
+name = "opendata-je"
+url = "https://opendata.gov.je"
+type = "ckan"
+language = "en"
+enabled = false
+description = "~120 datasets"
+
+[[portals]]
+name = "opendata-hu"
+url = "https://www.opendata.hu"
+type = "ckan"
+language = "hu"
+enabled = false
+description = "71 datasets"
+
+[[portals]]
+name = "opendata-ugr-es"
+url = "https://opendata.ugr.es"
+type = "ckan"
+language = "es"
+enabled = false
+description = "65 datasets"
+
+[[portals]]
+name = "dados-portoalegre-br"
+url = "https://dados.portoalegre.rs.gov.br"
+type = "ckan"
+language = "pt"
+enabled = false
+description = "56 datasets"
+
+[[portals]]
+name = "opendata-ps"
+url = "https://www.opendata.ps"
+type = "ckan"
+language = "en"
+enabled = false
+description = "40 datasets"
+
+[[portals]]
+name = "datosabiertos-rivasciudad-es"
+url = "https://datosabiertos.rivasciudad.es"
+type = "ckan"
+language = "es"
+enabled = false
+description = "7 datasets"
+
+[[portals]]
+name = "dados-pb-br"
+url = "https://dados.pb.gov.br"
+type = "ckan"
+language = "pt"
+enabled = false
+description = "7 datasets"
+
+
+# ---- Project Open Data (static data.json) ----
+[[portals]]
+name = "en-openei"
+url = "https://en.openei.org/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "~2,600 datasets"
+
+[[portals]]
+name = "opendataphilly"
+url = "https://www.opendataphilly.org/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "~470 datasets"
+
+[[portals]]
+name = "opendata-bonn-de"
+url = "https://opendata.bonn.de/data.json"
+type = "dcat"
+profile = "static_json"
+language = "de"
+enabled = false
+description = "~300 datasets"
+
+[[portals]]
+name = "data-cambridgeshireinsight-uk"
+url = "https://data.cambridgeshireinsight.org.uk/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "~240 datasets"
+
+[[portals]]
+name = "opendata-bristol-uk"
+url = "https://opendata.bristol.gov.uk/data.json"
+type = "dcat"
+profile = "static_json"
+language = "en"
+enabled = false
+description = "~220 datasets"
+
+
+# ---- Socrata ----
+[[portals]]
+name = "dati-lombardia-it"
+url = "https://www.dati.lombardia.it"
+type = "socrata"
+language = "it"
+enabled = false
+description = "~2,900 datasets"
+
+[[portals]]
+name = "data-weho"
+url = "https://data.weho.org"
+type = "socrata"
+language = "en"
+enabled = false
+description = "37 datasets"
+
+[[portals]]
+name = "data-richmondgov"
+url = "https://data.richmondgov.com"
+type = "socrata"
+language = "en"
+enabled = false
+description = "31 datasets"
+
+
+# ---- OpenDataSoft ----
+[[portals]]
+name = "data-qa"
+url = "https://www.data.gov.qa"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~1,600 datasets"
+
+[[portals]]
+name = "datahub-bordeaux-metropole-fr"
+url = "https://datahub.bordeaux-metropole.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~560 datasets"
+
+[[portals]]
+name = "analisis-datosabiertos-es"
+url = "https://analisis.datosabiertos.jcyl.es"
+type = "opendatasoft"
+language = "es"
+enabled = false
+description = "~430 datasets"
+
+[[portals]]
+name = "data-grandparissud-fr"
+url = "https://data.grandparissud.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~420 datasets"
+
+[[portals]]
+name = "cadentgas"
+url = "https://cadentgas.opendatasoft.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~410 datasets"
+
+[[portals]]
+name = "hub-huwise"
+url = "https://hub.huwise.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~410 datasets"
+
+[[portals]]
+name = "data-centrevaldeloire-fr"
+url = "https://data.centrevaldeloire.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~380 datasets"
+
+[[portals]]
+name = "odisse-santepubliquefrance-fr"
+url = "https://odisse.santepubliquefrance.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~360 datasets"
+
+[[portals]]
+name = "den-haag-opendata"
+url = "https://den-haag-opendata.opendatasoft.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~360 datasets"
+
+[[portals]]
+name = "herault-data-fr"
+url = "https://www.herault-data.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~350 datasets"
+
+[[portals]]
+name = "data-loire-atlantique-fr"
+url = "https://data.loire-atlantique.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~350 datasets"
+
+[[portals]]
+name = "fabriquenumeriquedupasse-fr"
+url = "https://www.fabriquenumeriquedupasse.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~330 datasets"
+
+[[portals]]
+name = "data-haute-garonne-fr"
+url = "https://data.haute-garonne.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~300 datasets"
+
+[[portals]]
+name = "data-drees-fr"
+url = "https://data.drees.solidarites-sante.gouv.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~260 datasets"
+
+[[portals]]
+name = "data-tours-metropole-fr"
+url = "https://data.tours-metropole.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~220 datasets"
+
+[[portals]]
+name = "data-enseignementsup-recherche-fr"
+url = "https://data.enseignementsup-recherche.gouv.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~210 datasets"
+
+[[portals]]
+name = "data-paysdelaloire-fr"
+url = "https://data.paysdelaloire.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~210 datasets"
+
+[[portals]]
+name = "data-ajman-ae"
+url = "https://data.ajman.ae"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~210 datasets"
+
+[[portals]]
+name = "data-caf-fr"
+url = "https://data.caf.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~210 datasets"
+
+[[portals]]
+name = "opendata-brussels-be"
+url = "https://opendata.brussels.be"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~210 datasets"
+
+[[portals]]
+name = "data-orleans-metropole-fr"
+url = "https://data.orleans-metropole.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~200 datasets"
+
+[[portals]]
+name = "data-seineouest-fr"
+url = "https://data.seineouest.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~200 datasets"
+
+[[portals]]
+name = "opendata-ha-py-fr"
+url = "https://opendata.ha-py.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~190 datasets"
+
+[[portals]]
+name = "data-bretagne-bzh"
+url = "https://data.bretagne.bzh"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~190 datasets"
+
+[[portals]]
+name = "openenergyhub-ornl"
+url = "https://openenergyhub.ornl.gov"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~180 datasets"
+
+[[portals]]
+name = "data-bl-ch"
+url = "https://data.bl.ch"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "~180 datasets"
+
+[[portals]]
+name = "daten-sg-ch"
+url = "https://daten.sg.ch"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "~180 datasets"
+
+[[portals]]
+name = "data-dunkerque-agglo-fr"
+url = "https://data.dunkerque-agglo.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~170 datasets"
+
+[[portals]]
+name = "data-blois-fr"
+url = "https://data.blois.agglopolys.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~170 datasets"
+
+[[portals]]
+name = "data-82amenagement-fr"
+url = "https://data.82amenagement.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~170 datasets"
+
+[[portals]]
+name = "ressources-data-sncf"
+url = "https://ressources.data.sncf.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~170 datasets"
+
+[[portals]]
+name = "spi-digitalwallonia"
+url = "https://spi-digitalwallonia.opendatasoft.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~160 datasets"
+
+[[portals]]
+name = "data-capatlantique-fr"
+url = "https://data.capatlantique.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~160 datasets"
+
+[[portals]]
+name = "data-cannes"
+url = "https://data.cannes.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~150 datasets"
+
+[[portals]]
+name = "spenergynetworks"
+url = "https://spenergynetworks.opendatasoft.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~150 datasets"
+
+[[portals]]
+name = "daten-stadt-ch"
+url = "https://daten.stadt.sg.ch"
+type = "opendatasoft"
+language = "de"
+enabled = false
+description = "~150 datasets"
+
+[[portals]]
+name = "electricitynorthwest"
+url = "https://electricitynorthwest.opendatasoft.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~150 datasets"
+
+[[portals]]
+name = "data-mulhouse-alsace-fr"
+url = "https://data.mulhouse-alsace.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~140 datasets"
+
+[[portals]]
+name = "anglet-opendatapaysbasque"
+url = "https://anglet-opendatapaysbasque.opendatasoft.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~140 datasets"
+
+[[portals]]
+name = "transparencia-sns-pt"
+url = "https://transparencia.sns.gov.pt"
+type = "opendatasoft"
+language = "pt"
+enabled = false
+description = "~140 datasets"
+
+[[portals]]
+name = "data-peclet-au"
+url = "https://data.peclet.com.au"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~140 datasets"
+
+[[portals]]
+name = "data-bep-be"
+url = "https://data.bep.be"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~140 datasets"
+
+[[portals]]
+name = "ukpowernetworks"
+url = "https://ukpowernetworks.opendatasoft.com"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~140 datasets"
+
+[[portals]]
+name = "data-saintnazaireagglo-fr"
+url = "https://data.saintnazaireagglo.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~140 datasets"
+
+[[portals]]
+name = "data-casey-au"
+url = "https://data.casey.vic.gov.au"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~140 datasets"
+
+[[portals]]
+name = "data-maine-et-loire-fr"
+url = "https://data.maine-et-loire.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~130 datasets"
+
+[[portals]]
+name = "data-teo-paysdelaloire-fr"
+url = "https://data.teo-paysdelaloire.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~130 datasets"
+
+[[portals]]
+name = "opendata-clermontmetropole-eu"
+url = "https://opendata.clermontmetropole.eu"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~120 datasets"
+
+[[portals]]
+name = "data-nimes-metropole-fr"
+url = "https://data.nimes-metropole.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~120 datasets"
+
+[[portals]]
+name = "opendata-fr-ch"
+url = "https://opendata.fr.ch"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~120 datasets"
+
+[[portals]]
+name = "opendata-westofengland-ca-uk"
+url = "https://opendata.westofengland-ca.gov.uk"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~120 datasets"
+
+[[portals]]
+name = "data-ballarat-au"
+url = "https://data.ballarat.vic.gov.au"
+type = "opendatasoft"
+language = "en"
+enabled = false
+description = "~120 datasets"
+
+[[portals]]
+name = "data-melunvaldeseine-fr"
+url = "https://data.melunvaldeseine.fr"
+type = "opendatasoft"
+language = "fr"
+enabled = false
+description = "~120 datasets"
+
+
+# ---- ArcGIS Hub ----
+[[portals]]
+name = "geo-wa"
+url = "https://geo.wa.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~740 datasets"
+
+[[portals]]
+name = "data-fingal-ie"
+url = "https://data.fingal.ie"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~390 datasets"
+
+[[portals]]
+name = "data-avl"
+url = "https://data-avl.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~360 datasets"
+
+[[portals]]
+name = "hub-cookcountyil"
+url = "https://hub-cookcountyil.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~360 datasets"
+
+[[portals]]
+name = "data-baltimorecity"
+url = "https://data.baltimorecity.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~350 datasets"
+
+[[portals]]
+name = "opendata-minneapolismn"
+url = "https://opendata.minneapolismn.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~250 datasets"
+
+[[portals]]
+name = "data-raleighnc"
+url = "https://data.raleighnc.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~190 datasets"
+
+[[portals]]
+name = "data-nashville"
+url = "https://data.nashville.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~140 datasets"
+
+[[portals]]
+name = "data-cityofsacramento"
+url = "https://data.cityofsacramento.org"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~130 datasets"
+
+[[portals]]
+name = "data-hartford"
+url = "https://data.hartford.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~130 datasets"
+
+[[portals]]
+name = "data-lexingtonky"
+url = "https://data.lexingtonky.gov"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~120 datasets"
+
+[[portals]]
+name = "bostonopendata-boston"
+url = "https://bostonopendata-boston.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~120 datasets"
+
+[[portals]]
+name = "data-sunshinecoast-au"
+url = "https://data.sunshinecoast.qld.gov.au"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~110 datasets"
+
+[[portals]]
+name = "data-cityofpasadena"
+url = "https://data.cityofpasadena.net"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "~100 datasets"
+
+[[portals]]
+name = "opendataportal-lasvegas"
+url = "https://opendataportal-lasvegas.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "54 datasets"
+
+[[portals]]
+name = "maps-nevcounty"
+url = "https://maps-nevcounty.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "24 datasets"
+
+[[portals]]
+name = "gisdata-istc"
+url = "https://gisdata-istc.opendata.arcgis.com"
+type = "arcgis"
+language = "en"
+enabled = false
+description = "1 datasets"
+
+
+# ---- STAC (collection-level) ----
+[[portals]]
+name = "fedeo-ceos"
+url = "https://fedeo.ceos.org"
+type = "stac"
+language = "en"
+enabled = false
+description = "~3,400 datasets"
+
+[[portals]]
+name = "hda-data-eu"
+url = "https://hda.data.destination-earth.eu/stac/v2"
+type = "stac"
+language = "en"
+enabled = false
+description = "~310 datasets"
+
+[[portals]]
+name = "api-stac-fr"
+url = "https://api.stac.teledetection.fr"
+type = "stac"
+language = "fr"
+enabled = false
+description = "39 datasets"
+
+[[portals]]
+name = "eod-catalog-svc-prod-astraea-earth"
+url = "https://eod-catalog-svc-prod.astraea.earth"
+type = "stac"
+language = "en"
+enabled = false
+description = "30 datasets"
+
+[[portals]]
+name = "stac-earthgenome"
+url = "https://stac.earthgenome.org"
+type = "stac"
+language = "en"
+enabled = false
+description = "30 datasets"
+
+[[portals]]
+name = "gis-ktn-at"
+url = "https://gis.ktn.gv.at/api/stac/v1"
+type = "stac"
+language = "de"
+enabled = false
+description = "21 datasets"
+
+[[portals]]
+name = "gep-supersites-stac-terradue"
+url = "https://gep-supersites-stac.terradue.com"
+type = "stac"
+language = "en"
+enabled = false
+description = "16 datasets"
+
+[[portals]]
+name = "stac-easierdata-info"
+url = "https://stac.easierdata.info"
+type = "stac"
+language = "en"
+enabled = false
+description = "8 datasets"
+
+[[portals]]
+name = "api-imagery-hotosm"
+url = "https://api.imagery.hotosm.org/stac"
+type = "stac"
+language = "en"
+enabled = false
+description = "3 datasets"
+
+[[portals]]
+name = "stac-cyverse"
+url = "https://stac.cyverse.org"
+type = "stac"
+language = "en"
+enabled = false
+description = "2 datasets"
+
+[[portals]]
+name = "dop-stac-de"
+url = "https://dop.stac.lgln.niedersachsen.de"
+type = "stac"
+language = "de"
+enabled = false
+description = "1 datasets"
