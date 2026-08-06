@@ -70,6 +70,17 @@ enum CswProfile {
 }
 
 impl CswProfile {
+    /// The profile to try when this one cannot render a record.
+    ///
+    /// Dublin Core is mandatory in CSW 2.0.2, so it renders anything a
+    /// catalogue holds — at less depth than ISO, but present rather than lost.
+    fn alternate(self) -> Self {
+        match self {
+            Self::Iso => Self::DublinCore,
+            Self::DublinCore => Self::Iso,
+        }
+    }
+
     /// The `typeNames` / `namespace` / `outputSchema` triple this profile needs.
     fn query(self) -> [(&'static str, String); 3] {
         match self {
@@ -325,6 +336,51 @@ impl OgcRecordsClient {
                 Err(error) if is_profile_rejection(&error) && self.profile.get().is_none() => {
                     return Err(error);
                 }
+                // The profile is settled, so the catalogue supports it — this
+                // window simply holds records it cannot render. A mixed
+                // catalogue is ordinary: nationaalgeoregister.nl serves ISO
+                // 19139 throughout with ISO 19110 feature catalogues among them.
+                //
+                // Those records are not unreadable, only unreadable *here*, so
+                // read the window in the mandatory profile instead of narrowing
+                // toward a skip. Narrowing cannot help when the offending
+                // records are clustered — each smaller window at this offset
+                // named a different one — and skipping would discard records the
+                // catalogue is willing to serve.
+                //
+                // The settled profile is left alone: the rest of the catalogue
+                // is still richer in it.
+                Err(error) if is_profile_rejection(&error) => {
+                    let alternate = self
+                        .profile
+                        .get()
+                        .copied()
+                        .unwrap_or(CswProfile::Iso)
+                        .alternate();
+                    match self.page_in(start, size, alternate).await {
+                        Ok(page) => {
+                            tracing::info!(
+                                portal = self.base_url.as_str(),
+                                start,
+                                size,
+                                profile = ?alternate,
+                                "Window holds records the catalogue's profile cannot render; \
+                                 read it in the mandatory profile instead"
+                            );
+                            return Ok(Some((page, size)));
+                        }
+                        Err(fallback_error) => {
+                            tracing::warn!(
+                                portal = self.base_url.as_str(),
+                                start,
+                                size,
+                                %fallback_error,
+                                "Neither profile could read this window; narrowing"
+                            );
+                            last = Some(error);
+                        }
+                    }
+                }
                 Err(error) => {
                     tracing::warn!(
                         portal = self.base_url.as_str(),
@@ -422,7 +478,11 @@ impl OgcRecordsClient {
                             state.done = true;
                             return Some((
                                 Err(AppError::ClientError(format!(
-                                    "CSW catalogue failed {} windows in a row around record {};                                      stopping rather than stepping through a service that is down",
+                                    concat!(
+                                        "CSW catalogue failed {} windows in a row ",
+                                        "around record {} in both profiles; stopping ",
+                                        "rather than stepping through it one record at a time",
+                                    ),
                                     state.consecutive_skips, state.start
                                 ))),
                                 (client, state),
@@ -1370,6 +1430,36 @@ mod tests {
         )
     }
 
+    /// Builds a GetRecords response carrying `n` minimal Dublin Core records.
+    fn dublin_core_page(start: usize, n: usize, matched: usize) -> String {
+        let records: String = (0..n)
+            .map(|i| {
+                format!(
+                    concat!(
+                        r#"<csw:Record xmlns:csw="http://www.opengis.net/cat/csw/2.0.2" "#,
+                        r#"xmlns:dc="http://purl.org/dc/elements/1.1/">"#,
+                        "<dc:identifier>dc-{id}</dc:identifier>",
+                        "<dc:title>Feature catalogue {id}</dc:title>",
+                        "<dc:type>dataset</dc:type></csw:Record>",
+                    ),
+                    id = start + i
+                )
+            })
+            .collect();
+        format!(
+            concat!(
+                r#"<csw:GetRecordsResponse xmlns:csw="http://www.opengis.net/cat/csw/2.0.2">"#,
+                r#"<csw:SearchResults numberOfRecordsMatched="{matched}" "#,
+                r#"numberOfRecordsReturned="{n}" nextRecord="{next}">{records}"#,
+                "</csw:SearchResults></csw:GetRecordsResponse>",
+            ),
+            matched = matched,
+            n = n,
+            records = records,
+            next = start + n
+        )
+    }
+
     fn capabilities_for(base: &str) -> String {
         format!(
             concat!(
@@ -1505,6 +1595,97 @@ mod tests {
         let records = client.search_all_datasets().await.unwrap();
         let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
         assert_eq!(ids, ["record-1", "record-3"]);
+    }
+
+    /// A catalogue may hold records its own preferred profile cannot render.
+    /// `nationaalgeoregister.nl` serves ISO 19139 throughout with ISO 19110
+    /// feature catalogues among them; narrowing named a different unrenderable
+    /// record at every window size, because they are clustered rather than
+    /// isolated. Dublin Core reads them, so the window is re-read rather than
+    /// skipped — the records exist and the catalogue will serve them.
+    #[tokio::test]
+    async fn a_window_the_profile_cannot_render_is_read_in_the_other_profile() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        };
+
+        let server = MockServer::start().await;
+        let xml = |body: String| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/xml")
+                .set_body_string(body)
+        };
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetCapabilities"))
+            .respond_with(xml(capabilities_for(&server.uri())))
+            .mount(&server)
+            .await;
+
+        // The first window settles the profile as ISO.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "1"))
+            .and(query_param("typeNames", "gmd:MD_Metadata"))
+            .respond_with(xml(iso_page(1, 1, 3)))
+            .mount(&server)
+            .await;
+        // The next window holds ISO 19110 records: ISO cannot render it at any
+        // size, and each size names a different record, as the live catalogue does.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "2"))
+            .and(query_param("typeNames", "gmd:MD_Metadata"))
+            .respond_with(xml(concat!(
+                r#"<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows">"#,
+                r#"<ows:Exception exceptionCode="NoApplicableCode"><ows:ExceptionText>"#,
+                "InvalidParameterValueEx: code=InvalidParameterValue, locator=OutputSchema, ",
+                "message=OutputSchema 'gmd' not supported for metadata with '70439986' (iso19110).",
+                "</ows:ExceptionText></ows:Exception></ows:ExceptionReport>",
+            )
+            .to_string()))
+            .mount(&server)
+            .await;
+        // Dublin Core serves the same window without complaint.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "2"))
+            .and(query_param("typeNames", "csw:Record"))
+            .respond_with(xml(dublin_core_page(2, 2, 3)))
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let records = client.search_all_datasets().await.unwrap();
+        let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["record-1", "dc-2", "dc-3"],
+            "the unrenderable window should be read in Dublin Core, not skipped"
+        );
+        // The rest of the catalogue is still richer in ISO, so the settled
+        // profile is not switched by one awkward window.
+        assert_eq!(client.profile.get(), Some(&CswProfile::Iso));
+    }
+
+    /// A `\` continuation inside a string literal has silently produced a
+    /// message with 37 spaces in the middle of it once already, and the only
+    /// place that showed was a harvest log.
+    #[test]
+    fn diagnostic_messages_do_not_carry_source_indentation() {
+        let flat = format!(
+            concat!(
+                "CSW catalogue failed {} windows in a row ",
+                "around record {} in both profiles; stopping ",
+                "rather than stepping through it one record at a time",
+            ),
+            3, 4826
+        );
+        assert!(!flat.contains("  "), "{flat}");
     }
 
     /// One unreadable record is a record; several in a row is the service.
