@@ -1036,6 +1036,7 @@ impl SparqlDcatClient {
         values.sort_by(|a, b| {
             self.lang_rank(b.lang.as_deref())
                 .cmp(&self.lang_rank(a.lang.as_deref()))
+                .then_with(|| b.lang.is_some().cmp(&a.lang.is_some()))
                 .then_with(|| a.lang.cmp(&b.lang))
                 .then_with(|| a.value.cmp(&b.value))
         });
@@ -1995,6 +1996,16 @@ mod tests {
                     },
                     {
                         "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                        "distribution": {"type": "uri", "value": "https://example.org/dist/a"},
+                        "distributionTitle": {"type": "literal", "value": "Français", "xml:lang": "fr"}
+                    },
+                    {
+                        "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                        "distribution": {"type": "uri", "value": "https://example.org/dist/a"},
+                        "distributionTitle": {"type": "literal", "value": "Untagged"}
+                    },
+                    {
+                        "dataset": {"type": "uri", "value": "https://example.org/d/1"},
                         "distribution": {"type": "bnode", "value": "blank-1"},
                         "mediaType": {"type": "literal", "value": "application/json"},
                         "accessURL": {"type": "uri", "value": "https://example.org/api"}
@@ -2023,6 +2034,11 @@ mod tests {
             named["dct:title"][1],
             json!({"@value": "English", "@language": "en"})
         );
+        assert_eq!(
+            named["dct:title"][2],
+            json!({"@value": "Français", "@language": "fr"})
+        );
+        assert_eq!(named["dct:title"][3], "Untagged");
         assert_eq!(
             named["dct:format"],
             json!({"@id": "http://publications.europa.eu/resource/authority/file-type/CSV"})
