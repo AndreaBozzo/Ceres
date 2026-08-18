@@ -618,7 +618,8 @@ impl DatasetRepository {
 
     /// Updates or inserts the sync status for a portal.
     ///
-    /// The `sync_status` parameter indicates the outcome: "completed" or "cancelled".
+    /// The `sync_status` parameter indicates the outcome: "completed", "partial",
+    /// or "cancelled".
     /// Only updates `last_successful_sync` when status is "completed", preserving
     /// the last successful sync time for incremental harvesting after cancellations.
     pub async fn upsert_sync_status(

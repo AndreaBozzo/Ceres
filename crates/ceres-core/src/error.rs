@@ -91,6 +91,14 @@ pub enum AppError {
     #[error("API Client error: {0}")]
     ClientError(String),
 
+    /// A portal stream reached its end after omitting one or more records.
+    ///
+    /// The records that were returned remain valid, but the harvest must be
+    /// reported as partial and must not advance incremental-sync or stale-state
+    /// bookkeeping as though the complete catalogue had been read.
+    #[error("Partial harvest: skipped {skipped} record(s): {reason}")]
+    PartialHarvest { skipped: usize, reason: String },
+
     /// Gemini API call failed.
     ///
     /// This error occurs when Gemini API calls fail, including
@@ -187,6 +195,7 @@ impl AppError {
         match self {
             AppError::DatabaseError(_) => "database",
             AppError::ClientError(_) => "client",
+            AppError::PartialHarvest { .. } => "partial_harvest",
             AppError::GeminiError(details) => match details.kind {
                 GeminiErrorKind::Authentication => "authentication",
                 GeminiErrorKind::RateLimit => "rate_limit",
@@ -367,6 +376,7 @@ impl AppError {
             // Authentication, quota, validation errors indicate configuration
             // problems, not temporary service issues
             AppError::DatabaseError(_)
+            | AppError::PartialHarvest { .. }
             | AppError::SerializationError(_)
             | AppError::InvalidUrl(_)
             | AppError::DatasetNotFound(_)

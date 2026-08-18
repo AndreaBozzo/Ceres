@@ -425,6 +425,17 @@ impl OgcRecordsClient {
             ),
             |(client, mut state)| async move {
                 if state.done {
+                    if state.skipped > 0 {
+                        let skipped = std::mem::take(&mut state.skipped);
+                        return Some((
+                            Err(AppError::PartialHarvest {
+                                skipped,
+                                reason: "CSW catalogue finished with unreadable records omitted"
+                                    .into(),
+                            }),
+                            (client, state),
+                        ));
+                    }
                     return None;
                 }
                 if state.pages >= MAX_PAGES || !state.seen.insert(state.start) {
@@ -471,20 +482,25 @@ impl OgcRecordsClient {
                     // through it one at a time would cost four requests each for
                     // as long as it stayed down.
                     Ok(None) => {
+                        let skipped_start = state.start;
                         state.skipped += 1;
                         state.consecutive_skips += 1;
                         state.start += 1;
                         if state.consecutive_skips >= MAX_CONSECUTIVE_SKIPS {
                             state.done = true;
+                            let skipped = std::mem::take(&mut state.skipped);
                             return Some((
-                                Err(AppError::ClientError(format!(
-                                    concat!(
-                                        "CSW catalogue failed {} windows in a row ",
-                                        "around record {} in both profiles; stopping ",
-                                        "rather than stepping through it one record at a time",
+                                Err(AppError::PartialHarvest {
+                                    skipped,
+                                    reason: format!(
+                                        concat!(
+                                            "CSW catalogue failed {} windows in a row ",
+                                            "around record {} in both profiles; stopping ",
+                                            "rather than stepping through it one record at a time",
+                                        ),
+                                        state.consecutive_skips, skipped_start
                                     ),
-                                    state.consecutive_skips, state.start
-                                ))),
+                                }),
                                 (client, state),
                             ));
                         }
@@ -1592,9 +1608,24 @@ mod tests {
         let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
             .unwrap()
             .without_backoff();
-        let records = client.search_all_datasets().await.unwrap();
+        let mut stream = client.paginate_stream();
+        let mut records = Vec::new();
+        let mut terminal_error = None;
+        while let Some(page) = stream.next().await {
+            match page {
+                Ok(page) => records.extend(page),
+                Err(error) => {
+                    terminal_error = Some(error);
+                    break;
+                }
+            }
+        }
         let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
         assert_eq!(ids, ["record-1", "record-3"]);
+        assert!(matches!(
+            terminal_error,
+            Some(AppError::PartialHarvest { skipped: 1, .. })
+        ));
     }
 
     /// A catalogue may hold records its own preferred profile cannot render.
@@ -1821,13 +1852,28 @@ mod tests {
         let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
             .unwrap()
             .without_backoff();
-        let records = client.search_all_datasets().await.unwrap();
+        let mut stream = client.paginate_stream();
+        let mut records = Vec::new();
+        let mut terminal_error = None;
+        while let Some(page) = stream.next().await {
+            match page {
+                Ok(page) => records.extend(page),
+                Err(error) => {
+                    terminal_error = Some(error);
+                    break;
+                }
+            }
+        }
         let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
         assert_eq!(
             ids,
             ["record-1", "record-3"],
             "the unrenderable record should be skipped, not end the catalogue"
         );
+        assert!(matches!(
+            terminal_error,
+            Some(AppError::PartialHarvest { skipped: 1, .. })
+        ));
         assert_eq!(client.profile.get(), Some(&CswProfile::Iso));
     }
 

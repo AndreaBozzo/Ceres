@@ -68,7 +68,8 @@ pub trait PortalClientFactory: Send + Sync + Clone {
 // DcatProfile (ceres_core::config): typed DCAT profile enum — UdataRest (canonical
 // "udata_rest", alias "udata", default) and Sparql ("sparql"). Since PR #171 it is
 // the single source of truth across portals.toml, CLI --profile, jobs, and dispatch.
-// record_sync_status takes Option<SyncMode> + SyncStatus enums (not &str).
+// record_sync_status takes Option<SyncMode> + SyncStatus enums (not &str);
+// SyncStatus is Completed, Partial (truncated catalogue), or Cancelled.
 
 pub trait DatasetStore: Send + Sync + Clone {
     fn get_by_id(&self, id: Uuid) -> impl Future<Output = Result<Option<Dataset>, AppError>> + Send;

@@ -876,7 +876,13 @@ where
                                 "Dataset stream ended early; the catalog was only partly read"
                             );
                             truncated_reason = Some(e.to_string());
-                            stats.record(SyncOutcome::Failed);
+                            if let AppError::PartialHarvest { skipped, .. } = &e {
+                                for _ in 0..*skipped {
+                                    stats.record(SyncOutcome::Skipped);
+                                }
+                            } else {
+                                stats.record(SyncOutcome::Failed);
+                            }
                             break;
                         }
                     };
@@ -1102,6 +1108,18 @@ where
                     "Dry run cancelled — no changes written"
                 );
                 return Ok(SyncResult::cancelled(final_stats));
+            } else if let Some(reason) = truncated_reason {
+                tracing::error!(
+                    portal = portal_url,
+                    created = final_stats.created,
+                    updated = final_stats.updated,
+                    unchanged = final_stats.unchanged,
+                    failed = final_stats.failed,
+                    skipped = final_stats.skipped,
+                    %reason,
+                    "Dry run ended with a partial catalogue — no changes written"
+                );
+                return Ok(SyncResult::truncated(final_stats, reason));
             } else {
                 tracing::info!(
                     portal = portal_url,
@@ -1121,6 +1139,8 @@ where
         // Determine final status
         let status = if is_cancelled {
             SyncStatus::Cancelled
+        } else if truncated_reason.is_some() {
+            SyncStatus::Partial
         } else {
             SyncStatus::Completed
         };
@@ -1133,6 +1153,7 @@ where
         // the expensive per-row timestamp update that the old approach required.
         if sync_mode == SyncMode::Full
             && !is_cancelled
+            && truncated_reason.is_none()
             && final_stats.failed == 0
             && final_stats.skipped == 0
         {

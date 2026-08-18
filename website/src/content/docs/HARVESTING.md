@@ -26,7 +26,9 @@ OGC catalogues are capability-driven: Ceres reads `GetCapabilities`, follows
 the advertised record bindings, and streams bounded result windows. A window
 that fails is retried at a smaller size (100 → 25 → 5 → 1) before a single
 unreadable record is skipped, so one record a catalogue cannot serve costs that
-record rather than every record after it. Configure
+record rather than every record after it. Any skip makes the final result
+partial, preventing stale marking and incremental-sync advancement while the
+later readable records remain saved. Configure
 `ogc_endpoint` when the CSW service differs from the logical portal URL.
 
 STAC harvesting is link-driven: Ceres reads the API landing page, verifies

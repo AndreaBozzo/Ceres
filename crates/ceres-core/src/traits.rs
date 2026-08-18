@@ -433,7 +433,7 @@ pub trait DatasetStore: Send + Sync + Clone {
     /// * `sync_time` - The timestamp of this sync
     /// * `sync_mode` - The sync mode, or `None` if the sync was interrupted
     ///   before a mode was determined (stored as `"unknown"`)
-    /// * `sync_status` - The outcome: completed or cancelled
+    /// * `sync_status` - The outcome: completed, partial, or cancelled
     /// * `datasets_synced` - Number of datasets processed
     fn record_sync_status(
         &self,

@@ -16,7 +16,7 @@ use ceres_core::{
     BatchHarvestSummary, DbConfig, DcatProfile, EmbeddingService, EmbeddingStats,
     ExportFormat as CoreExportFormat, ExportService, HarvestConfig, HarvestService,
     ParquetExportConfig, ParquetExportResult, ParquetExportService, PortalEntry, PortalType,
-    SearchService, SyncStats, TracingReporter, load_portals_config,
+    SearchService, SyncResult, TracingReporter, load_portals_config,
 };
 use ceres_db::DatasetRepository;
 use ceres_search::{Command, Config, ExportFormat, LogFormat};
@@ -42,6 +42,14 @@ impl RunOutcome {
             && summary.partial_count() == 0
             && summary.cancelled_count() == 0
         {
+            Self::Success
+        } else {
+            Self::Partial
+        }
+    }
+
+    fn from_sync_result(result: &SyncResult) -> Self {
+        if result.is_completed() {
             Self::Success
         } else {
             Self::Partial
@@ -277,7 +285,7 @@ async fn handle_harvest(
     } else {
         ""
     };
-    let mut outcome = RunOutcome::Success;
+    let outcome;
 
     if ad_hoc_profile.is_some() && ad_hoc_portal_type != PortalType::Dcat {
         anyhow::bail!("--profile is only valid with --type dcat");
@@ -292,19 +300,21 @@ async fn handle_harvest(
     match (portal_url, portal_name) {
         (Some(url), None) => {
             info!("Syncing portal{}: {}", mode_label, url);
-            let stats = harvest_service
-                .sync_portal_with_progress(
+            let result = harvest_service
+                .sync_portal_with_progress_cancellable(
                     &url,
                     None,
                     "en",
                     &reporter,
+                    CancellationToken::new(),
                     ad_hoc_portal_type,
                     ad_hoc_profile,
                     None,
                     None,
                 )
                 .await?;
-            print_single_portal_summary(&url, &stats);
+            outcome = RunOutcome::from_sync_result(&result);
+            print_single_portal_summary(&url, &result);
             if let Some(es) = embedding_service {
                 let embed_stats = es
                     .embed_pending(Some(&url), &reporter, CancellationToken::new())
@@ -331,19 +341,21 @@ async fn handle_harvest(
             }
 
             info!("Syncing portal{}: {}", mode_label, portal.url);
-            let stats = harvest_service
-                .sync_portal_with_progress(
+            let result = harvest_service
+                .sync_portal_with_progress_cancellable(
                     &portal.url,
                     portal.url_template.as_deref(),
                     portal.language(),
                     &reporter,
+                    CancellationToken::new(),
                     portal.portal_type,
                     portal.profile(),
                     portal.sparql_endpoint(),
                     portal.ogc_endpoint(),
                 )
                 .await?;
-            print_single_portal_summary(&portal.url, &stats);
+            outcome = RunOutcome::from_sync_result(&result);
+            print_single_portal_summary(&portal.url, &result);
             if let Some(es) = embedding_service {
                 let embed_stats = es
                     .embed_pending(Some(&portal.url), &reporter, CancellationToken::new())
@@ -466,22 +478,31 @@ fn print_batch_summary(summary: &BatchHarvestSummary) {
 }
 
 /// Print a summary for single portal harvest (modes 1 and 2).
-fn print_single_portal_summary(portal_url: &str, stats: &SyncStats) {
+fn print_single_portal_summary(portal_url: &str, result: &SyncResult) {
+    let stats = &result.stats;
+    let summary_label = if result.is_completed() {
+        "Sync complete"
+    } else {
+        "Sync partial"
+    };
     info!("");
     info!("═══════════════════════════════════════════════════════");
-    info!("Sync complete: {}", portal_url);
+    info!("{}: {}", summary_label, portal_url);
     info!("═══════════════════════════════════════════════════════");
     info!("  = Unchanged:         {}", stats.unchanged);
     info!("  ↑ Updated:           {}", stats.updated);
     info!("  + Created:           {}", stats.created);
     info!("  ✗ Failed:            {}", stats.failed);
+    info!("  → Skipped:           {}", stats.skipped);
     info!("───────────────────────────────────────────────────────");
     info!("  Total processed:     {}", stats.total());
     info!("  Successful:          {}", stats.successful());
     info!("═══════════════════════════════════════════════════════");
 
-    if stats.failed == 0 {
+    if result.is_completed() && stats.failed == 0 && stats.skipped == 0 {
         info!("All datasets processed successfully!");
+    } else if let Some(message) = &result.message {
+        error!("Partial sync: {}", message);
     }
 }
 
@@ -720,6 +741,23 @@ mod tests {
             RunOutcome::Partial
         );
         assert_eq!(RunOutcome::from_batch_summary(&summary).exit_code(), 2);
+    }
+
+    #[test]
+    fn a_truncated_single_portal_does_not_exit_clean() {
+        let result = SyncResult::truncated(
+            ceres_core::SyncStats {
+                unchanged: 2,
+                updated: 0,
+                created: 0,
+                failed: 0,
+                skipped: 1,
+            },
+            "one record was unreadable".into(),
+        );
+
+        assert_eq!(RunOutcome::from_sync_result(&result), RunOutcome::Partial);
+        assert_eq!(RunOutcome::from_sync_result(&result).exit_code(), 2);
     }
 
     #[test]

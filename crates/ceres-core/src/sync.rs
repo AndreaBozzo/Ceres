@@ -88,6 +88,8 @@ impl SyncMode {
 pub enum SyncStatus {
     /// Sync completed successfully with all datasets processed.
     Completed,
+    /// Sync saved valid progress but did not read the complete catalogue.
+    Partial,
     /// Sync was cancelled but partial progress was saved.
     Cancelled,
 }
@@ -97,6 +99,7 @@ impl SyncStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             SyncStatus::Completed => "completed",
+            SyncStatus::Partial => "partial",
             SyncStatus::Cancelled => "cancelled",
         }
     }
@@ -109,6 +112,11 @@ impl SyncStatus {
     /// Returns true if the sync was cancelled.
     pub fn is_cancelled(&self) -> bool {
         matches!(self, SyncStatus::Cancelled)
+    }
+
+    /// Returns true if the sync saved progress from an incomplete catalogue.
+    pub fn is_partial(&self) -> bool {
+        matches!(self, SyncStatus::Partial)
     }
 }
 
@@ -142,10 +150,10 @@ impl SyncResult {
         }
     }
 
-    /// Creates a completed sync result for a stream that ended early.
+    /// Creates a partial sync result for a stream that ended early.
     pub fn truncated(stats: SyncStats, message: String) -> Self {
         Self {
-            status: SyncStatus::Completed,
+            status: SyncStatus::Partial,
             stats,
             message: Some(message),
             truncated: true,
@@ -170,6 +178,11 @@ impl SyncResult {
     /// Returns true if the sync was cancelled.
     pub fn is_cancelled(&self) -> bool {
         self.status.is_cancelled()
+    }
+
+    /// Returns true if the sync saved progress from an incomplete catalogue.
+    pub fn is_partial(&self) -> bool {
+        self.status.is_partial()
     }
 }
 
@@ -932,6 +945,15 @@ mod tests {
         assert!(status.is_cancelled());
     }
 
+    #[test]
+    fn test_sync_status_partial() {
+        let status = SyncStatus::Partial;
+        assert_eq!(status.as_str(), "partial");
+        assert!(!status.is_completed());
+        assert!(status.is_partial());
+        assert!(!status.is_cancelled());
+    }
+
     // =========================================================================
     // SyncResult tests
     // =========================================================================
@@ -967,6 +989,25 @@ mod tests {
         assert!(result.message.is_some());
         assert!(result.message.unwrap().contains("cancelled"));
         assert_eq!(result.stats.total(), 8);
+    }
+
+    #[test]
+    fn a_truncated_sync_is_not_completed() {
+        let result = SyncResult::truncated(
+            SyncStats {
+                unchanged: 5,
+                updated: 0,
+                created: 0,
+                failed: 0,
+                skipped: 1,
+            },
+            "one record was unreadable".into(),
+        );
+
+        assert!(!result.is_completed());
+        assert!(result.is_partial());
+        assert!(!result.is_cancelled());
+        assert!(result.truncated);
     }
 
     // =========================================================================
