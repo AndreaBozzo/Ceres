@@ -378,7 +378,7 @@ The exact harvest behavior depends on the portal client:
 
 - CKAN clients can use modified-since filters and adaptive page sizing
 - DCAT udata clients stream paginated JSON-LD catalog pages and resolve multilingual fields according to the configured language
-- SPARQL DCAT clients page through the catalog with `LIMIT`/`OFFSET` queries, deduplicate by dataset URI, and pick localized titles/descriptions by language preference (requested language > sibling language > English > untagged)
+- SPARQL DCAT clients use publisher-bounded pages, with a keyset cursor for `data.europa.eu`, and deduplicate by dataset URI. Dataset metadata and distributions are fetched in separate bounded `VALUES` phases, preserving resource title, format, media type, and download/access URL without multiplying the pagination query. Localized titles/descriptions follow the configured language preference (requested language > sibling language > English > untagged).
 
 ## Adaptive Page Size
 

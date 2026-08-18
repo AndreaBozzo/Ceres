@@ -143,25 +143,28 @@ fn non_blank(value: &str) -> Option<String> {
 
 /// Reads the first present string value among `keys` from a JSON object.
 ///
-/// Accepts a plain string, or a JSON-LD language object `{"@value": "..."}`,
-/// returning the first match that is not blank, trimmed.
+/// Accepts a plain string, a JSON-LD language object `{"@value": "..."}`, or
+/// an array of either shape, returning the first match that is not blank,
+/// trimmed. JSON-LD commonly uses an array when a property has multiple values.
 fn first_str(obj: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
-        match obj.get(*key) {
-            Some(Value::String(s)) => {
-                if let Some(value) = non_blank(s) {
-                    return Some(value);
-                }
-            }
-            Some(Value::Object(o)) => {
-                if let Some(value) = o.get("@value").and_then(Value::as_str).and_then(non_blank) {
-                    return Some(value);
-                }
-            }
-            _ => {}
+        if let Some(value) = obj.get(*key).and_then(json_string_value) {
+            return Some(value);
         }
     }
     None
+}
+
+fn json_string_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => non_blank(value),
+        Value::Object(object) => object
+            .get("@value")
+            .and_then(Value::as_str)
+            .and_then(non_blank),
+        Value::Array(values) => values.iter().find_map(json_string_value),
+        _ => None,
+    }
 }
 
 /// Reads the first present value among `keys`, additionally accepting a JSON-LD
@@ -172,19 +175,23 @@ fn first_str(obj: &Value, keys: &[&str]) -> Option<String> {
 /// `@value`-only reader silently drops them.
 fn first_ref(obj: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
-        if let Some(value) = first_str(obj, &[key]) {
+        if let Some(value) = obj.get(*key).and_then(json_reference_value) {
             return Some(value);
-        }
-        if let Some(id) = obj
-            .get(*key)
-            .and_then(|v| v.get("@id"))
-            .and_then(Value::as_str)
-            .and_then(non_blank)
-        {
-            return Some(id);
         }
     }
     None
+}
+
+fn json_reference_value(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(object) => object
+            .get("@id")
+            .and_then(Value::as_str)
+            .and_then(non_blank)
+            .or_else(|| json_string_value(value)),
+        Value::Array(values) => values.iter().find_map(json_reference_value),
+        _ => json_string_value(value),
+    }
 }
 
 /// Reduces a controlled-vocabulary format URI to its final segment.
@@ -784,6 +791,35 @@ mod tests {
         assert_eq!(r.format.as_deref(), Some("GeoJSON"));
         assert_eq!(r.url.as_deref(), Some("https://example.org/data.geojson"));
         assert!(r.fields.is_empty());
+    }
+
+    #[test]
+    fn dcat_array_valued_distribution_fields_use_the_first_informative_value() {
+        let metadata = json!({
+            "distribution": [{
+                "dct:title": [
+                    {"@value": "Preferred download", "@language": "en"},
+                    {"@value": "Téléchargement", "@language": "fr"}
+                ],
+                "dct:format": [
+                    {"@id": "http://publications.europa.eu/resource/authority/file-type/CSV"},
+                    {"@id": "http://publications.europa.eu/resource/authority/file-type/TSV"}
+                ],
+                "dcat:downloadURL": [
+                    {"@id": "https://example.org/data.csv"},
+                    {"@id": "https://mirror.example.org/data.csv"}
+                ]
+            }]
+        });
+
+        let schema = DatasetSchema::from_metadata(&metadata);
+        let resource = &schema.resources[0];
+        assert_eq!(resource.name.as_deref(), Some("Preferred download"));
+        assert_eq!(resource.format.as_deref(), Some("CSV"));
+        assert_eq!(
+            resource.url.as_deref(),
+            Some("https://example.org/data.csv")
+        );
     }
 
     #[test]

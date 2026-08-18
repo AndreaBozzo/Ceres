@@ -12,9 +12,12 @@
 //! - `dcat:Dataset` for dataset type
 //! - `dct:title`, `dct:description`, `dct:identifier`, `dct:modified` for fields
 //!
-//! Pagination uses `LIMIT`/`OFFSET` in the SPARQL query.
+//! Full harvests use publisher-bounded pages or a keyset cursor for
+//! `data.europa.eu`. Dataset fields and one-to-many distributions are fetched in
+//! separate bounded `VALUES` phases so resource detail does not inflate the
+//! pagination query.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use ceres_core::HttpConfig;
@@ -116,11 +119,16 @@ struct SparqlResults {
 /// A single SPARQL value in a binding row.
 #[derive(Debug, Deserialize)]
 struct SparqlValue {
+    /// RDF term kind (`uri`, `literal`, `typed-literal`, or `bnode`).
+    #[serde(rename = "type")]
+    term_type: Option<String>,
     /// The RDF term value.
     value: String,
     /// Language tag for literals (e.g., `"en"`, `"nb"`).
     #[serde(rename = "xml:lang")]
     lang: Option<String>,
+    /// Datatype IRI for typed literals.
+    datatype: Option<String>,
 }
 
 /// A harvest partition — a subset of the catalog bounded by publisher.
@@ -702,8 +710,9 @@ impl SparqlDcatClient {
     /// `dct:publisher`, so it covers the whole graph. Phase 2 fetches
     /// title/description/identifier/modified for each batch of URIs via a bounded
     /// `VALUES` query (near-instant; the full-metadata keyset query times out).
-    ///
-    /// Note: this does not retrieve the full JSON-LD `@graph` (distributions etc.).
+    /// Phase 3 uses a separate bounded `VALUES` query for distributions, keeping
+    /// their one-to-many rows out of the dataset metadata query while preserving
+    /// resource detail in the stored metadata.
     fn paginate_sparql_keyset_stream(&self) -> BoxStream<'_, Result<Vec<DcatDataset>, AppError>> {
         struct KeysetState {
             /// Last dataset URI seen (the seek cursor); empty before the first page.
@@ -795,7 +804,10 @@ impl SparqlDcatClient {
         }
         let query = self.build_values_metadata_query(uris);
         let bindings = self.execute_query_with_retry(&query).await?;
-        Ok(self.bindings_to_datasets(bindings))
+        let mut datasets = self.bindings_to_datasets(bindings);
+        self.enrich_datasets_with_distributions(&mut datasets)
+            .await?;
+        Ok(datasets)
     }
 
     /// [`execute_query`](Self::execute_query) with bounded retry + exponential
@@ -868,6 +880,185 @@ impl SparqlDcatClient {
                OPTIONAL {{ ?dataset dct:modified ?modified }}\n\
              }}"
         )
+    }
+
+    /// Adds DCAT distributions to the raw metadata of a bounded dataset page.
+    ///
+    /// Distribution properties are intentionally fetched separately from title
+    /// and description metadata: joining the one-to-many distribution graph into
+    /// the metadata query multiplies rows and makes large endpoints time out.
+    async fn enrich_datasets_with_distributions(
+        &self,
+        datasets: &mut [DcatDataset],
+    ) -> Result<(), AppError> {
+        let uris: Vec<String> = datasets
+            .iter()
+            .map(|dataset| dataset.id_uri.clone())
+            .filter(|uri| is_safe_iri(uri))
+            .collect();
+        if uris.is_empty() {
+            return Ok(());
+        }
+
+        let mut by_dataset: HashMap<String, Vec<Value>> = HashMap::new();
+        for batch in uris.chunks(VALUES_BATCH_SIZE) {
+            let query = self.build_values_distribution_query(batch);
+            let bindings = self.execute_query_with_retry(&query).await?;
+            for (dataset_uri, distributions) in self.distribution_bindings_to_metadata(bindings) {
+                by_dataset
+                    .entry(dataset_uri)
+                    .or_default()
+                    .extend(distributions);
+            }
+        }
+
+        for dataset in datasets {
+            let Some(distributions) = by_dataset.remove(&dataset.id_uri) else {
+                continue;
+            };
+            let Some(raw) = dataset.raw.as_object_mut() else {
+                tracing::warn!(
+                    dataset = %dataset.id_uri,
+                    "SPARQL distribution metadata could not be attached to a non-object payload"
+                );
+                continue;
+            };
+            raw.insert("distribution".to_string(), Value::Array(distributions));
+        }
+
+        Ok(())
+    }
+
+    /// Builds the third-phase query for distributions belonging to a URI batch.
+    fn build_values_distribution_query(&self, uris: &[String]) -> String {
+        let values = uris
+            .iter()
+            .filter(|uri| is_safe_iri(uri))
+            .map(|uri| format!("<{uri}>"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!(
+            "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+             PREFIX dct:  <http://purl.org/dc/terms/>\n\
+             \n\
+             SELECT DISTINCT ?dataset ?distribution ?distributionTitle \
+               ?distributionDescription ?format ?mediaType ?downloadURL ?accessURL\n\
+             WHERE {{\n\
+               VALUES ?dataset {{ {values} }}\n\
+               ?dataset dcat:distribution ?distribution .\n\
+               OPTIONAL {{ ?distribution dct:title ?distributionTitle }}\n\
+               OPTIONAL {{ ?distribution dct:description ?distributionDescription }}\n\
+               OPTIONAL {{ ?distribution dct:format ?format }}\n\
+               OPTIONAL {{ ?distribution dcat:mediaType ?mediaType }}\n\
+               OPTIONAL {{ ?distribution dcat:downloadURL ?downloadURL }}\n\
+               OPTIONAL {{ ?distribution dcat:accessURL ?accessURL }}\n\
+             }}"
+        )
+    }
+
+    /// Converts flat SPARQL distribution rows into inline DCAT metadata nodes.
+    ///
+    /// Multiple OPTIONAL values can produce repeated rows. Grouping by dataset
+    /// and distribution keeps one stable node per distribution while preserving
+    /// every distinct value, with the preferred-language literal first.
+    fn distribution_bindings_to_metadata(
+        &self,
+        bindings: Vec<HashMap<String, SparqlValue>>,
+    ) -> HashMap<String, Vec<Value>> {
+        let mut grouped: BTreeMap<(String, String), Vec<HashMap<String, SparqlValue>>> =
+            BTreeMap::new();
+        for binding in bindings {
+            let Some(dataset_uri) = binding.get("dataset").map(|value| value.value.clone()) else {
+                continue;
+            };
+            let Some(distribution_id) =
+                binding.get("distribution").map(|value| value.value.clone())
+            else {
+                continue;
+            };
+            grouped
+                .entry((dataset_uri, distribution_id))
+                .or_default()
+                .push(binding);
+        }
+
+        let mut by_dataset: HashMap<String, Vec<Value>> = HashMap::new();
+        for ((dataset_uri, distribution_id), rows) in grouped {
+            let mut node = serde_json::Map::new();
+            let is_named_iri = rows.iter().any(|row| {
+                row.get("distribution").is_some_and(|value| {
+                    value.term_type.as_deref() == Some("uri") && value.value == distribution_id
+                })
+            });
+            if is_named_iri && is_safe_iri(&distribution_id) {
+                node.insert("@id".to_string(), json!(distribution_id));
+            }
+
+            if let Some(value) = self.preferred_literal_metadata(&rows, "distributionTitle") {
+                node.insert("dct:title".to_string(), value);
+            }
+            if let Some(value) = self.preferred_literal_metadata(&rows, "distributionDescription") {
+                node.insert("dct:description".to_string(), value);
+            }
+
+            for (binding_key, metadata_key) in [
+                ("format", "dct:format"),
+                ("mediaType", "dcat:mediaType"),
+                ("downloadURL", "dcat:downloadURL"),
+                ("accessURL", "dcat:accessURL"),
+            ] {
+                if let Some(value) = self.reference_metadata(&rows, binding_key) {
+                    node.insert(metadata_key.to_string(), value);
+                }
+            }
+
+            by_dataset
+                .entry(dataset_uri)
+                .or_default()
+                .push(Value::Object(node));
+        }
+
+        by_dataset
+    }
+
+    /// Collects all distinct language-tagged values, ordered so the configured
+    /// language remains the first value consumed by the normalized schema.
+    fn preferred_literal_metadata(
+        &self,
+        rows: &[HashMap<String, SparqlValue>],
+        key: &str,
+    ) -> Option<Value> {
+        let mut values: Vec<&SparqlValue> = rows
+            .iter()
+            .filter_map(|row| row.get(key))
+            .filter(|value| !value.value.trim().is_empty())
+            .collect();
+        values.sort_by(|a, b| {
+            self.lang_rank(b.lang.as_deref())
+                .cmp(&self.lang_rank(a.lang.as_deref()))
+                .then_with(|| a.lang.cmp(&b.lang))
+                .then_with(|| a.value.cmp(&b.value))
+        });
+        values.dedup_by(|a, b| a.lang == b.lang && a.value == b.value);
+        collapse_json_values(values.into_iter().map(sparql_literal_to_json_ld))
+    }
+
+    /// Collects all distinct RDF references/literals for one distribution
+    /// property. SPARQL OPTIONAL joins can repeat a value many times, so the raw
+    /// metadata is deduplicated before it is persisted.
+    fn reference_metadata(
+        &self,
+        rows: &[HashMap<String, SparqlValue>],
+        key: &str,
+    ) -> Option<Value> {
+        let mut values: Vec<&SparqlValue> = rows
+            .iter()
+            .filter_map(|row| row.get(key))
+            .filter(|value| !value.value.trim().is_empty())
+            .collect();
+        values.sort_by(|a, b| a.value.cmp(&b.value).then_with(|| a.lang.cmp(&b.lang)));
+        values.dedup_by(|a, b| a.lang == b.lang && a.value == b.value);
+        collapse_json_values(values.into_iter().map(sparql_reference_to_json_ld))
     }
 
     #[allow(dead_code)]
@@ -1096,7 +1287,10 @@ impl SparqlDcatClient {
         );
 
         let bindings = self.execute_query(&query).await?;
-        Ok(self.bindings_to_datasets(bindings))
+        let mut datasets = self.bindings_to_datasets(bindings);
+        self.enrich_datasets_with_distributions(&mut datasets)
+            .await?;
+        Ok(datasets)
     }
 
     // =========================================================================
@@ -1170,7 +1364,19 @@ impl SparqlDcatClient {
             }
 
             let count = bindings.len();
-            let datasets = self.bindings_to_datasets(bindings);
+            let mut datasets = self.bindings_to_datasets(bindings);
+            if let Err(error) = self.enrich_datasets_with_distributions(&mut datasets).await {
+                if all_datasets.is_empty() {
+                    return Err(error);
+                }
+                tracing::warn!(
+                    offset,
+                    collected = all_datasets.len(),
+                    error = %error,
+                    "SPARQL distribution fetch failed; returning partial results"
+                );
+                break;
+            }
 
             tracing::debug!(
                 offset,
@@ -1607,12 +1813,51 @@ fn binding_to_json(binding: &HashMap<String, SparqlValue>) -> Value {
     for (key, val) in binding {
         let mut entry = serde_json::Map::new();
         entry.insert("value".to_string(), json!(val.value));
+        if let Some(ref term_type) = val.term_type {
+            entry.insert("type".to_string(), json!(term_type));
+        }
         if let Some(ref lang) = val.lang {
             entry.insert("xml:lang".to_string(), json!(lang));
+        }
+        if let Some(ref datatype) = val.datatype {
+            entry.insert("datatype".to_string(), json!(datatype));
         }
         map.insert(key.clone(), Value::Object(entry));
     }
     Value::Object(map)
+}
+
+/// Represents a SPARQL literal in the JSON-LD shape understood by the shared
+/// DCAT resource normalizer, retaining its language tag when present.
+fn sparql_literal_to_json_ld(value: &SparqlValue) -> Value {
+    if let Some(language) = value.lang.as_deref() {
+        json!({"@value": value.value, "@language": language})
+    } else if let Some(datatype) = value.datatype.as_deref() {
+        json!({"@value": value.value, "@type": datatype})
+    } else {
+        json!(value.value)
+    }
+}
+
+/// Represents an RDF reference as a JSON-LD node reference when it is a safe
+/// HTTP(S) IRI, otherwise preserving the endpoint's literal value verbatim.
+fn sparql_reference_to_json_ld(value: &SparqlValue) -> Value {
+    if value.term_type.as_deref() == Some("uri") && is_safe_iri(&value.value) {
+        json!({"@id": value.value})
+    } else {
+        sparql_literal_to_json_ld(value)
+    }
+}
+
+/// Keeps a single JSON-LD value scalar while preserving multiple source values
+/// as an array. Callers provide a deterministic, preference-aware order.
+fn collapse_json_values(values: impl Iterator<Item = Value>) -> Option<Value> {
+    let mut values: Vec<Value> = values.collect();
+    match values.len() {
+        0 => None,
+        1 => values.pop(),
+        _ => Some(Value::Array(values)),
+    }
 }
 
 // =============================================================================
@@ -1707,6 +1952,98 @@ mod tests {
         assert!(q.contains("<http://ok.example/d/1>"));
         assert!(!q.contains("d 2"));
         assert!(!q.contains("ftp://"));
+    }
+
+    #[test]
+    fn values_distribution_query_is_bounded_and_keeps_one_to_many_rows_separate() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let uris = vec![
+            "http://example.org/d/1".to_string(),
+            "https://example.org/d/2".to_string(),
+        ];
+        let q = client.build_values_distribution_query(&uris);
+
+        assert!(q.contains("VALUES ?dataset {"));
+        assert!(q.contains("<http://example.org/d/1>"));
+        assert!(q.contains("<https://example.org/d/2>"));
+        assert!(q.contains("?dataset dcat:distribution ?distribution"));
+        assert!(q.contains("?distribution dcat:downloadURL ?downloadURL"));
+        assert!(q.contains("?distribution dcat:accessURL ?accessURL"));
+        assert!(!q.contains("dct:title ?title"));
+        assert!(!q.contains("OFFSET") && !q.contains("ORDER BY"));
+    }
+
+    #[test]
+    fn distribution_bindings_become_language_aware_inline_dcat_nodes() {
+        let client = SparqlDcatClient::new("https://example.org", "nb", None).unwrap();
+        let json = r#"{
+            "results": {
+                "bindings": [
+                    {
+                        "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                        "distribution": {"type": "uri", "value": "https://example.org/dist/a"},
+                        "distributionTitle": {"type": "literal", "value": "English", "xml:lang": "en"},
+                        "format": {"type": "uri", "value": "http://publications.europa.eu/resource/authority/file-type/CSV"},
+                        "downloadURL": {"type": "uri", "value": "https://example.org/a.csv"}
+                    },
+                    {
+                        "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                        "distribution": {"type": "uri", "value": "https://example.org/dist/a"},
+                        "distributionTitle": {"type": "literal", "value": "Norsk", "xml:lang": "nb"},
+                        "format": {"type": "uri", "value": "http://publications.europa.eu/resource/authority/file-type/CSV"},
+                        "downloadURL": {"type": "uri", "value": "https://mirror.example.org/a.csv"}
+                    },
+                    {
+                        "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                        "distribution": {"type": "bnode", "value": "blank-1"},
+                        "mediaType": {"type": "literal", "value": "application/json"},
+                        "accessURL": {"type": "uri", "value": "https://example.org/api"}
+                    }
+                ]
+            }
+        }"#;
+        let response: SparqlResponse = serde_json::from_str(json).unwrap();
+        let metadata = client.distribution_bindings_to_metadata(response.results.bindings);
+        let distributions = &metadata["https://example.org/d/1"];
+        let named = distributions
+            .iter()
+            .find(|distribution| distribution.get("@id").is_some())
+            .unwrap();
+        let blank = distributions
+            .iter()
+            .find(|distribution| distribution.get("@id").is_none())
+            .unwrap();
+
+        assert_eq!(distributions.len(), 2);
+        assert_eq!(
+            named["dct:title"][0],
+            json!({"@value": "Norsk", "@language": "nb"})
+        );
+        assert_eq!(
+            named["dct:title"][1],
+            json!({"@value": "English", "@language": "en"})
+        );
+        assert_eq!(
+            named["dct:format"],
+            json!({"@id": "http://publications.europa.eu/resource/authority/file-type/CSV"})
+        );
+        assert_eq!(
+            named["dcat:downloadURL"][0],
+            json!({"@id": "https://example.org/a.csv"})
+        );
+        assert_eq!(
+            named["dcat:downloadURL"][1],
+            json!({"@id": "https://mirror.example.org/a.csv"})
+        );
+        assert!(
+            blank.get("@id").is_none(),
+            "endpoint-local blank-node identifiers must not leak into persisted metadata"
+        );
+        assert_eq!(blank["dcat:mediaType"], "application/json");
+        assert_eq!(
+            blank["dcat:accessURL"],
+            json!({"@id": "https://example.org/api"})
+        );
     }
 
     #[test]
@@ -1839,15 +2176,19 @@ mod tests {
         b.insert(
             "dataset".to_string(),
             SparqlValue {
+                term_type: Some("uri".to_string()),
                 value: uri.to_string(),
                 lang: None,
+                datatype: None,
             },
         );
         b.insert(
             key.to_string(),
             SparqlValue {
+                term_type: Some("literal".to_string()),
                 value: value.to_string(),
                 lang: lang.map(str::to_string),
+                datatype: None,
             },
         );
         b
@@ -2123,22 +2464,28 @@ mod tests {
         binding.insert(
             "dataset".to_string(),
             SparqlValue {
+                term_type: Some("uri".to_string()),
                 value: "https://example.org/d/1".to_string(),
                 lang: None,
+                datatype: None,
             },
         );
         binding.insert(
             "title".to_string(),
             SparqlValue {
+                term_type: Some("literal".to_string()),
                 value: "Test Title".to_string(),
                 lang: Some("en".to_string()),
+                datatype: None,
             },
         );
 
         let json = binding_to_json(&binding);
         let obj = json.as_object().unwrap();
         assert_eq!(obj["dataset"]["value"], "https://example.org/d/1");
+        assert_eq!(obj["dataset"]["type"], "uri");
         assert_eq!(obj["title"]["value"], "Test Title");
+        assert_eq!(obj["title"]["type"], "literal");
         assert_eq!(obj["title"]["xml:lang"], "en");
     }
 
