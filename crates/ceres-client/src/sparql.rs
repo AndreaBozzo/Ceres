@@ -1076,18 +1076,118 @@ impl SparqlDcatClient {
             )));
         }
         Self::ensure_partitionable_distributions(dataset_uri, &bindings)?;
+        let mut distribution_iris = bindings
+            .iter()
+            .filter_map(|binding| binding.get("distribution"))
+            .map(|distribution| distribution.value.clone())
+            .collect::<Vec<_>>();
+        distribution_iris.sort_unstable();
+        distribution_iris.dedup();
 
         for property in DISTRIBUTION_PROPERTIES {
             let query =
                 self.build_single_dataset_distribution_property_query(dataset_uri, property.iri);
-            let property_bindings = self.execute_query_with_retry(&query).await?;
-            if property_bindings.len() >= DATA_EUROPA_RESULT_CAP {
-                return Err(AppError::ClientError(format!(
-                    "SPARQL distribution property {} for {dataset_uri} reached the endpoint row cap",
-                    property.iri
-                )));
-            }
+            let property_bindings = match self.execute_query_with_retry(&query).await {
+                Ok(property_bindings) if property_bindings.len() < DATA_EUROPA_RESULT_CAP => {
+                    property_bindings
+                }
+                Ok(property_bindings) => {
+                    tracing::warn!(
+                        dataset = dataset_uri,
+                        predicate = property.iri,
+                        rows = property_bindings.len(),
+                        distributions = distribution_iris.len(),
+                        "SPARQL distribution property reached the endpoint cap; partitioning by distribution"
+                    );
+                    self.fetch_distribution_property_batches(
+                        dataset_uri,
+                        property.iri,
+                        &distribution_iris,
+                    )
+                    .await?
+                }
+                Err(error) if is_server_overload(&error) => {
+                    tracing::warn!(
+                        dataset = dataset_uri,
+                        predicate = property.iri,
+                        distributions = distribution_iris.len(),
+                        error = %error,
+                        "SPARQL distribution property was rejected; partitioning by distribution"
+                    );
+                    self.fetch_distribution_property_batches(
+                        dataset_uri,
+                        property.iri,
+                        &distribution_iris,
+                    )
+                    .await?
+                }
+                Err(error) => return Err(error),
+            };
             bindings.extend(property_bindings);
+        }
+
+        Ok(bindings)
+    }
+
+    /// Fetches one property through bounded distribution-IRI batches after the
+    /// whole-dataset property query reaches the endpoint cap or is rejected.
+    async fn fetch_distribution_property_batches(
+        &self,
+        dataset_uri: &str,
+        predicate: &str,
+        distribution_iris: &[String],
+    ) -> Result<Vec<HashMap<String, SparqlValue>>, AppError> {
+        let mut bindings = Vec::new();
+        let mut pending_batches: VecDeque<Vec<String>> = distribution_iris
+            .chunks(VALUES_BATCH_SIZE)
+            .map(<[String]>::to_vec)
+            .collect();
+
+        while let Some(mut batch) = pending_batches.pop_front() {
+            let query =
+                self.build_distribution_property_values_query(dataset_uri, predicate, &batch);
+            match self.execute_query_with_retry(&query).await {
+                Ok(property_bindings) if property_bindings.len() < DATA_EUROPA_RESULT_CAP => {
+                    bindings.extend(property_bindings);
+                }
+                Ok(property_bindings) if batch.len() > 1 => {
+                    let second_half = batch.split_off(batch.len() / 2);
+                    tracing::warn!(
+                        dataset = dataset_uri,
+                        predicate,
+                        rows = property_bindings.len(),
+                        original_batch_size = batch.len() + second_half.len(),
+                        "SPARQL distribution-property batch reached the endpoint cap; splitting"
+                    );
+                    pending_batches.push_front(second_half);
+                    pending_batches.push_front(batch);
+                }
+                Ok(_) => {
+                    return Err(AppError::ClientError(format!(
+                        "SPARQL distribution property {predicate} for {} in {dataset_uri} reached the endpoint row cap",
+                        batch[0]
+                    )));
+                }
+                Err(error) if is_server_overload(&error) && batch.len() > 1 => {
+                    let second_half = batch.split_off(batch.len() / 2);
+                    tracing::warn!(
+                        dataset = dataset_uri,
+                        predicate,
+                        error = %error,
+                        original_batch_size = batch.len() + second_half.len(),
+                        "SPARQL distribution-property batch was rejected; splitting"
+                    );
+                    pending_batches.push_front(second_half);
+                    pending_batches.push_front(batch);
+                }
+                Err(error) if is_server_overload(&error) => {
+                    return Err(AppError::ClientError(format!(
+                        "SPARQL distribution property {predicate} for {} in {dataset_uri} could not be fetched within endpoint limits: {error}",
+                        batch[0]
+                    )));
+                }
+                Err(error) => return Err(error),
+            }
         }
 
         Ok(bindings)
@@ -1100,9 +1200,10 @@ impl SparqlDcatClient {
         bindings: &[HashMap<String, SparqlValue>],
     ) -> Result<(), AppError> {
         if bindings.iter().any(|binding| {
-            binding
-                .get("distribution")
-                .is_some_and(|distribution| distribution.term_type.as_deref() != Some("uri"))
+            binding.get("distribution").is_none_or(|distribution| {
+                distribution.term_type.as_deref() != Some("uri")
+                    || !is_safe_iri(&distribution.value)
+            })
         }) {
             return Err(AppError::ClientError(format!(
                 "SPARQL distribution fallback for {dataset_uri} requires named distribution IRIs"
@@ -1163,6 +1264,33 @@ impl SparqlDcatClient {
              SELECT DISTINCT ?dataset ?distribution ?predicate ?value\n\
              WHERE {{\n\
                VALUES ?dataset {{ <{dataset_uri}> }}\n\
+               ?dataset dcat:distribution ?distribution .\n\
+               ?distribution <{predicate}> ?value .\n\
+               BIND(<{predicate}> AS ?predicate)\n\
+             }}"
+        )
+    }
+
+    /// Builds a bounded property query for a known subset of named
+    /// distributions belonging to one dataset.
+    fn build_distribution_property_values_query(
+        &self,
+        dataset_uri: &str,
+        predicate: &str,
+        distribution_iris: &[String],
+    ) -> String {
+        let distributions = distribution_iris
+            .iter()
+            .filter(|distribution| is_safe_iri(distribution))
+            .map(|distribution| format!("<{distribution}>"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!(
+            "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+             SELECT DISTINCT ?dataset ?distribution ?predicate ?value\n\
+             WHERE {{\n\
+               VALUES ?dataset {{ <{dataset_uri}> }}\n\
+               VALUES ?distribution {{ {distributions} }}\n\
                ?dataset dcat:distribution ?distribution .\n\
                ?distribution <{predicate}> ?value .\n\
                BIND(<{predicate}> AS ?predicate)\n\
@@ -2245,6 +2373,23 @@ mod tests {
             assert!(query.contains(&format!("BIND(<{}> AS ?predicate)", property.iri)));
             assert!(!query.contains("OPTIONAL"));
         }
+
+        let distributions = vec![
+            "https://example.org/distribution/1".to_string(),
+            "https://example.org/distribution/2".to_string(),
+        ];
+        let query = client.build_distribution_property_values_query(
+            dataset,
+            DISTRIBUTION_PROPERTIES[0].iri,
+            &distributions,
+        );
+        assert!(query.contains("VALUES ?distribution {"));
+        assert!(query.contains("<https://example.org/distribution/1>"));
+        assert!(query.contains("<https://example.org/distribution/2>"));
+        assert!(query.contains(&format!(
+            "?distribution <{}> ?value",
+            DISTRIBUTION_PROPERTIES[0].iri
+        )));
     }
 
     #[test]
@@ -2922,6 +3067,27 @@ mod tests {
         let metadata = client.distribution_bindings_to_metadata(bindings);
 
         assert_eq!(metadata[dataset].len(), 10_631);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires network access to data.europa.eu"]
+    async fn data_europa_single_property_cap_smoke() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let dataset = "http://data.europa.eu/88u/dataset/643671587b87c77bffaae082";
+        let base_query = client.build_single_dataset_distribution_base_query(dataset);
+        let expected = client
+            .execute_query_with_retry(&base_query)
+            .await
+            .unwrap()
+            .len();
+        let bindings = client
+            .fetch_partitioned_distribution_bindings(dataset)
+            .await
+            .unwrap();
+        let metadata = client.distribution_bindings_to_metadata(bindings);
+
+        assert!(expected > 0);
+        assert_eq!(metadata[dataset].len(), expected);
     }
 
     #[tokio::test]
