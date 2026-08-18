@@ -7,6 +7,7 @@
 use crate::integration::common::{MockDatasetStore, MockPortalClientFactory, MockPortalData};
 use ceres_core::HarvestConfig;
 use ceres_core::harvest::HarvestService;
+use tokio_util::sync::CancellationToken;
 
 const TEST_PORTAL_URL: &str = "https://test-portal.example.com";
 
@@ -363,4 +364,76 @@ async fn test_harvest_dry_run_detects_unchanged() {
         sync_history.is_empty(),
         "No sync status should be recorded in dry-run mode"
     );
+}
+
+#[tokio::test]
+async fn partial_stream_saves_later_progress_without_marking_stale_or_advancing_sync() {
+    let datasets = vec![
+        MockPortalData {
+            id: "readable-1".into(),
+            title: "Readable 1".into(),
+            description: None,
+        },
+        MockPortalData {
+            id: "readable-2".into(),
+            title: "Readable 2".into(),
+            description: None,
+        },
+    ];
+    let store = MockDatasetStore::new();
+    let factory = MockPortalClientFactory::new(datasets).with_terminal_skip_count(1);
+    let service = HarvestService::with_config(
+        store.clone(),
+        factory,
+        HarvestConfig {
+            force_full_sync: true,
+            ..Default::default()
+        },
+    );
+
+    let result = service
+        .sync_portal_cancellable(TEST_PORTAL_URL, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(result.is_partial());
+    assert_eq!(result.stats.created, 2);
+    assert_eq!(result.stats.skipped, 1);
+    assert!(store.contains(TEST_PORTAL_URL, "readable-1"));
+    assert!(store.contains(TEST_PORTAL_URL, "readable-2"));
+    assert_eq!(store.stale_mark_calls(), 0);
+    let history = store.sync_history.lock().unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].sync_status, "partial");
+}
+
+#[tokio::test]
+async fn dry_run_preserves_partial_stream_status() {
+    let datasets = vec![MockPortalData {
+        id: "readable".into(),
+        title: "Readable".into(),
+        description: None,
+    }];
+    let store = MockDatasetStore::new();
+    let factory = MockPortalClientFactory::new(datasets).with_terminal_skip_count(1);
+    let service = HarvestService::with_config(
+        store.clone(),
+        factory,
+        HarvestConfig {
+            dry_run: true,
+            force_full_sync: true,
+            ..Default::default()
+        },
+    );
+
+    let result = service
+        .sync_portal_cancellable(TEST_PORTAL_URL, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(result.is_partial());
+    assert_eq!(result.stats.created, 1);
+    assert_eq!(result.stats.skipped, 1);
+    assert!(store.is_empty());
+    assert!(store.sync_history.lock().unwrap().is_empty());
 }

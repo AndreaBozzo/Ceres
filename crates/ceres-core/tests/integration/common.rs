@@ -4,7 +4,10 @@
 //! `HarvestService` and `SearchService` in isolation.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use ceres_core::job::{CreateJobRequest, HarvestJob, JobStatus};
 use ceres_core::job_queue::JobQueue;
@@ -96,6 +99,7 @@ pub struct MockPortalClient {
     #[allow(dead_code)]
     portal_url: String,
     datasets: Vec<MockPortalData>,
+    terminal_skip_count: usize,
 }
 
 impl MockPortalClient {
@@ -103,7 +107,13 @@ impl MockPortalClient {
         Self {
             portal_url: portal_url.to_string(),
             datasets,
+            terminal_skip_count: 0,
         }
+    }
+
+    fn with_terminal_skip_count(mut self, count: usize) -> Self {
+        self.terminal_skip_count = count;
+        self
     }
 }
 
@@ -178,6 +188,17 @@ impl PortalClient for MockPortalClient {
         Ok(self.datasets.clone())
     }
 
+    fn search_all_datasets_stream(&self) -> BoxStream<'_, Result<Vec<Self::PortalData>, AppError>> {
+        let mut pages = vec![Ok(self.datasets.clone())];
+        if self.terminal_skip_count > 0 {
+            pages.push(Err(AppError::PartialHarvest {
+                skipped: self.terminal_skip_count,
+                reason: "mock portal omitted unreadable records".into(),
+            }));
+        }
+        Box::pin(futures::stream::iter(pages))
+    }
+
     async fn dataset_count(&self) -> Result<usize, AppError> {
         Ok(self.datasets.len())
     }
@@ -191,11 +212,20 @@ impl PortalClient for MockPortalClient {
 #[derive(Clone)]
 pub struct MockPortalClientFactory {
     datasets: Vec<MockPortalData>,
+    terminal_skip_count: usize,
 }
 
 impl MockPortalClientFactory {
     pub fn new(datasets: Vec<MockPortalData>) -> Self {
-        Self { datasets }
+        Self {
+            datasets,
+            terminal_skip_count: 0,
+        }
+    }
+
+    pub fn with_terminal_skip_count(mut self, count: usize) -> Self {
+        self.terminal_skip_count = count;
+        self
     }
 }
 
@@ -211,7 +241,8 @@ impl PortalClientFactory for MockPortalClientFactory {
         _sparql_endpoint: Option<&str>,
         _ogc_endpoint: Option<&str>,
     ) -> Result<Self::Client, AppError> {
-        Ok(MockPortalClient::new(portal_url, self.datasets.clone()))
+        Ok(MockPortalClient::new(portal_url, self.datasets.clone())
+            .with_terminal_skip_count(self.terminal_skip_count))
     }
 }
 
@@ -239,6 +270,7 @@ pub struct MockDatasetStore {
     datasets: Arc<Mutex<HashMap<(String, String), StoredDataset>>>,
     /// History of sync status records
     pub sync_history: Arc<Mutex<Vec<SyncStatusRecord>>>,
+    stale_mark_calls: Arc<AtomicUsize>,
 }
 
 /// Internal representation of a stored dataset.
@@ -253,6 +285,7 @@ impl MockDatasetStore {
         Self {
             datasets: Arc::new(Mutex::new(HashMap::new())),
             sync_history: Arc::new(Mutex::new(Vec::new())),
+            stale_mark_calls: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -284,6 +317,10 @@ impl MockDatasetStore {
             .unwrap()
             .get(&key)
             .map(|s| s.dataset.clone())
+    }
+
+    pub fn stale_mark_calls(&self) -> usize {
+        self.stale_mark_calls.load(Ordering::SeqCst)
     }
 }
 
@@ -367,6 +404,7 @@ impl DatasetStore for MockDatasetStore {
         _portal_url: &str,
         _seen_ids: &[String],
     ) -> Result<u64, AppError> {
+        self.stale_mark_calls.fetch_add(1, Ordering::SeqCst);
         Ok(0)
     }
 

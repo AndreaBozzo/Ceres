@@ -88,6 +88,8 @@ impl SyncMode {
 pub enum SyncStatus {
     /// Sync completed successfully with all datasets processed.
     Completed,
+    /// Sync saved valid progress but did not read the complete catalogue.
+    Partial,
     /// Sync was cancelled but partial progress was saved.
     Cancelled,
 }
@@ -97,6 +99,7 @@ impl SyncStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             SyncStatus::Completed => "completed",
+            SyncStatus::Partial => "partial",
             SyncStatus::Cancelled => "cancelled",
         }
     }
@@ -110,6 +113,11 @@ impl SyncStatus {
     pub fn is_cancelled(&self) -> bool {
         matches!(self, SyncStatus::Cancelled)
     }
+
+    /// Returns true if the sync saved progress from an incomplete catalogue.
+    pub fn is_partial(&self) -> bool {
+        matches!(self, SyncStatus::Partial)
+    }
 }
 
 /// Result of a sync operation including status and statistics.
@@ -121,6 +129,14 @@ pub struct SyncResult {
     pub stats: SyncStats,
     /// Optional message providing context (e.g., cancellation reason).
     pub message: Option<String>,
+    /// Set when the portal's dataset stream ended early, so what was persisted
+    /// is a prefix of the catalog rather than all of it.
+    ///
+    /// This is not a failure — the datasets that were read are good, and stale
+    /// marking is already withheld when anything failed — but it is not a clean
+    /// sync either. Without it a portal that yielded 3,100 of 171,098 datasets
+    /// reports exactly like one that has 3,100 datasets.
+    pub truncated: bool,
 }
 
 impl SyncResult {
@@ -130,6 +146,17 @@ impl SyncResult {
             status: SyncStatus::Completed,
             stats,
             message: None,
+            truncated: false,
+        }
+    }
+
+    /// Creates a partial sync result for a stream that ended early.
+    pub fn truncated(stats: SyncStats, message: String) -> Self {
+        Self {
+            status: SyncStatus::Partial,
+            stats,
+            message: Some(message),
+            truncated: true,
         }
     }
 
@@ -139,6 +166,7 @@ impl SyncResult {
             status: SyncStatus::Cancelled,
             stats,
             message: Some("Operation cancelled - partial progress saved".to_string()),
+            truncated: false,
         }
     }
 
@@ -150,6 +178,11 @@ impl SyncResult {
     /// Returns true if the sync was cancelled.
     pub fn is_cancelled(&self) -> bool {
         self.status.is_cancelled()
+    }
+
+    /// Returns true if the sync saved progress from an incomplete catalogue.
+    pub fn is_partial(&self) -> bool {
+        self.status.is_partial()
     }
 }
 
@@ -362,6 +395,9 @@ pub fn needs_reprocessing(
 pub enum PortalHarvestStatus {
     /// The portal completed normally.
     Success,
+    /// The portal harvested real datasets but its stream ended early, so the
+    /// catalog was only partly read.
+    Partial,
     /// The portal returned a fatal error, while the batch continued.
     Failed,
     /// The portal stopped after the batch cancellation token was triggered.
@@ -373,6 +409,7 @@ impl PortalHarvestStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Success => "success",
+            Self::Partial => "partial",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
         }
@@ -457,6 +494,29 @@ impl PortalHarvestResult {
         }
     }
 
+    /// Creates a result for a portal whose stream ended before the catalog did.
+    ///
+    /// The datasets that were read are good, so this is not a failure — but it
+    /// is not a clean run either, and it counts toward the batch's partial exit
+    /// so a shrinking harvest cannot pass unnoticed.
+    pub fn truncated(
+        name: String,
+        url: String,
+        stats: SyncStats,
+        error: String,
+        duration_ms: u64,
+    ) -> Self {
+        Self {
+            portal_name: name,
+            portal_url: url,
+            stats,
+            status: PortalHarvestStatus::Partial,
+            duration_ms,
+            error_class: Some("truncated_stream".to_string()),
+            error: Some(error),
+        }
+    }
+
     /// Creates a cancelled harvest result with partial statistics.
     pub fn cancelled(name: String, url: String, stats: SyncStats, duration_ms: u64) -> Self {
         Self {
@@ -504,6 +564,14 @@ impl BatchHarvestSummary {
     /// Returns the count of successful harvests.
     pub fn successful_count(&self) -> usize {
         self.results.iter().filter(|r| r.is_success()).count()
+    }
+
+    /// Returns the count of portals whose stream ended early.
+    pub fn partial_count(&self) -> usize {
+        self.results
+            .iter()
+            .filter(|r| r.status == PortalHarvestStatus::Partial)
+            .count()
     }
 
     /// Returns the count of failed harvests.
@@ -877,6 +945,15 @@ mod tests {
         assert!(status.is_cancelled());
     }
 
+    #[test]
+    fn test_sync_status_partial() {
+        let status = SyncStatus::Partial;
+        assert_eq!(status.as_str(), "partial");
+        assert!(!status.is_completed());
+        assert!(status.is_partial());
+        assert!(!status.is_cancelled());
+    }
+
     // =========================================================================
     // SyncResult tests
     // =========================================================================
@@ -912,6 +989,25 @@ mod tests {
         assert!(result.message.is_some());
         assert!(result.message.unwrap().contains("cancelled"));
         assert_eq!(result.stats.total(), 8);
+    }
+
+    #[test]
+    fn a_truncated_sync_is_not_completed() {
+        let result = SyncResult::truncated(
+            SyncStats {
+                unchanged: 5,
+                updated: 0,
+                created: 0,
+                failed: 0,
+                skipped: 1,
+            },
+            "one record was unreadable".into(),
+        );
+
+        assert!(!result.is_completed());
+        assert!(result.is_partial());
+        assert!(!result.is_cancelled());
+        assert!(result.truncated);
     }
 
     // =========================================================================

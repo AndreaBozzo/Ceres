@@ -8,9 +8,42 @@ use futures::{StreamExt, stream::BoxStream};
 use reqwest::{Client, Url};
 use roxmltree::{Document, Node};
 use serde_json::{Value, json};
-use tokio::sync::OnceCell;
+use tokio::{sync::OnceCell, time::sleep};
 
-const PAGE_SIZE: usize = 100;
+/// Delay before each narrowing retry, growing with the attempt.
+///
+/// Narrowing multiplies requests exactly when a service is least able to serve
+/// them: a failing window costs four. Without a pause, a struggling backend gets
+/// four times the load and the client's own retries deepen the problem — which
+/// is what happened to `geocatalogue.fr`, whose Elasticsearch backend began
+/// failing under an hour of unbroken 100-record ISO windows.
+const NARROW_BACKOFF: &[Duration] = &[
+    Duration::from_secs(0),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+];
+
+/// Consecutive skipped records after which the catalogue is judged unwell.
+///
+/// One unreadable record is a record. Several in a row, at different offsets,
+/// is the service — and stepping through a failing catalogue one record at a
+/// time would issue four requests each for as long as it kept failing. Stopping
+/// reports a truncated harvest, which is honest and actionable, instead of
+/// hours of futile pressure on someone else's server.
+const MAX_CONSECUTIVE_SKIPS: usize = 3;
+
+/// Per-request budget for the largest window, scaled down as windows narrow.
+const WINDOW_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Window sizes tried in turn, largest first; the first is the normal page size.
+///
+/// A catalogue can serve almost everything and still crash on one record:
+/// `geocatalogue.fr` answers every 100-record window until `startPosition=3101`,
+/// where GeoNetwork returns HTTP 200 carrying a `NullPointerException`, while the
+/// same offset at 10 records succeeds. Narrowing isolates the poisoned record
+/// instead of abandoning the 168,000 that follow it.
+const PAGE_SIZE_LADDER: &[usize] = &[100, 25, 5, 1];
 const MAX_PAGES: usize = 100_000;
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 /// An `ExceptionReport` is a few hundred bytes. The error path gets its own,
@@ -37,6 +70,17 @@ enum CswProfile {
 }
 
 impl CswProfile {
+    /// The profile to try when this one cannot render a record.
+    ///
+    /// Dublin Core is mandatory in CSW 2.0.2, so it renders anything a
+    /// catalogue holds — at less depth than ISO, but present rather than lost.
+    fn alternate(self) -> Self {
+        match self {
+            Self::Iso => Self::DublinCore,
+            Self::DublinCore => Self::Iso,
+        }
+    }
+
     /// The `typeNames` / `namespace` / `outputSchema` triple this profile needs.
     fn query(self) -> [(&'static str, String); 3] {
         match self {
@@ -89,6 +133,10 @@ pub struct OgcRecordsClient {
     language: String,
     bindings: Arc<OnceCell<CswBindings>>,
     profile: Arc<OnceCell<CswProfile>>,
+    /// Delay before each narrowing retry. A field rather than a constant so the
+    /// tests can exercise the narrowing logic without waiting out the real
+    /// backoff; production always uses [`NARROW_BACKOFF`].
+    backoff: &'static [Duration],
 }
 
 impl OgcRecordsClient {
@@ -110,6 +158,7 @@ impl OgcRecordsClient {
             language: language.to_string(),
             bindings: Arc::new(OnceCell::new()),
             profile: Arc::new(OnceCell::new()),
+            backoff: NARROW_BACKOFF,
         })
     }
 
@@ -117,12 +166,14 @@ impl OgcRecordsClient {
         &self,
         mut url: Url,
         params: &[(&str, String)],
+        timeout: Duration,
     ) -> Result<String, AppError> {
         url.query_pairs_mut()
             .extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())));
         let response = self
             .client
             .get(url.clone())
+            .timeout(timeout)
             .send()
             .await
             .map_err(|error| AppError::ClientError(error.to_string()))?;
@@ -170,6 +221,7 @@ impl OgcRecordsClient {
                             ("version", "2.0.2".into()),
                             ("request", "GetCapabilities".into()),
                         ],
+                        WINDOW_TIMEOUT,
                     )
                     .await?;
                 parse_capabilities(&xml, &self.endpoint)
@@ -177,8 +229,23 @@ impl OgcRecordsClient {
             .await
     }
 
-    /// Fetches one page of records in `profile`.
-    async fn page_in(&self, start: usize, profile: CswProfile) -> Result<Page, AppError> {
+    /// Builds a client that does not wait between narrowing retries.
+    ///
+    /// The waiting is what protects a struggling service, not what makes the
+    /// narrowing correct, so the tests skip it and assert on the narrowing.
+    #[cfg(test)]
+    fn without_backoff(mut self) -> Self {
+        self.backoff = &[];
+        self
+    }
+
+    /// Fetches one window of `size` records in `profile`.
+    async fn page_in(
+        &self,
+        start: usize,
+        size: usize,
+        profile: CswProfile,
+    ) -> Result<Page, AppError> {
         let endpoint = self.bindings().await?.get_records.clone();
         let mut params = vec![
             ("service", "CSW".to_string()),
@@ -187,10 +254,14 @@ impl OgcRecordsClient {
             ("resultType", "results".to_string()),
             ("elementSetName", "full".to_string()),
             ("startPosition", start.to_string()),
-            ("maxRecords", PAGE_SIZE.to_string()),
+            ("maxRecords", size.to_string()),
         ];
         params.extend(profile.query());
-        let xml = self.bounded_get(endpoint, &params).await?;
+        // A one-record window has no business taking as long as a hundred, and
+        // waiting the full budget on each narrowing step is most of why a
+        // failing offset is slow to give up on.
+        let timeout = window_timeout(size);
+        let xml = self.bounded_get(endpoint, &params, timeout).await?;
         parse_get_records(&xml, self.base_url.as_str(), &self.language)
     }
 
@@ -202,11 +273,11 @@ impl OgcRecordsClient {
     /// the ISO request is made and the rejection is what selects Dublin Core.
     /// The choice is memoized, so the extra round trip happens at most once per
     /// client.
-    async fn page(&self, start: usize) -> Result<Page, AppError> {
+    async fn page(&self, start: usize, size: usize) -> Result<Page, AppError> {
         if let Some(profile) = self.profile.get() {
-            return self.page_in(start, *profile).await;
+            return self.page_in(start, size, *profile).await;
         }
-        match self.page_in(start, CswProfile::Iso).await {
+        match self.page_in(start, size, CswProfile::Iso).await {
             Ok(page) => {
                 let _ = self.profile.set(CswProfile::Iso);
                 Ok(page)
@@ -217,7 +288,7 @@ impl OgcRecordsClient {
                     %error,
                     "Catalogue rejected the ISO profile; retrying as Dublin Core"
                 );
-                let page = self.page_in(start, CswProfile::DublinCore).await?;
+                let page = self.page_in(start, size, CswProfile::DublinCore).await?;
                 let _ = self.profile.set(CswProfile::DublinCore);
                 Ok(page)
             }
@@ -225,11 +296,119 @@ impl OgcRecordsClient {
         }
     }
 
+    /// Fetches the window at `start`, narrowing on failure.
+    ///
+    /// Returns the page and the window size that produced it, so the caller can
+    /// tell a full window from a narrowed one. `Ok(None)` means even a
+    /// single-record window failed: that one record is unreadable and is skipped
+    /// rather than ending the catalogue.
+    async fn page_resiliently(&self, start: usize) -> Result<Option<(Page, usize)>, AppError> {
+        let mut last: Option<AppError> = None;
+        for (attempt, &size) in PAGE_SIZE_LADDER.iter().enumerate() {
+            if let Some(delay) = self.backoff.get(attempt).copied()
+                && !delay.is_zero()
+            {
+                sleep(delay).await;
+            }
+            match self.page(start, size).await {
+                Ok(page) => {
+                    if attempt > 0 {
+                        tracing::info!(
+                            portal = self.base_url.as_str(),
+                            start,
+                            size,
+                            "Recovered a failing CSW window at a reduced page size"
+                        );
+                    }
+                    return Ok(Some((page, size)));
+                }
+                // Before the profile is settled, a rejection describes the
+                // catalogue: narrowing cannot help, and the error has to reach
+                // `page()` so the Dublin Core fallback can act on it.
+                //
+                // Afterwards the same exception means something else entirely.
+                // Once pages have been read in a profile, the catalogue clearly
+                // supports it, so a later `OutputSchema` rejection is about one
+                // record that cannot be rendered in it — nationaalgeoregister.nl
+                // serves 2,600 ISO records and then one ISO 19110 feature
+                // catalogue. Treating that as catalogue-wide cost the remaining
+                // 7,000 records.
+                Err(error) if is_profile_rejection(&error) && self.profile.get().is_none() => {
+                    return Err(error);
+                }
+                // The profile is settled, so the catalogue supports it — this
+                // window simply holds records it cannot render. A mixed
+                // catalogue is ordinary: nationaalgeoregister.nl serves ISO
+                // 19139 throughout with ISO 19110 feature catalogues among them.
+                //
+                // Those records are not unreadable, only unreadable *here*, so
+                // read the window in the mandatory profile instead of narrowing
+                // toward a skip. Narrowing cannot help when the offending
+                // records are clustered — each smaller window at this offset
+                // named a different one — and skipping would discard records the
+                // catalogue is willing to serve.
+                //
+                // The settled profile is left alone: the rest of the catalogue
+                // is still richer in it.
+                Err(error) if is_profile_rejection(&error) => {
+                    let alternate = self
+                        .profile
+                        .get()
+                        .copied()
+                        .unwrap_or(CswProfile::Iso)
+                        .alternate();
+                    match self.page_in(start, size, alternate).await {
+                        Ok(page) => {
+                            tracing::info!(
+                                portal = self.base_url.as_str(),
+                                start,
+                                size,
+                                profile = ?alternate,
+                                "Window holds records the catalogue's profile cannot render; \
+                                 read it in the mandatory profile instead"
+                            );
+                            return Ok(Some((page, size)));
+                        }
+                        Err(fallback_error) => {
+                            tracing::warn!(
+                                portal = self.base_url.as_str(),
+                                start,
+                                size,
+                                %fallback_error,
+                                "Neither profile could read this window; narrowing"
+                            );
+                            last = Some(error);
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        portal = self.base_url.as_str(),
+                        start,
+                        size,
+                        %error,
+                        "CSW window failed; narrowing"
+                    );
+                    last = Some(error);
+                }
+            }
+        }
+        tracing::warn!(
+            portal = self.base_url.as_str(),
+            start,
+            error = %last.map(|e| e.to_string()).unwrap_or_default(),
+            "Skipping a single unreadable CSW record"
+        );
+        Ok(None)
+    }
+
     pub fn paginate_stream(&self) -> BoxStream<'_, Result<Vec<OgcRecord>, AppError>> {
         struct State {
             start: usize,
             pages: usize,
             seen: HashSet<usize>,
+            skipped: usize,
+            consecutive_skips: usize,
             done: bool,
         }
         Box::pin(futures::stream::unfold(
@@ -239,11 +418,24 @@ impl OgcRecordsClient {
                     start: 1,
                     pages: 0,
                     seen: HashSet::new(),
+                    skipped: 0,
+                    consecutive_skips: 0,
                     done: false,
                 },
             ),
             |(client, mut state)| async move {
                 if state.done {
+                    if state.skipped > 0 {
+                        let skipped = std::mem::take(&mut state.skipped);
+                        return Some((
+                            Err(AppError::PartialHarvest {
+                                skipped,
+                                reason: "CSW catalogue finished with unreadable records omitted"
+                                    .into(),
+                            }),
+                            (client, state),
+                        ));
+                    }
                     return None;
                 }
                 if state.pages >= MAX_PAGES || !state.seen.insert(state.start) {
@@ -256,23 +448,63 @@ impl OgcRecordsClient {
                     ));
                 }
                 state.pages += 1;
-                match client.page(state.start).await {
-                    Ok(page) => {
-                        if page.next_record == 0 || page.next_record > page.matched {
+                match client.page_resiliently(state.start).await {
+                    Ok(Some((page, size))) => {
+                        state.consecutive_skips = 0;
+                        // The walk is the only place that knows the catalogue is
+                        // finished *and* how much of it was unreadable, so the
+                        // tally is reported here rather than lost in the state.
+                        if page.records.is_empty() && state.skipped > 0 {
+                            tracing::warn!(
+                                portal = client.base_url.as_str(),
+                                skipped = state.skipped,
+                                "CSW catalogue finished with unreadable records skipped"
+                            );
+                        }
+                        // `nextRecord` is advisory and several services return 0
+                        // or a stale value once a window has been narrowed, so
+                        // the walk trusts the window it actually asked for and
+                        // stops on the record count instead.
+                        let next = state.start + size.min(page.records.len().max(1));
+                        if page.records.is_empty()
+                            || (page.matched > 0 && next > page.matched)
+                            || (page.next_record == 0 && page.records.len() < size)
+                        {
                             state.done = true;
-                        } else if page.next_record <= state.start {
-                            state.done = true;
-                            return Some((
-                                Err(AppError::ClientError(format!(
-                                    "CSW nextRecord {} did not advance from {}",
-                                    page.next_record, state.start
-                                ))),
-                                (client, state),
-                            ));
                         } else {
-                            state.start = page.next_record;
+                            state.start = next;
                         }
                         Some((Ok(page.records), (client, state)))
+                    }
+                    // One unreadable record: step over it and keep going, rather
+                    // than losing every record after it. Several in a row means
+                    // the service is failing, not the records, and stepping
+                    // through it one at a time would cost four requests each for
+                    // as long as it stayed down.
+                    Ok(None) => {
+                        let skipped_start = state.start;
+                        state.skipped += 1;
+                        state.consecutive_skips += 1;
+                        state.start += 1;
+                        if state.consecutive_skips >= MAX_CONSECUTIVE_SKIPS {
+                            state.done = true;
+                            let skipped = std::mem::take(&mut state.skipped);
+                            return Some((
+                                Err(AppError::PartialHarvest {
+                                    skipped,
+                                    reason: format!(
+                                        concat!(
+                                            "CSW catalogue failed {} windows in a row ",
+                                            "around record {} in both profiles; stopping ",
+                                            "rather than stepping through it one record at a time",
+                                        ),
+                                        state.consecutive_skips, skipped_start
+                                    ),
+                                }),
+                                (client, state),
+                            ));
+                        }
+                        Some((Ok(Vec::new()), (client, state)))
                     }
                     Err(error) => {
                         state.done = true;
@@ -317,6 +549,7 @@ impl PortalClient for OgcRecordsClient {
                     output_schema,
                     ("id", id.into()),
                 ],
+                WINDOW_TIMEOUT,
             )
             .await?;
         parse_single_record(&xml, self.base_url.as_str(), &self.language)
@@ -690,6 +923,18 @@ fn classify_kind(value: &str) -> CatalogRecordKind {
         _ => CatalogRecordKind::Other,
     }
 }
+/// Scales the request budget to the window size.
+///
+/// The full budget is for a full window. Narrowed retries get proportionally
+/// less — floored at 15 seconds, which is generous for a handful of records —
+/// so giving up on a failing offset takes a bounded amount of time instead of
+/// four full timeouts.
+fn window_timeout(size: usize) -> Duration {
+    let largest = PAGE_SIZE_LADDER[0].max(1);
+    let scaled = WINDOW_TIMEOUT.mul_f64(size as f64 / largest as f64);
+    scaled.max(Duration::from_secs(15))
+}
+
 fn local<'a, 'input>(node: Node<'a, 'input>) -> &'input str {
     node.tag_name().name()
 }
@@ -1020,14 +1265,16 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint)).unwrap();
-        let page = client.page(1).await.unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let page = client.page(1, PAGE_SIZE_LADDER[0]).await.unwrap();
         assert_eq!(page.records.len(), 3);
         assert_eq!(client.profile.get(), Some(&CswProfile::DublinCore));
 
         // A second page reuses the resolved profile, so the ISO mock's
         // `.expect(1)` holds when the server is verified on drop.
-        let again = client.page(4).await.unwrap();
+        let again = client.page(4, PAGE_SIZE_LADDER[0]).await.unwrap();
         assert_eq!(again.records.len(), 3);
     }
 
@@ -1085,8 +1332,10 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint)).unwrap();
-        let page = client.page(1).await.unwrap();
+        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let page = client.page(1, PAGE_SIZE_LADDER[0]).await.unwrap();
         assert_eq!(page.records.len(), 3);
         assert_eq!(client.profile.get(), Some(&CswProfile::DublinCore));
     }
@@ -1106,8 +1355,10 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
-        let error = client.page(1).await.unwrap_err();
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let error = client.page(1, PAGE_SIZE_LADDER[0]).await.unwrap_err();
         assert!(error.to_string().contains("503"), "{error}");
         // An outage must not be mistaken for a profile problem.
         assert!(!is_profile_rejection(&error), "{error}");
@@ -1146,14 +1397,538 @@ mod tests {
             .await;
 
         let endpoint = format!("{}/csw", server.uri());
-        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint)).unwrap();
-        let error = client.page(1).await.unwrap_err();
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let error = client.page(1, PAGE_SIZE_LADDER[0]).await.unwrap_err();
         assert!(error.to_string().contains("400"), "{error}");
         assert!(
             !error.to_string().contains("csw:Record"),
             "the oversized body was buffered: {error}"
         );
         assert!(!is_profile_rejection(&error), "{error}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Page resilience (#247)
+    // -----------------------------------------------------------------------
+
+    /// Builds a GetRecords response carrying `n` minimal ISO records.
+    fn iso_page(start: usize, n: usize, matched: usize) -> String {
+        let records: String = (0..n)
+            .map(|i| {
+                format!(
+                    concat!(
+                        r#"<gmd:MD_Metadata xmlns:gmd="http://www.isotc211.org/2005/gmd" "#,
+                        r#"xmlns:gco="http://www.isotc211.org/2005/gco">"#,
+                        "<gmd:fileIdentifier><gco:CharacterString>record-{id}",
+                        "</gco:CharacterString></gmd:fileIdentifier>",
+                        "<gmd:identificationInfo><gmd:MD_DataIdentification><gmd:citation>",
+                        "<gmd:CI_Citation><gmd:title><gco:CharacterString>Record {id}",
+                        "</gco:CharacterString></gmd:title></gmd:CI_Citation></gmd:citation>",
+                        "</gmd:MD_DataIdentification></gmd:identificationInfo></gmd:MD_Metadata>",
+                    ),
+                    id = start + i
+                )
+            })
+            .collect();
+        format!(
+            concat!(
+                r#"<csw:GetRecordsResponse xmlns:csw="http://www.opengis.net/cat/csw/2.0.2">"#,
+                r#"<csw:SearchResults numberOfRecordsMatched="{matched}" "#,
+                r#"numberOfRecordsReturned="{n}" nextRecord="{next}">{records}"#,
+                "</csw:SearchResults></csw:GetRecordsResponse>",
+            ),
+            matched = matched,
+            n = n,
+            records = records,
+            next = start + n
+        )
+    }
+
+    /// Builds a GetRecords response carrying `n` minimal Dublin Core records.
+    fn dublin_core_page(start: usize, n: usize, matched: usize) -> String {
+        let records: String = (0..n)
+            .map(|i| {
+                format!(
+                    concat!(
+                        r#"<csw:Record xmlns:csw="http://www.opengis.net/cat/csw/2.0.2" "#,
+                        r#"xmlns:dc="http://purl.org/dc/elements/1.1/">"#,
+                        "<dc:identifier>dc-{id}</dc:identifier>",
+                        "<dc:title>Feature catalogue {id}</dc:title>",
+                        "<dc:type>dataset</dc:type></csw:Record>",
+                    ),
+                    id = start + i
+                )
+            })
+            .collect();
+        format!(
+            concat!(
+                r#"<csw:GetRecordsResponse xmlns:csw="http://www.opengis.net/cat/csw/2.0.2">"#,
+                r#"<csw:SearchResults numberOfRecordsMatched="{matched}" "#,
+                r#"numberOfRecordsReturned="{n}" nextRecord="{next}">{records}"#,
+                "</csw:SearchResults></csw:GetRecordsResponse>",
+            ),
+            matched = matched,
+            n = n,
+            records = records,
+            next = start + n
+        )
+    }
+
+    fn capabilities_for(base: &str) -> String {
+        format!(
+            concat!(
+                r#"<ows:Capabilities xmlns:ows="http://www.opengis.net/ows" "#,
+                r#"xmlns:xlink="http://www.w3.org/1999/xlink"><ows:OperationsMetadata>"#,
+                r#"<ows:Operation name="GetRecords"><ows:DCP><ows:HTTP>"#,
+                r#"<ows:Get xlink:href="{base}/csw"/></ows:HTTP></ows:DCP></ows:Operation>"#,
+                "</ows:OperationsMetadata></ows:Capabilities>",
+            ),
+            base = base
+        )
+    }
+
+    const NPE: &str = concat!(
+        r#"<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows">"#,
+        r#"<ows:Exception exceptionCode="NoApplicableCode"><ows:ExceptionText>"#,
+        "java.lang.RuntimeException: java.lang.NullPointerException",
+        "</ows:ExceptionText></ows:Exception></ows:ExceptionReport>",
+    );
+
+    /// A catalogue that crashes on one record must not cost every record after
+    /// it. `geocatalogue.fr` lost 167,997 of its 171,098 records to exactly this.
+    #[tokio::test]
+    async fn a_poisoned_window_narrows_instead_of_ending_the_catalogue() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        };
+
+        let server = MockServer::start().await;
+        let xml = |body: String| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/xml")
+                .set_body_string(body)
+        };
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetCapabilities"))
+            .respond_with(xml(capabilities_for(&server.uri())))
+            .mount(&server)
+            .await;
+
+        // Records 1-100 and 106-110 serve fine. The window at 101 fails at
+        // widths 100 and 25 and succeeds at 5 — geocatalogue.fr's shape.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "1"))
+            .respond_with(xml(iso_page(1, 100, 110)))
+            .mount(&server)
+            .await;
+        for size in ["100", "25"] {
+            Mock::given(method("GET"))
+                .and(path("/csw"))
+                .and(query_param("startPosition", "101"))
+                .and(query_param("maxRecords", size))
+                .respond_with(xml(NPE.to_string()))
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "101"))
+            .and(query_param("maxRecords", "5"))
+            .respond_with(xml(iso_page(101, 5, 110)))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "106"))
+            .respond_with(xml(iso_page(106, 5, 110)))
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let records = client.search_all_datasets().await.unwrap();
+        assert_eq!(
+            records.len(),
+            110,
+            "narrowing should recover the whole catalogue"
+        );
+        assert_eq!(records[0].identifier, "record-1");
+        assert_eq!(records[109].identifier, "record-110");
+    }
+
+    /// When even a one-record window fails, that record is unreadable. Skipping
+    /// it costs one record; ending the walk costs every record after it.
+    #[tokio::test]
+    async fn a_single_unreadable_record_is_skipped_not_fatal() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        };
+
+        let server = MockServer::start().await;
+        let xml = |body: String| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/xml")
+                .set_body_string(body)
+        };
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetCapabilities"))
+            .respond_with(xml(capabilities_for(&server.uri())))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "1"))
+            .respond_with(xml(iso_page(1, 1, 3)))
+            .mount(&server)
+            .await;
+        // Record 2 is unreadable at every width.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "2"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "3"))
+            .respond_with(xml(iso_page(3, 1, 3)))
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let mut stream = client.paginate_stream();
+        let mut records = Vec::new();
+        let mut terminal_error = None;
+        while let Some(page) = stream.next().await {
+            match page {
+                Ok(page) => records.extend(page),
+                Err(error) => {
+                    terminal_error = Some(error);
+                    break;
+                }
+            }
+        }
+        let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
+        assert_eq!(ids, ["record-1", "record-3"]);
+        assert!(matches!(
+            terminal_error,
+            Some(AppError::PartialHarvest { skipped: 1, .. })
+        ));
+    }
+
+    /// A catalogue may hold records its own preferred profile cannot render.
+    /// `nationaalgeoregister.nl` serves ISO 19139 throughout with ISO 19110
+    /// feature catalogues among them; narrowing named a different unrenderable
+    /// record at every window size, because they are clustered rather than
+    /// isolated. Dublin Core reads them, so the window is re-read rather than
+    /// skipped — the records exist and the catalogue will serve them.
+    #[tokio::test]
+    async fn a_window_the_profile_cannot_render_is_read_in_the_other_profile() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        };
+
+        let server = MockServer::start().await;
+        let xml = |body: String| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/xml")
+                .set_body_string(body)
+        };
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetCapabilities"))
+            .respond_with(xml(capabilities_for(&server.uri())))
+            .mount(&server)
+            .await;
+
+        // The first window settles the profile as ISO.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "1"))
+            .and(query_param("typeNames", "gmd:MD_Metadata"))
+            .respond_with(xml(iso_page(1, 1, 3)))
+            .mount(&server)
+            .await;
+        // The next window holds ISO 19110 records: ISO cannot render it at any
+        // size, and each size names a different record, as the live catalogue does.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "2"))
+            .and(query_param("typeNames", "gmd:MD_Metadata"))
+            .respond_with(xml(concat!(
+                r#"<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows">"#,
+                r#"<ows:Exception exceptionCode="NoApplicableCode"><ows:ExceptionText>"#,
+                "InvalidParameterValueEx: code=InvalidParameterValue, locator=OutputSchema, ",
+                "message=OutputSchema 'gmd' not supported for metadata with '70439986' (iso19110).",
+                "</ows:ExceptionText></ows:Exception></ows:ExceptionReport>",
+            )
+            .to_string()))
+            .mount(&server)
+            .await;
+        // Dublin Core serves the same window without complaint.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "2"))
+            .and(query_param("typeNames", "csw:Record"))
+            .respond_with(xml(dublin_core_page(2, 2, 3)))
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let records = client.search_all_datasets().await.unwrap();
+        let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["record-1", "dc-2", "dc-3"],
+            "the unrenderable window should be read in Dublin Core, not skipped"
+        );
+        // The rest of the catalogue is still richer in ISO, so the settled
+        // profile is not switched by one awkward window.
+        assert_eq!(client.profile.get(), Some(&CswProfile::Iso));
+    }
+
+    /// A `\` continuation inside a string literal has silently produced a
+    /// message with 37 spaces in the middle of it once already, and the only
+    /// place that showed was a harvest log.
+    #[test]
+    fn diagnostic_messages_do_not_carry_source_indentation() {
+        let flat = format!(
+            concat!(
+                "CSW catalogue failed {} windows in a row ",
+                "around record {} in both profiles; stopping ",
+                "rather than stepping through it one record at a time",
+            ),
+            3, 4826
+        );
+        assert!(!flat.contains("  "), "{flat}");
+    }
+
+    /// One unreadable record is a record; several in a row is the service.
+    ///
+    /// `geocatalogue.fr` began returning `ElasticsearchStatusException` for
+    /// nearly every window after an hour of harvesting. Skipping forward one
+    /// record at a time would have issued four requests each, indefinitely,
+    /// against a backend already failing — so the walk stops and reports a
+    /// truncated harvest instead.
+    #[tokio::test]
+    async fn a_failing_service_stops_the_walk_rather_than_being_stepped_through() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        };
+
+        let server = MockServer::start().await;
+        let xml = |body: String| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/xml")
+                .set_body_string(body)
+        };
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetCapabilities"))
+            .respond_with(xml(capabilities_for(&server.uri())))
+            .mount(&server)
+            .await;
+        // The first window works; everything after it fails, as a degraded
+        // backend does.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "1"))
+            .respond_with(xml(iso_page(1, 1, 10_000)))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetRecords"))
+            .respond_with(xml(concat!(
+                r#"<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows">"#,
+                r#"<ows:Exception exceptionCode="NoApplicableCode"><ows:ExceptionText>"#,
+                "java.lang.RuntimeException: ElasticsearchStatusException",
+                "</ows:ExceptionText></ows:Exception></ows:ExceptionReport>",
+            )
+            .to_string()))
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+
+        let mut stream = client.paginate_stream();
+        let mut pages = 0usize;
+        let mut ended_with_error = false;
+        while let Some(page) = stream.next().await {
+            pages += 1;
+            if page.is_err() {
+                ended_with_error = true;
+                break;
+            }
+            // A degraded service must not be walked forever.
+            assert!(pages < 20, "the walk kept going through a failing service");
+        }
+        assert!(
+            ended_with_error,
+            "a failing service should end the walk as an error, so the harvest \
+             reports truncated rather than complete"
+        );
+        // Bounded: one good window, then at most MAX_CONSECUTIVE_SKIPS skips.
+        assert!(pages <= 1 + MAX_CONSECUTIVE_SKIPS, "pages = {pages}");
+    }
+
+    /// The same exception means two different things depending on when it
+    /// arrives. Once pages have been read in a profile, the catalogue plainly
+    /// supports it, so a later `OutputSchema` rejection is about one record —
+    /// `nationaalgeoregister.nl` serves 2,600 ISO records and then a single ISO
+    /// 19110 feature catalogue. Treating that as catalogue-wide cost the
+    /// remaining 7,000 records.
+    #[tokio::test]
+    async fn a_rejection_after_the_profile_is_settled_is_one_record_not_the_catalogue() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        };
+
+        let server = MockServer::start().await;
+        let xml = |body: String| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/xml")
+                .set_body_string(body)
+        };
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetCapabilities"))
+            .respond_with(xml(capabilities_for(&server.uri())))
+            .mount(&server)
+            .await;
+
+        // Record 1 settles the profile as ISO.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "1"))
+            .respond_with(xml(iso_page(1, 1, 3)))
+            .mount(&server)
+            .await;
+        // Record 2 is an ISO 19110 feature catalogue: it cannot be rendered as
+        // gmd at any window size, and the message names the record.
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "2"))
+            .respond_with(xml(concat!(
+                r#"<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows">"#,
+                r#"<ows:Exception exceptionCode="NoApplicableCode"><ows:ExceptionText>"#,
+                "org.fao.geonet.csw.common.exceptions.InvalidParameterValueEx: ",
+                "code=InvalidParameterValue, locator=OutputSchema, message=OutputSchema ",
+                "'gmd' not supported for metadata with '70502292' (iso19110).",
+                "</ows:ExceptionText></ows:Exception></ows:ExceptionReport>",
+            )
+            .to_string()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("startPosition", "3"))
+            .respond_with(xml(iso_page(3, 1, 3)))
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "en", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let mut stream = client.paginate_stream();
+        let mut records = Vec::new();
+        let mut terminal_error = None;
+        while let Some(page) = stream.next().await {
+            match page {
+                Ok(page) => records.extend(page),
+                Err(error) => {
+                    terminal_error = Some(error);
+                    break;
+                }
+            }
+        }
+        let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["record-1", "record-3"],
+            "the unrenderable record should be skipped, not end the catalogue"
+        );
+        assert!(matches!(
+            terminal_error,
+            Some(AppError::PartialHarvest { skipped: 1, .. })
+        ));
+        assert_eq!(client.profile.get(), Some(&CswProfile::Iso));
+    }
+
+    /// Narrowing is for windows. A rejected profile is a property of the whole
+    /// catalogue, so retrying it three times smaller wastes requests and buries
+    /// the reason.
+    #[tokio::test]
+    async fn a_profile_rejection_is_not_retried_at_a_smaller_page_size() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        };
+
+        let server = MockServer::start().await;
+        let xml = |code: u16, body: String| {
+            ResponseTemplate::new(code)
+                .insert_header("content-type", "application/xml")
+                .set_body_string(body)
+        };
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("request", "GetCapabilities"))
+            .respond_with(xml(200, capabilities_for(&server.uri())))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("typeNames", "gmd:MD_Metadata"))
+            .respond_with(xml(
+                400,
+                concat!(
+                    r#"<ExceptionReport xmlns="http://www.opengis.net/ows">"#,
+                    r#"<Exception exceptionCode="InvalidParameterValue" locator="typeNames">"#,
+                    "<ExceptionText>CSW: The typeNames parameter must be csw:Record",
+                    "</ExceptionText></Exception></ExceptionReport>",
+                )
+                .to_string(),
+            ))
+            // Exactly one ISO attempt, at the full page size.
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/csw"))
+            .and(query_param("typeNames", "csw:Record"))
+            .respond_with(xml(200, DUBLIN_CORE.to_string()))
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/csw", server.uri());
+        let client = OgcRecordsClient::new(&server.uri(), "it", Some(&endpoint))
+            .unwrap()
+            .without_backoff();
+        let page = client.page_resiliently(1).await.unwrap().unwrap().0;
+        assert_eq!(page.records.len(), 3);
     }
 
     #[test]
@@ -1308,7 +2083,7 @@ mod tests {
             .unwrap_or_else(|_| "https://geodati.gov.it/RNDT/CSW".into());
         let client =
             OgcRecordsClient::new("https://geodati.gov.it", "it", Some(&endpoint)).unwrap();
-        let page = client.page(1).await.unwrap();
+        let page = client.page(1, PAGE_SIZE_LADDER[0]).await.unwrap();
         assert_eq!(client.profile.get(), Some(&CswProfile::DublinCore));
         assert!(!page.records.is_empty());
         assert!(page.matched > 20_000, "matched {}", page.matched);

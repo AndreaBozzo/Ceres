@@ -685,6 +685,8 @@ where
         let stats = Arc::new(AtomicSyncStats::new());
         let all_seen_ids: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let processed_count = Arc::new(AtomicUsize::new(0));
+        // Why the page stream stopped, when it stopped before the catalog ended.
+        let mut truncated_reason: Option<String> = None;
         let last_reported = Arc::new(AtomicUsize::new(0));
         let was_cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -861,13 +863,26 @@ where
                     let page = match page_result {
                         Ok(datasets) => datasets,
                         Err(e) => {
-                            tracing::warn!(
+                            // The stream is abandoned here, so everything after
+                            // this point in the catalog goes unread. Logged at
+                            // error level and carried into the sync result: the
+                            // single `Failed` below says nothing about how much
+                            // was left behind, and a warning is easy to miss in
+                            // a batch of two hundred portals.
+                            tracing::error!(
                                 portal = portal_url,
                                 error = %e,
-                                "Page fetch failed during streaming harvest"
+                                processed = processed_count.load(Ordering::Relaxed),
+                                "Dataset stream ended early; the catalog was only partly read"
                             );
-                            // Record failures for the remaining estimated datasets
-                            stats.record(SyncOutcome::Failed);
+                            truncated_reason = Some(e.to_string());
+                            if let AppError::PartialHarvest { skipped, .. } = &e {
+                                for _ in 0..*skipped {
+                                    stats.record(SyncOutcome::Skipped);
+                                }
+                            } else {
+                                stats.record(SyncOutcome::Failed);
+                            }
                             break;
                         }
                     };
@@ -1093,6 +1108,18 @@ where
                     "Dry run cancelled — no changes written"
                 );
                 return Ok(SyncResult::cancelled(final_stats));
+            } else if let Some(reason) = truncated_reason {
+                tracing::error!(
+                    portal = portal_url,
+                    created = final_stats.created,
+                    updated = final_stats.updated,
+                    unchanged = final_stats.unchanged,
+                    failed = final_stats.failed,
+                    skipped = final_stats.skipped,
+                    %reason,
+                    "Dry run ended with a partial catalogue — no changes written"
+                );
+                return Ok(SyncResult::truncated(final_stats, reason));
             } else {
                 tracing::info!(
                     portal = portal_url,
@@ -1112,6 +1139,8 @@ where
         // Determine final status
         let status = if is_cancelled {
             SyncStatus::Cancelled
+        } else if truncated_reason.is_some() {
+            SyncStatus::Partial
         } else {
             SyncStatus::Completed
         };
@@ -1124,6 +1153,7 @@ where
         // the expensive per-row timestamp update that the old approach required.
         if sync_mode == SyncMode::Full
             && !is_cancelled
+            && truncated_reason.is_none()
             && final_stats.failed == 0
             && final_stats.skipped == 0
         {
@@ -1186,6 +1216,8 @@ where
                 "Sync cancelled - partial progress saved"
             );
             Ok(SyncResult::cancelled(final_stats))
+        } else if let Some(reason) = truncated_reason {
+            Ok(SyncResult::truncated(final_stats, reason))
         } else {
             Ok(SyncResult::completed(final_stats))
         }
@@ -1361,6 +1393,25 @@ where
                                 portal.name.clone(),
                                 portal.url.clone(),
                                 result.stats,
+                                duration_ms,
+                            )
+                        }
+                        Ok(result) if result.truncated => {
+                            reporter.report(HarvestEvent::PortalCompleted {
+                                portal_index: i,
+                                total_portals: total,
+                                portal_name: &portal.name,
+                                stats: &result.stats,
+                            });
+                            let reason = result
+                                .message
+                                .clone()
+                                .unwrap_or_else(|| "dataset stream ended early".to_string());
+                            PortalHarvestResult::truncated(
+                                portal.name.clone(),
+                                portal.url.clone(),
+                                result.stats,
+                                reason,
                                 duration_ms,
                             )
                         }
