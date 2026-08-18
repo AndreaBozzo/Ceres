@@ -915,7 +915,7 @@ impl SparqlDcatClient {
         while let Some(mut batch) = pending_batches.pop_front() {
             let query = self.build_values_distribution_query(&batch);
             let bindings = self.execute_query_with_retry(&query).await?;
-            if bindings.len() >= DATA_EUROPA_RESULT_CAP {
+            if self.uses_data_europa_registry() && bindings.len() >= DATA_EUROPA_RESULT_CAP {
                 if batch.len() == 1 {
                     return Err(AppError::ClientError(format!(
                         "SPARQL distribution metadata for {} reached the endpoint row cap",
@@ -1091,8 +1091,15 @@ impl SparqlDcatClient {
                 .then_with(|| b.lang.is_some().cmp(&a.lang.is_some()))
                 .then_with(|| a.lang.cmp(&b.lang))
                 .then_with(|| a.value.cmp(&b.value))
+                .then_with(|| a.term_type.cmp(&b.term_type))
+                .then_with(|| a.datatype.cmp(&b.datatype))
         });
-        values.dedup_by(|a, b| a.lang == b.lang && a.value == b.value);
+        values.dedup_by(|a, b| {
+            a.lang == b.lang
+                && a.value == b.value
+                && a.term_type == b.term_type
+                && a.datatype == b.datatype
+        });
         collapse_json_values(values.into_iter().map(sparql_literal_to_json_ld))
     }
 
@@ -1109,8 +1116,19 @@ impl SparqlDcatClient {
             .filter_map(|row| row.get(key))
             .filter(|value| !value.value.trim().is_empty())
             .collect();
-        values.sort_by(|a, b| a.value.cmp(&b.value).then_with(|| a.lang.cmp(&b.lang)));
-        values.dedup_by(|a, b| a.lang == b.lang && a.value == b.value);
+        values.sort_by(|a, b| {
+            a.value
+                .cmp(&b.value)
+                .then_with(|| a.lang.cmp(&b.lang))
+                .then_with(|| a.term_type.cmp(&b.term_type))
+                .then_with(|| a.datatype.cmp(&b.datatype))
+        });
+        values.dedup_by(|a, b| {
+            a.lang == b.lang
+                && a.value == b.value
+                && a.term_type == b.term_type
+                && a.datatype == b.datatype
+        });
         collapse_json_values(values.into_iter().map(sparql_reference_to_json_ld))
     }
 
@@ -1883,7 +1901,9 @@ fn binding_to_json(binding: &HashMap<String, SparqlValue>) -> Value {
 /// Represents a SPARQL literal in the JSON-LD shape understood by the shared
 /// DCAT resource normalizer, retaining its language tag when present.
 fn sparql_literal_to_json_ld(value: &SparqlValue) -> Value {
-    if let Some(language) = value.lang.as_deref() {
+    if value.term_type.as_deref() == Some("uri") && is_safe_iri(&value.value) {
+        json!({"@id": value.value})
+    } else if let Some(language) = value.lang.as_deref() {
         json!({"@value": value.value, "@language": language})
     } else if let Some(datatype) = value.datatype.as_deref() {
         json!({"@value": value.value, "@type": datatype})
@@ -2065,6 +2085,59 @@ mod tests {
             distribution["dcat:downloadURL"],
             json!({"@id": "https://example.org/data.csv"})
         );
+    }
+
+    #[test]
+    fn distribution_value_identity_includes_term_kind_and_datatype() {
+        let client = SparqlDcatClient::new("https://example.org", "en", None).unwrap();
+        let json = r#"{
+            "results": {
+                "bindings": [
+                    {
+                        "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                        "distribution": {"type": "uri", "value": "https://example.org/dist/a"},
+                        "predicate": {"type": "uri", "value": "http://purl.org/dc/terms/title"},
+                        "value": {"type": "uri", "value": "https://example.org/label"}
+                    },
+                    {
+                        "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                        "distribution": {"type": "uri", "value": "https://example.org/dist/a"},
+                        "predicate": {"type": "uri", "value": "http://purl.org/dc/terms/title"},
+                        "value": {"type": "literal", "value": "https://example.org/label"}
+                    },
+                    {
+                        "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                        "distribution": {"type": "uri", "value": "https://example.org/dist/a"},
+                        "predicate": {"type": "uri", "value": "http://www.w3.org/ns/dcat#mediaType"},
+                        "value": {"type": "typed-literal", "value": "text/csv", "datatype": "https://example.org/type/a"}
+                    },
+                    {
+                        "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                        "distribution": {"type": "uri", "value": "https://example.org/dist/a"},
+                        "predicate": {"type": "uri", "value": "http://www.w3.org/ns/dcat#mediaType"},
+                        "value": {"type": "typed-literal", "value": "text/csv", "datatype": "https://example.org/type/b"}
+                    }
+                ]
+            }
+        }"#;
+        let response: SparqlResponse = serde_json::from_str(json).unwrap();
+        let metadata = client.distribution_bindings_to_metadata(response.results.bindings);
+        let distribution = &metadata["https://example.org/d/1"][0];
+        let titles = distribution["dct:title"].as_array().unwrap();
+        let media_types = distribution["dcat:mediaType"].as_array().unwrap();
+
+        assert_eq!(titles.len(), 2);
+        assert!(titles.contains(&json!("https://example.org/label")));
+        assert!(titles.contains(&json!({"@id": "https://example.org/label"})));
+        assert_eq!(media_types.len(), 2);
+        assert!(media_types.contains(&json!({
+            "@value": "text/csv",
+            "@type": "https://example.org/type/a"
+        })));
+        assert!(media_types.contains(&json!({
+            "@value": "text/csv",
+            "@type": "https://example.org/type/b"
+        })));
     }
 
     #[test]
