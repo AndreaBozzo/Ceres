@@ -845,6 +845,7 @@ impl SparqlDcatClient {
             "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
              SELECT ?dataset WHERE {{\n\
                ?dataset a dcat:Dataset .\n\
+               FILTER(isIRI(?dataset))\n\
                FILTER(STR(?dataset) > \"{cursor_esc}\")\n\
              }}\n\
              ORDER BY ?dataset\n\
@@ -1904,6 +1905,7 @@ mod tests {
         let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
         let q = client.build_keyset_enum_query("http://example.org/d/1");
         assert!(q.contains("ORDER BY ?dataset"));
+        assert!(q.contains("FILTER(isIRI(?dataset))"));
         assert!(q.contains(r#"FILTER(STR(?dataset) > "http://example.org/d/1")"#));
         assert!(q.contains(&format!("LIMIT {ENUM_PAGE_SIZE}")));
         assert!(!q.contains("OFFSET"), "keyset must not use OFFSET");
@@ -2506,6 +2508,21 @@ mod tests {
     }
 
     // ---- Integration smoke test (requires network) -------------------------
+
+    #[tokio::test]
+    #[ignore = "requires network access to data.europa.eu"]
+    async fn data_europa_keyset_page_smoke() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let uris = client.fetch_keyset_page("").await.unwrap();
+        assert_eq!(uris.len(), ENUM_PAGE_SIZE);
+        assert!(uris.iter().all(|uri| is_safe_iri(uri)));
+
+        let datasets = client
+            .fetch_values_metadata(&uris[..VALUES_BATCH_SIZE])
+            .await
+            .unwrap();
+        assert!(!datasets.is_empty());
+    }
 
     #[tokio::test]
     #[ignore = "requires network access to data.europa.eu"]
