@@ -106,6 +106,61 @@ const VALUES_BATCH_SIZE: usize = 256;
 /// distribution phase bisects the affected URI batch before persisting it.
 const DATA_EUROPA_RESULT_CAP: usize = 50_000;
 
+#[derive(Clone, Copy)]
+enum DistributionPropertyKind {
+    Literal,
+    Reference,
+}
+
+#[derive(Clone, Copy)]
+struct DistributionProperty {
+    iri: &'static str,
+    binding_key: &'static str,
+    metadata_key: &'static str,
+    kind: DistributionPropertyKind,
+}
+
+/// Single source of truth for distribution query predicates and their JSON-LD
+/// field mappings.
+const DISTRIBUTION_PROPERTIES: [DistributionProperty; 6] = [
+    DistributionProperty {
+        iri: "http://purl.org/dc/terms/title",
+        binding_key: "distributionTitle",
+        metadata_key: "dct:title",
+        kind: DistributionPropertyKind::Literal,
+    },
+    DistributionProperty {
+        iri: "http://purl.org/dc/terms/description",
+        binding_key: "distributionDescription",
+        metadata_key: "dct:description",
+        kind: DistributionPropertyKind::Literal,
+    },
+    DistributionProperty {
+        iri: "http://purl.org/dc/terms/format",
+        binding_key: "format",
+        metadata_key: "dct:format",
+        kind: DistributionPropertyKind::Reference,
+    },
+    DistributionProperty {
+        iri: "http://www.w3.org/ns/dcat#mediaType",
+        binding_key: "mediaType",
+        metadata_key: "dcat:mediaType",
+        kind: DistributionPropertyKind::Reference,
+    },
+    DistributionProperty {
+        iri: "http://www.w3.org/ns/dcat#downloadURL",
+        binding_key: "downloadURL",
+        metadata_key: "dcat:downloadURL",
+        kind: DistributionPropertyKind::Reference,
+    },
+    DistributionProperty {
+        iri: "http://www.w3.org/ns/dcat#accessURL",
+        binding_key: "accessURL",
+        metadata_key: "dcat:accessURL",
+        kind: DistributionPropertyKind::Reference,
+    },
+];
+
 // =============================================================================
 // SPARQL JSON Results Format (W3C standard)
 // =============================================================================
@@ -875,7 +930,6 @@ impl SparqlDcatClient {
             .join(" ");
         format!(
             "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
-             PREFIX dct:  <http://purl.org/dc/terms/>\n\
              \n\
              SELECT ?dataset ?title ?description ?identifier ?modified\n\
              WHERE {{\n\
@@ -914,15 +968,63 @@ impl SparqlDcatClient {
             .collect();
         while let Some(mut batch) = pending_batches.pop_front() {
             let query = self.build_values_distribution_query(&batch);
-            let bindings = self.execute_query_with_retry(&query).await?;
-            if self.uses_data_europa_registry() && bindings.len() >= DATA_EUROPA_RESULT_CAP {
-                if batch.len() == 1 {
-                    return Err(AppError::ClientError(format!(
-                        "SPARQL distribution metadata for {} reached the endpoint row cap",
-                        batch[0]
-                    )));
+            let (bindings, property_partitioned) = match self.execute_query_with_retry(&query).await
+            {
+                Ok(bindings)
+                    if self.uses_data_europa_registry()
+                        && bindings.len() >= DATA_EUROPA_RESULT_CAP
+                        && batch.len() == 1 =>
+                {
+                    tracing::warn!(
+                        dataset = %batch[0],
+                        rows = bindings.len(),
+                        "SPARQL distribution result for one dataset reached the endpoint cap; partitioning by property"
+                    );
+                    (
+                        self.fetch_partitioned_distribution_bindings(&batch[0])
+                            .await?,
+                        true,
+                    )
                 }
+                Ok(bindings) => (bindings, false),
+                Err(error)
+                    if self.uses_data_europa_registry()
+                        && is_server_overload(&error)
+                        && batch.len() == 1 =>
+                {
+                    tracing::warn!(
+                        dataset = %batch[0],
+                        error = %error,
+                        "SPARQL distribution query for one dataset was rejected; partitioning by property"
+                    );
+                    (
+                        self.fetch_partitioned_distribution_bindings(&batch[0])
+                            .await?,
+                        true,
+                    )
+                }
+                Err(error)
+                    if self.uses_data_europa_registry()
+                        && is_server_overload(&error)
+                        && batch.len() > 1 =>
+                {
+                    let second_half = batch.split_off(batch.len() / 2);
+                    tracing::warn!(
+                        error = %error,
+                        original_batch_size = batch.len() + second_half.len(),
+                        "SPARQL distribution query was rejected; splitting URI batch"
+                    );
+                    pending_batches.push_front(second_half);
+                    pending_batches.push_front(batch);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
 
+            if !property_partitioned
+                && self.uses_data_europa_registry()
+                && bindings.len() >= DATA_EUROPA_RESULT_CAP
+            {
                 let second_half = batch.split_off(batch.len() / 2);
                 tracing::warn!(
                     rows = bindings.len(),
@@ -959,6 +1061,55 @@ impl SparqlDcatClient {
         Ok(())
     }
 
+    /// Fetches an oversized data.europa.eu distribution result one property at
+    /// a time so Virtuoso's result-row cap cannot truncate the aggregate result.
+    async fn fetch_partitioned_distribution_bindings(
+        &self,
+        dataset_uri: &str,
+    ) -> Result<Vec<HashMap<String, SparqlValue>>, AppError> {
+        let base_query = self.build_single_dataset_distribution_base_query(dataset_uri);
+        let mut bindings = self.execute_query_with_retry(&base_query).await?;
+        if bindings.len() >= DATA_EUROPA_RESULT_CAP {
+            return Err(AppError::ClientError(format!(
+                "SPARQL distribution relation for {dataset_uri} reached the endpoint row cap"
+            )));
+        }
+        Self::ensure_partitionable_distributions(dataset_uri, &bindings)?;
+
+        for property in DISTRIBUTION_PROPERTIES {
+            let query =
+                self.build_single_dataset_distribution_property_query(dataset_uri, property.iri);
+            let property_bindings = self.execute_query_with_retry(&query).await?;
+            if property_bindings.len() >= DATA_EUROPA_RESULT_CAP {
+                return Err(AppError::ClientError(format!(
+                    "SPARQL distribution property {} for {dataset_uri} reached the endpoint row cap",
+                    property.iri
+                )));
+            }
+            bindings.extend(property_bindings);
+        }
+
+        Ok(bindings)
+    }
+
+    /// Property-partitioned queries run independently, so endpoint-local blank
+    /// node labels cannot be correlated safely across their result sets.
+    fn ensure_partitionable_distributions(
+        dataset_uri: &str,
+        bindings: &[HashMap<String, SparqlValue>],
+    ) -> Result<(), AppError> {
+        if bindings.iter().any(|binding| {
+            binding
+                .get("distribution")
+                .is_some_and(|distribution| distribution.term_type.as_deref() != Some("uri"))
+        }) {
+            return Err(AppError::ClientError(format!(
+                "SPARQL distribution fallback for {dataset_uri} requires named distribution IRIs"
+            )));
+        }
+        Ok(())
+    }
+
     /// Builds the third-phase query for distributions belonging to a URI batch.
     fn build_values_distribution_query(&self, uris: &[String]) -> String {
         let values = uris
@@ -967,6 +1118,11 @@ impl SparqlDcatClient {
             .map(|uri| format!("<{uri}>"))
             .collect::<Vec<_>>()
             .join(" ");
+        let predicates = DISTRIBUTION_PROPERTIES
+            .iter()
+            .map(|property| format!("<{}>", property.iri))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
              PREFIX dct:  <http://purl.org/dc/terms/>\n\
@@ -977,11 +1133,39 @@ impl SparqlDcatClient {
                ?dataset dcat:distribution ?distribution .\n\
                OPTIONAL {{\n\
                  ?distribution ?predicate ?value .\n\
-                 FILTER (?predicate IN (\n\
-                   dct:title, dct:description, dct:format,\n\
-                   dcat:mediaType, dcat:downloadURL, dcat:accessURL\n\
-                 ))\n\
+                 FILTER (?predicate IN ({predicates}))\n\
                }}\n\
+             }}"
+        )
+    }
+
+    /// Builds a base-relation query that preserves distributions with none of
+    /// the supported descriptive properties.
+    fn build_single_dataset_distribution_base_query(&self, dataset_uri: &str) -> String {
+        format!(
+            "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+             SELECT DISTINCT ?dataset ?distribution\n\
+             WHERE {{\n\
+               VALUES ?dataset {{ <{dataset_uri}> }}\n\
+               ?dataset dcat:distribution ?distribution .\n\
+             }}"
+        )
+    }
+
+    /// Builds one property partition for a single oversized dataset.
+    fn build_single_dataset_distribution_property_query(
+        &self,
+        dataset_uri: &str,
+        predicate: &str,
+    ) -> String {
+        format!(
+            "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+             SELECT DISTINCT ?dataset ?distribution ?predicate ?value\n\
+             WHERE {{\n\
+               VALUES ?dataset {{ <{dataset_uri}> }}\n\
+               ?dataset dcat:distribution ?distribution .\n\
+               ?distribution <{predicate}> ?value .\n\
+               BIND(<{predicate}> AS ?predicate)\n\
              }}"
         )
     }
@@ -1002,18 +1186,12 @@ impl SparqlDcatClient {
             // Normalize it to the field names consumed by the existing JSON-LD
             // aggregation below. Keeping the RDF term intact preserves language,
             // datatype, and URI information without a Cartesian OPTIONAL join.
-            let binding_key =
-                binding
-                    .get("predicate")
-                    .and_then(|predicate| match predicate.value.as_str() {
-                        "http://purl.org/dc/terms/title" => Some("distributionTitle"),
-                        "http://purl.org/dc/terms/description" => Some("distributionDescription"),
-                        "http://purl.org/dc/terms/format" => Some("format"),
-                        "http://www.w3.org/ns/dcat#mediaType" => Some("mediaType"),
-                        "http://www.w3.org/ns/dcat#downloadURL" => Some("downloadURL"),
-                        "http://www.w3.org/ns/dcat#accessURL" => Some("accessURL"),
-                        _ => None,
-                    });
+            let binding_key = binding.get("predicate").and_then(|predicate| {
+                DISTRIBUTION_PROPERTIES
+                    .iter()
+                    .find(|property| property.iri == predicate.value)
+                    .map(|property| property.binding_key)
+            });
             if let Some(binding_key) = binding_key
                 && let Some(value) = binding.remove("value")
             {
@@ -1046,21 +1224,17 @@ impl SparqlDcatClient {
                 node.insert("@id".to_string(), json!(distribution_id));
             }
 
-            if let Some(value) = self.preferred_literal_metadata(&rows, "distributionTitle") {
-                node.insert("dct:title".to_string(), value);
-            }
-            if let Some(value) = self.preferred_literal_metadata(&rows, "distributionDescription") {
-                node.insert("dct:description".to_string(), value);
-            }
-
-            for (binding_key, metadata_key) in [
-                ("format", "dct:format"),
-                ("mediaType", "dcat:mediaType"),
-                ("downloadURL", "dcat:downloadURL"),
-                ("accessURL", "dcat:accessURL"),
-            ] {
-                if let Some(value) = self.reference_metadata(&rows, binding_key) {
-                    node.insert(metadata_key.to_string(), value);
+            for property in DISTRIBUTION_PROPERTIES {
+                let value = match property.kind {
+                    DistributionPropertyKind::Literal => {
+                        self.preferred_literal_metadata(&rows, property.binding_key)
+                    }
+                    DistributionPropertyKind::Reference => {
+                        self.reference_metadata(&rows, property.binding_key)
+                    }
+                };
+                if let Some(value) = value {
+                    node.insert(property.metadata_key.to_string(), value);
                 }
             }
 
@@ -2044,12 +2218,59 @@ mod tests {
         assert!(q.contains("SELECT DISTINCT ?dataset ?distribution ?predicate ?value"));
         assert!(q.contains("?distribution ?predicate ?value"));
         assert!(q.contains("FILTER (?predicate IN ("));
-        assert!(q.contains("dcat:downloadURL"));
-        assert!(q.contains("dcat:accessURL"));
+        assert!(q.contains("<http://www.w3.org/ns/dcat#downloadURL>"));
+        assert!(q.contains("<http://www.w3.org/ns/dcat#accessURL>"));
         assert_eq!(q.matches("OPTIONAL").count(), 1);
         assert!(!q.contains("?distribution dcat:downloadURL ?downloadURL"));
         assert!(!q.contains("dct:title ?title"));
         assert!(!q.contains("OFFSET") && !q.contains("ORDER BY"));
+    }
+
+    #[test]
+    fn oversized_distribution_queries_are_partitioned_by_property() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let dataset = "http://data.europa.eu/88u/dataset/example";
+        let base = client.build_single_dataset_distribution_base_query(dataset);
+
+        assert!(base.contains(&format!("VALUES ?dataset {{ <{dataset}> }}")));
+        assert!(base.contains("?dataset dcat:distribution ?distribution"));
+        assert!(!base.contains("?predicate") && !base.contains("?value"));
+
+        for property in DISTRIBUTION_PROPERTIES {
+            let query =
+                client.build_single_dataset_distribution_property_query(dataset, property.iri);
+            assert!(query.contains(&format!("VALUES ?dataset {{ <{dataset}> }}")));
+            assert!(query.contains(&format!("?distribution <{}> ?value", property.iri)));
+            assert!(query.contains(&format!("BIND(<{}> AS ?predicate)", property.iri)));
+            assert!(!query.contains("OPTIONAL"));
+        }
+    }
+
+    #[test]
+    fn partitioned_distribution_fallback_rejects_blank_nodes() {
+        let dataset = "https://example.org/d/1";
+        let json = r#"{
+            "head": {"vars": ["dataset", "distribution"]},
+            "results": {
+                "bindings": [{
+                    "dataset": {"type": "uri", "value": "https://example.org/d/1"},
+                    "distribution": {"type": "bnode", "value": "blank-1"}
+                }]
+            }
+        }"#;
+        let response: SparqlResponse = serde_json::from_str(json).unwrap();
+
+        let error = SparqlDcatClient::ensure_partitionable_distributions(
+            dataset,
+            &response.results.bindings,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires named distribution IRIs")
+        );
     }
 
     #[test]
@@ -2686,6 +2907,20 @@ mod tests {
             .await
             .unwrap();
         assert!(!datasets.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires network access to data.europa.eu"]
+    async fn data_europa_oversized_distribution_smoke() {
+        let client = SparqlDcatClient::new("https://data.europa.eu", "en", None).unwrap();
+        let dataset = "http://data.europa.eu/88u/dataset/0eb7722b-2d0e-4d28-86b8-ba0a45cae12d";
+        let bindings = client
+            .fetch_partitioned_distribution_bindings(dataset)
+            .await
+            .unwrap();
+        let metadata = client.distribution_bindings_to_metadata(bindings);
+
+        assert_eq!(metadata[dataset].len(), 10_631);
     }
 
     #[tokio::test]
