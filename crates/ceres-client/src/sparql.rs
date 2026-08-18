@@ -930,6 +930,7 @@ impl SparqlDcatClient {
             .join(" ");
         format!(
             "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
+             PREFIX dct:  <http://purl.org/dc/terms/>\n\
              \n\
              SELECT ?dataset ?title ?description ?identifier ?modified\n\
              WHERE {{\n\
@@ -1125,7 +1126,6 @@ impl SparqlDcatClient {
             .join(", ");
         format!(
             "PREFIX dcat: <http://www.w3.org/ns/dcat#>\n\
-             PREFIX dct:  <http://purl.org/dc/terms/>\n\
              \n\
              SELECT DISTINCT ?dataset ?distribution ?predicate ?value\n\
              WHERE {{\n\
@@ -2182,6 +2182,7 @@ mod tests {
         assert!(q.contains("VALUES ?dataset {"));
         assert!(q.contains("<http://example.org/d/1>"));
         assert!(q.contains("<https://example.org/d/2>"));
+        assert!(q.contains("PREFIX dct:  <http://purl.org/dc/terms/>"));
         assert!(q.contains("dct:title ?title"));
         assert!(q.contains(r#"lang(?title) = "en""#));
         assert!(q.contains("OPTIONAL { ?dataset dct:description ?description }"));
