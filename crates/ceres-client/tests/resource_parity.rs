@@ -33,13 +33,14 @@ use std::collections::BTreeMap;
 use ceres_core::schema::DatasetSchema;
 use ceres_core::traits::PortalClient;
 use ceres_core::{DatasetResource, NewDataset};
+use futures::TryStreamExt;
 use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
 use ceres_client::{
     ArcGisClient, CkanClient, DataJsonClient, DcatClient, OgcRecordsClient, OpenDataSoftClient,
-    SdmxClient, SocrataClient, StacClient,
+    SdmxClient, SocrataClient, SparqlDcatClient, StacClient,
 };
 
 // ---------------------------------------------------------------------------
@@ -109,6 +110,15 @@ fn expectations() -> BTreeMap<&'static str, Expect> {
         ),
         (
             "dcat_udata",
+            Expect {
+                facets: &[Facet::Name, Facet::Format, Facet::MediaType, Facet::Url],
+                fields: false,
+            },
+        ),
+        (
+            // A separate bounded VALUES phase reads one-to-many distribution
+            // nodes without multiplying the title/description metadata query.
+            "dcat_sparql",
             Expect {
                 facets: &[Facet::Name, Facet::Format, Facet::MediaType, Facet::Url],
                 fields: false,
@@ -203,6 +213,7 @@ async fn every_client_family_matches_its_documented_resource_reachability() {
         ("ckan", harvest_ckan().await),
         ("project_open_data", harvest_project_open_data().await),
         ("dcat_udata", harvest_dcat().await),
+        ("dcat_sparql", harvest_sparql_dcat().await),
         ("socrata", harvest_socrata().await),
         ("opendatasoft", harvest_opendatasoft().await),
         ("arcgis", harvest_arcgis().await),
@@ -356,6 +367,62 @@ async fn harvest_dcat() -> Vec<NewDataset> {
     let portal_url = server.uri();
     let client = DcatClient::new(&server.uri(), "en").unwrap();
     normalize(client.search_all_datasets().await.unwrap(), |record| {
+        DcatClient::into_new_dataset(record, &portal_url, None, "en")
+    })
+}
+
+async fn harvest_sparql_dcat() -> Vec<NewDataset> {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/sparql"))
+        .and(SparqlQueryContains("SELECT DISTINCT ?pub"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": {"bindings": []}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/sparql"))
+        .and(SparqlQueryContains("FILTER NOT EXISTS"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": {"bindings": [{
+                "dataset": {"type": "uri", "value": "https://example.org/datasets/air"},
+                "title": {"type": "literal", "value": "Air quality", "xml:lang": "en"},
+                "description": {"type": "literal", "value": "Hourly readings", "xml:lang": "en"},
+                "identifier": {"type": "literal", "value": "air-quality"}
+            }]}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/sparql"))
+        .and(SparqlQueryContains(
+            "?dataset dcat:distribution ?distribution",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": {"bindings": [{
+                "dataset": {"type": "uri", "value": "https://example.org/datasets/air"},
+                "distribution": {"type": "uri", "value": "https://example.org/distributions/air-csv"},
+                "distributionTitle": {"type": "literal", "value": "CSV download", "xml:lang": "en"},
+                "format": {"type": "literal", "value": "CSV"},
+                "mediaType": {"type": "literal", "value": "text/csv"},
+                "downloadURL": {"type": "uri", "value": "https://example.org/files/air.csv"}
+            }]}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let portal_url = server.uri();
+    let endpoint = format!("{portal_url}/sparql");
+    let client = SparqlDcatClient::new(&portal_url, "en", Some(&endpoint)).unwrap();
+    let pages: Vec<Vec<_>> = client.paginate_sparql_stream().try_collect().await.unwrap();
+    normalize(pages.into_iter().flatten().collect(), |record| {
         DcatClient::into_new_dataset(record, &portal_url, None, "en")
     })
 }
@@ -601,6 +668,16 @@ fn xml_body(fixture: &str) -> ResponseTemplate {
     ResponseTemplate::new(200)
         .insert_header("content-type", "application/xml")
         .set_body_string(fixture.to_string())
+}
+
+#[derive(Debug)]
+struct SparqlQueryContains(&'static str);
+
+impl Match for SparqlQueryContains {
+    fn matches(&self, request: &Request) -> bool {
+        url::form_urlencoded::parse(&request.body)
+            .any(|(key, value)| key == "query" && value.contains(self.0))
+    }
 }
 
 /// Runs each harvested record through the client's own `into_new_dataset`, so
