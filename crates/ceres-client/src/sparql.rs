@@ -1236,7 +1236,8 @@ impl SparqlDcatClient {
                  ?distribution ?predicate ?value .\n\
                  FILTER (?predicate IN ({predicates}))\n\
                }}\n\
-             }}"
+             }}\n\
+             LIMIT {DATA_EUROPA_RESULT_CAP}"
         )
     }
 
@@ -1249,7 +1250,8 @@ impl SparqlDcatClient {
              WHERE {{\n\
                VALUES ?dataset {{ <{dataset_uri}> }}\n\
                ?dataset dcat:distribution ?distribution .\n\
-             }}"
+             }}\n\
+             LIMIT {DATA_EUROPA_RESULT_CAP}"
         )
     }
 
@@ -1267,7 +1269,8 @@ impl SparqlDcatClient {
                ?dataset dcat:distribution ?distribution .\n\
                ?distribution <{predicate}> ?value .\n\
                BIND(<{predicate}> AS ?predicate)\n\
-             }}"
+             }}\n\
+             LIMIT {DATA_EUROPA_RESULT_CAP}"
         )
     }
 
@@ -1294,7 +1297,8 @@ impl SparqlDcatClient {
                ?dataset dcat:distribution ?distribution .\n\
                ?distribution <{predicate}> ?value .\n\
                BIND(<{predicate}> AS ?predicate)\n\
-             }}"
+             }}\n\
+             LIMIT {DATA_EUROPA_RESULT_CAP}"
         )
     }
 
@@ -2350,6 +2354,7 @@ mod tests {
         assert!(q.contains("<http://www.w3.org/ns/dcat#downloadURL>"));
         assert!(q.contains("<http://www.w3.org/ns/dcat#accessURL>"));
         assert_eq!(q.matches("OPTIONAL").count(), 1);
+        assert!(q.contains(&format!("LIMIT {DATA_EUROPA_RESULT_CAP}")));
         assert!(!q.contains("?distribution dcat:downloadURL ?downloadURL"));
         assert!(!q.contains("dct:title ?title"));
         assert!(!q.contains("OFFSET") && !q.contains("ORDER BY"));
@@ -2363,6 +2368,7 @@ mod tests {
 
         assert!(base.contains(&format!("VALUES ?dataset {{ <{dataset}> }}")));
         assert!(base.contains("?dataset dcat:distribution ?distribution"));
+        assert!(base.contains(&format!("LIMIT {DATA_EUROPA_RESULT_CAP}")));
         assert!(!base.contains("?predicate") && !base.contains("?value"));
 
         for property in DISTRIBUTION_PROPERTIES {
@@ -2371,6 +2377,7 @@ mod tests {
             assert!(query.contains(&format!("VALUES ?dataset {{ <{dataset}> }}")));
             assert!(query.contains(&format!("?distribution <{}> ?value", property.iri)));
             assert!(query.contains(&format!("BIND(<{}> AS ?predicate)", property.iri)));
+            assert!(query.contains(&format!("LIMIT {DATA_EUROPA_RESULT_CAP}")));
             assert!(!query.contains("OPTIONAL"));
         }
 
@@ -2390,6 +2397,7 @@ mod tests {
             "?distribution <{}> ?value",
             DISTRIBUTION_PROPERTIES[0].iri
         )));
+        assert!(query.contains(&format!("LIMIT {DATA_EUROPA_RESULT_CAP}")));
     }
 
     #[test]
