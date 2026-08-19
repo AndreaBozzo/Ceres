@@ -5,12 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-19
+
+
+### Added
+
+- Resource parity baseline and DCAT @graph distribution resolution (#187, #188)
+- **schema**: Read OGC CSW online_resources as normalized resources
+- **schema**: Surface OpenDataSoft column schema and artifacts as resources
+- **schema**: Zip Socrata columns_* arrays into a normalized resource
+- **stac**: Normalize collection assets into resources
+- **arcgis**: Expose the service endpoint as a normalized resource
+- **export**: Add normalized resources to Parquet snapshots
+- **export**: Add resource quality to snapshot reports
+- **server**: Add sensitive-key hygiene for surfaced raw metadata
+- **ops**: Run harvesting as an unattended scheduled job
+- **sdmx**: Harvest statistical dataflows from SDMX REST services
+- Add the August 2026 portal discovery tranche
+- **csw**: Fall back to the Dublin Core profile when a catalogue rejects ISO
+- **sparql**: Persist DCAT distribution metadata
+
+
+### Dependencies
+
+- **deps**: Bump serde_with from 3.18.0 to 3.21.0
+- **deps**: Bump astro from 7.0.2 to 7.1.3 in /website
+- **deps**: Bump svgo from 4.0.1 to 4.0.2 in /website
+- **deps**: Bump postcss from 8.5.15 to 8.5.23 in /website
+- **deps**: Bump sharp from 0.34.5 to 0.35.3 in /website
+- **deps**: Bump js-yaml from 4.2.0 to 4.3.1 in /website
+
+
+### Documentation
+
+- Feature databricks-ceres-pipeline and ceres-discovery-agent
+- **api**: Harden /datasets/{id}/schema as the public contract
+
+
+### Fixed
+
+- **schema**: Unresolvable reference nodes no longer normalize into empty phantom resources
+- **csw**: Read Dublin Core links published as dc:URI, not only dct:references
+- Recover partial CSW harvests and harden release security
+- **sparql**: Skip blank nodes in keyset harvests
+- **sparql**: Avoid distribution join explosion
+- **sparql**: Partition oversized distributions
+- **sparql**: Restore metadata prefix
+- **sparql**: Partition oversized property rows
+- **sparql**: Cap distribution query responses
 ## [0.6.0] - 2026-07-15
 
 
 ### Added
 
-- **server**: Enable portal-aware harvest jobs
 - **dcat**: Support static Project Open Data catalogs
 - Add Socrata Discovery API client support
 - **opendatasoft**: Add portal client for OpenDataSoft catalogs
