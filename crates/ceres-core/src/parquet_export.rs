@@ -925,6 +925,10 @@ impl<S: DatasetStore> ParquetExportService<S> {
         let mut portal_counts: HashMap<String, u64> = HashMap::new();
         // Track portal_key -> (display_name, file_name) for stats and file creation
         let mut portal_info: HashMap<String, (String, String)> = HashMap::new();
+        // A file can have only one writer. Distinct source URLs may otherwise
+        // collapse to the same fallback hostname slug and silently overwrite
+        // each other's per-portal Parquet subset.
+        let mut portal_file_owners: HashMap<String, String> = HashMap::new();
 
         // Main "all" buffer
         let mut all_buffer: Vec<FlatRecord> = Vec::with_capacity(self.config.batch_size);
@@ -970,10 +974,16 @@ impl<S: DatasetStore> ParquetExportService<S> {
 
             // Use normalized source_portal URL as the stable partition key
             let portal_key = normalize_portal_url(&record.source_portal);
-            let file_name = portal_file_name(&record.portal_name);
-            portal_info
-                .entry(portal_key.clone())
-                .or_insert_with(|| (record.portal_name.clone(), file_name));
+            if !portal_info.contains_key(&portal_key) {
+                let file_name = portal_file_name(&record.portal_name);
+                if let Some(existing_portal) = portal_file_owners.get(&file_name) {
+                    return Err(AppError::ExportError(format!(
+                        "Portal file-name collision: {existing_portal} and {portal_key} both map to data/{file_name}.parquet; assign unique portal names or declare one URL as an alias"
+                    )));
+                }
+                portal_file_owners.insert(file_name.clone(), portal_key.clone());
+                portal_info.insert(portal_key.clone(), (record.portal_name.clone(), file_name));
+            }
 
             // Add to portal buffer
             portal_buffers

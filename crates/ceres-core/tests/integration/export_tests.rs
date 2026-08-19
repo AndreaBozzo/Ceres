@@ -761,6 +761,37 @@ async fn test_same_portal_repeated_title_not_flagged() {
     assert_eq!(result.total_duplicates, 0);
 }
 
+#[tokio::test]
+async fn test_export_rejects_portal_file_name_collision() {
+    let store = MockDatasetStore::new();
+    upsert_dataset(
+        &store,
+        "https://collision.example.com/one",
+        "one",
+        "First collision dataset",
+        "First description",
+    )
+    .await;
+    upsert_dataset(
+        &store,
+        "https://collision.example.com/two",
+        "two",
+        "Second collision dataset",
+        "Second description",
+    )
+    .await;
+
+    let output = tempfile::tempdir().unwrap();
+    let error = ParquetExportService::new(store, None, ParquetExportConfig::default())
+        .export_to_directory(output.path())
+        .await
+        .expect_err("colliding fallback portal names must fail the export");
+
+    let message = error.to_string();
+    assert!(message.contains("Portal file-name collision"));
+    assert!(message.contains("assign unique portal names or declare one URL as an alias"));
+}
+
 // =============================================================================
 // Snapshot Changelog (#154)
 // =============================================================================

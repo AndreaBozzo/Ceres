@@ -789,6 +789,27 @@ language = "en"
 enabled = false
 description = "City of Somerville, MA open data (Socrata, ~30 dataset assets)"
 
+# These portals have both a Socrata catalogue and a Project Open Data feed in
+# the live index. Fold the feed URL onto the portal so exports use one stable
+# partition and do not create colliding hostname-derived Parquet files.
+[[portals]]
+name = "data-ny-gov"
+url = "https://data.ny.gov"
+type = "socrata"
+language = "en"
+enabled = false
+aliases = ["https://data.ny.gov/data.json"]
+description = "New York State open data (Socrata with Project Open Data alias)"
+
+[[portals]]
+name = "data-wa-gov"
+url = "https://data.wa.gov"
+type = "socrata"
+language = "en"
+enabled = false
+aliases = ["https://data.wa.gov/data.json"]
+description = "Washington State open data (Socrata with Project Open Data alias)"
+
 # =============================================================================
 # DCAT-AP portals (udata REST flavor)
 #
