@@ -58,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **server**: Enable portal-aware harvest jobs
 - **dcat**: Support static Project Open Data catalogs
 - Add Socrata Discovery API client support
 - **opendatasoft**: Add portal client for OpenDataSoft catalogs
@@ -469,4 +470,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update logo image asset
 - Replace logo image with JPEG format and remove PNG version
-

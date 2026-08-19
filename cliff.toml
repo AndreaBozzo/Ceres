@@ -53,6 +53,13 @@ filter_unconventional = true
 # Process each line of a commit as an individual commit
 split_commits = false
 
+# PR #170 predates the conventional-commit requirement but is a shipped 0.6.0
+# feature. Normalize it before validation so regenerating later changelogs does
+# not erase the historical entry.
+commit_preprocessors = [
+    { pattern = "enable portal-aware harvest jobs \\(\\#170\\)", replace = "feat(server): enable portal-aware harvest jobs (#170)" },
+]
+
 # Regex for parsing commit messages
 commit_parsers = [
     { message = "^feat", group = "Added" },
