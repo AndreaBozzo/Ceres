@@ -19,10 +19,14 @@ type = "ckan"
 description = "Open data del Comune di Milano"
 
 # Sicily Region open data
+# Disabled in the scheduled harvest: package_search times out from GitHub-hosted
+# runners even at page_size=10, while the same request answers in seconds from
+# elsewhere (checked 2026-10-09). Enable it for local harvests.
 [[portals]]
 name = "sicilia"
 url = "https://dati.regione.sicilia.it"
 type = "ckan"
+enabled = false
 description = "Open data della Regione Siciliana"
 
 [[portals]]
@@ -50,10 +54,14 @@ type = "ckan"
 language = "en"
 description = "Swiss Federal Open Government Data (~14,000 datasets)"
 
+# Disabled in the scheduled harvest: package_search times out from GitHub-hosted
+# runners even at page_size=10, while the same request answers in seconds from
+# elsewhere (checked 2026-10-09). Enable it for local harvests.
 [[portals]]
 name = "nrw"
 url = "https://ckan.open.nrw.de"
 type = "ckan"
+enabled = false
 description = "Open Data NRW (Germany)"
 
 # Other verified portals (uncomment to enable)

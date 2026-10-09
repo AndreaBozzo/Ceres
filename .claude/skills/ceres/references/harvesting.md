@@ -29,7 +29,9 @@ When the portal supports it, Ceres fetches only datasets changed since the last 
 
 Even when a dataset is fetched, the embeddable content may not have actually changed. Tags, resources, or minor metadata edits can change source timestamps without changing the text that would be embedded.
 
-Delta detection computes a SHA-256 hash of `title + description` (the `content_hash`) via `NewDataset::compute_content_hash()` and compares it against the stored hash. If the hash matches, embedding regeneration is skipped.
+Delta detection computes a SHA-256 hash of `title + description` (the `content_hash`) via `NewDataset::compute_content_hash()` and compares it against the stored hash. If the hash matches, the record is skipped.
+
+The hash gates the metadata upsert. A fetched record whose title and description are unchanged is counted as `Unchanged` and its row is not rewritten, so a change limited to tags, license, resources, or other metadata does not reach the stored row. `--full-sync` does not change this. To refresh that metadata, clear `content_hash` for the affected rows before harvesting.
 
 **Savings:** This prevents unnecessary embedding work during later `embed` passes or combined workflows.
 
@@ -37,9 +39,9 @@ Delta detection computes a SHA-256 hash of `title + description` (the `content_h
 
 | Scenario | metadata_modified changed? | content_hash changed? | Action |
 |----------|---------------------------|-----------------------|--------|
-| Tag added | Yes | No | Fetch metadata, skip embedding |
-| Resource URL updated | Yes | No | Fetch metadata, skip embedding |
-| Title rewritten | Yes | Yes | Fetch metadata, mark pending |
+| Tag added | Yes | No | Fetched, not written (stored tags stay stale) |
+| Resource URL updated | Yes | No | Fetched, not written (stored resources stay stale) |
+| Title rewritten | Yes | Yes | Metadata rewritten; an existing embedding is kept |
 | New dataset | N/A (new) | N/A (new) | Fetch metadata, mark pending |
 | Nothing changed | No (not fetched) | N/A | Not fetched at all |
 
@@ -50,8 +52,8 @@ Each dataset processed during a sync receives one of these outcomes (tracked via
 | Outcome | Meaning | Embedding generated? |
 |---------|---------|---------------------|
 | `Created` | New dataset, not seen before | Marked pending |
-| `Updated` | Content hash changed | Marked pending |
-| `Unchanged` | Content hash matches stored value | No |
+| `Updated` | Content hash changed | Only if the row has no embedding yet; an existing one is kept |
+| `Unchanged` | Content hash matches stored value; row not rewritten | No |
 | `Failed` | Error during processing | No |
 | `Skipped` | Circuit breaker is open | No |
 
@@ -68,9 +70,9 @@ When embeddings are enabled, batched provider calls further improve throughput.
 | *(none)* | Incremental if previous sync exists | Always active | Normal operation |
 | `--full-sync` | Full sync forced | Still active | Re-scan portal after known issues |
 | `--dry-run` | Dry run (no writes) | Still active | Preview what would happen |
-| `--metadata-only` | Same as default | Skipped (no embedding) | Harvest without API key |
+| `--metadata-only` | Same as default | Still active (no embedding) | Harvest without API key |
 
-Delta detection is always active. To force full re-embedding, delete the `content_hash` values from the database.
+Delta detection is always active. To refresh metadata, delete the affected `content_hash` values from the database. To re-embed, also clear the stored embeddings and run `ceres embed`.
 
 ## Database Tracking
 

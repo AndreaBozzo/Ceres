@@ -224,15 +224,34 @@ not need to understand each portal's raw metadata shape. The versioned quality
 report also tracks resource and field-schema completeness globally and per portal,
 with resource-count format and media-type distributions from the same export pass.
 
-## What's next
+`ceres export --format parquet --output DIR` writes one snapshot directory:
 
-Coverage keeps expanding. The v0.6.0 milestone shipped the OGC CSW and
-collection-level STAC clients and the coverage validation set above; the
-[v0.7.0 milestone](https://github.com/AndreaBozzo/Ceres/milestones) turns to
-resource-level metadata depth — making distribution/resource metadata
-first-class in published snapshots and the API — and adds the SDMX client, which
-opens the statistical-portal family that none of the open-data-catalog APIs
-reached.
+- `all.parquet` is the canonical complete index. `data/<portal>.parquet` files are
+  convenience subsets that repeat its rows; never add their counts to the total.
+- `resources` is a non-null list. An empty list means the portal exposed no usable
+  resource detail; the optional strings in each struct stay null when a facet is absent.
+- `metadata.json` is the manifest: snapshot ID, UTC generation time, Ceres version
+  and commit, portal-config checksum, curation counts, per-portal inclusion status,
+  and a SHA-256 checksum for every Parquet file. Verify the checksums before using a
+  copied or mirrored snapshot. A library caller that supplies no build metadata
+  records the commit as `unknown`.
+- `reports.json` and `report.md` carry coverage, field completeness, and curation
+  outcomes, including how many rows each noise rule removed. Completeness rates are
+  over exported rows, after curation.
+- `identity.parquet` and `changelog.json` support snapshot-to-snapshot diffs.
+  "Changed" means the title or description changed; see
+  [Delta Detection](/harvesting/#tier-2-delta-detection) for what that misses.
+
+A snapshot is dated by its export. It is not a claim that every portal was
+harvested on that date: the maintainer's scheduled harvest refreshes only the
+portals enabled in `examples/portals.toml`, and the rest of the catalog was
+last harvested by hand.
+
+## Status
+
+Ceres is in maintenance mode after v0.7.0, which shipped first-class resource
+metadata and the SDMX client. Fixes and security updates continue to land; new
+portal families are not planned.
 
 Want a portal that none of the current clients cover? The client layer is
 trait-based and designed for extension — see

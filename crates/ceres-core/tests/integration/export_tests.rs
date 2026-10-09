@@ -481,6 +481,25 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     };
     store.upsert(&rich).await.unwrap();
     store.upsert(&sparse).await.unwrap();
+    // Three rows the noise filter drops, one per rule.
+    for (id, title, description) in [
+        ("short", "Map", Some("A map.")),
+        ("undocumented", "Undocumented upload", None),
+        ("noise", "Test upload", Some("Scratch data.")),
+    ] {
+        let noise = NewDataset {
+            record_kind: ceres_core::CatalogRecordKind::Dataset,
+            original_id: id.to_string(),
+            source_portal: SPARSE_PORTAL_URL.to_string(),
+            url: format!("{SPARSE_PORTAL_URL}/dataset/{id}"),
+            title: title.to_string(),
+            description: description.map(str::to_string),
+            embedding: None,
+            metadata: serde_json::json!({}),
+            content_hash: NewDataset::compute_content_hash(title, description),
+        };
+        store.upsert(&noise).await.unwrap();
+    }
 
     let portals = PortalsConfig {
         portals: vec![
@@ -525,7 +544,7 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
             .unwrap();
 
     // Report figures agree with the manifest (acceptance criterion).
-    assert_eq!(report["schema_version"], "2.0.0");
+    assert_eq!(report["schema_version"], "2.1.0");
     assert_eq!(report["snapshot_id"], manifest["snapshot_id"]);
     assert_eq!(
         report["curation"]["exported"],
@@ -536,6 +555,12 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
         report["curation"]["filtered"],
         manifest["row_counts"]["filtered"]
     );
+    assert_eq!(report["curation"]["filtered"], 3);
+    assert_eq!(
+        report["curation"]["filtered_by_reason"],
+        serde_json::json!({"short_title": 1, "empty_description": 1, "noise_title": 1})
+    );
+    assert_eq!(report["curation"]["noise_filter_version"], "2");
 
     assert_eq!(report["coverage"]["total_datasets"], 2);
     assert_eq!(report["coverage"]["portals"], 2);
@@ -597,6 +622,8 @@ async fn test_parquet_export_writes_coverage_and_quality_report() {
     let report_md = std::fs::read_to_string(output.path().join("report.md")).unwrap();
     assert!(report_md.contains("# Ceres Snapshot Report"));
     assert!(report_md.contains("Field completeness"));
+    assert!(report_md.contains("| ↳ Empty description | 1 |"));
+    assert!(report_md.contains("complete by construction"));
     assert!(report_md.contains("By resource format"));
     assert!(
         report_md

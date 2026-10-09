@@ -38,7 +38,7 @@ pub const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "2.0.0";
 pub const SNAPSHOT_DATA_SCHEMA_VERSION: &str = "2.0.0";
 
 /// Schema version for the coverage and quality report written beside every export.
-pub const SNAPSHOT_REPORT_SCHEMA_VERSION: &str = "2.0.0";
+pub const SNAPSHOT_REPORT_SCHEMA_VERSION: &str = "2.1.0";
 
 /// Schema version for the snapshot-to-snapshot changelog written when a previous
 /// snapshot is supplied.
@@ -52,11 +52,19 @@ pub const DUPLICATE_DETECTION_METHOD: &str = "title-exact-ci-cross-portal";
 /// so consumers can tell snapshots produced by different rules apart.
 pub const DUPLICATE_DETECTION_VERSION: &str = "1";
 
+/// Version of the noise-filter rule applied before export. Bump when the rule
+/// changes so filtered counts from different snapshots are not compared as if
+/// the same rule produced them. Version 1 matched noise patterns as substrings;
+/// version 2 matches them as whole title words.
+pub const NOISE_FILTER_VERSION: &str = "2";
+
 /// Configuration for Parquet export curation and provenance.
 pub struct ParquetExportConfig {
     /// Minimum title length — titles shorter are filtered as noise.
     pub min_title_length: usize,
-    /// Noise title patterns to filter (case-insensitive substring match).
+    /// Noise title words to filter. A pattern matches a whole word of the title,
+    /// case-insensitively, so `test` drops "Test upload" but keeps "Latest
+    /// estimates".
     pub noise_patterns: Vec<String>,
     /// Number of rows per Arrow RecordBatch / row group.
     pub batch_size: usize,
@@ -233,6 +241,12 @@ pub struct CurationReport {
     pub raw: u64,
     pub exported: u64,
     pub filtered: u64,
+    /// `filtered` split by the first noise rule each row failed. Rows dropped
+    /// for an empty description are absent from `field_completeness`, which
+    /// counts exported rows only.
+    pub filtered_by_reason: FilteredByReason,
+    /// Version of the noise-filter rule that produced `filtered`.
+    pub noise_filter_version: String,
     pub duplicate_flagged: u64,
     /// Matching rule that produced `duplicate_flagged` (heuristic, not canonical).
     pub duplicate_detection_method: String,
@@ -427,11 +441,61 @@ impl ResourceQualityAccumulator {
     }
 }
 
+/// Why a row was dropped by the noise filter. Checked in declaration order;
+/// a row is counted under the first reason that applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoiseReason {
+    ShortTitle,
+    EmptyDescription,
+    NoiseTitle,
+}
+
+/// Returns why a row should be filtered out as noise, or `None` to keep it.
+fn noise_reason(
+    config: &ParquetExportConfig,
+    title: &str,
+    description: Option<&str>,
+) -> Option<NoiseReason> {
+    if title.len() < config.min_title_length {
+        return Some(NoiseReason::ShortTitle);
+    }
+    if description.is_none_or(|d| d.trim().is_empty()) {
+        return Some(NoiseReason::EmptyDescription);
+    }
+    let title_lower = title.to_lowercase();
+    let mut words = title_lower
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|w| !w.is_empty());
+    if words.any(|w| config.noise_patterns.iter().any(|p| p.to_lowercase() == w)) {
+        return Some(NoiseReason::NoiseTitle);
+    }
+    None
+}
+
+/// Rows dropped by the noise filter, by the first reason that applied.
+#[derive(Debug, Default, Clone, Copy, Serialize)]
+pub struct FilteredByReason {
+    pub short_title: u64,
+    pub empty_description: u64,
+    pub noise_title: u64,
+}
+
+impl FilteredByReason {
+    fn record(&mut self, reason: NoiseReason) {
+        match reason {
+            NoiseReason::ShortTitle => self.short_title += 1,
+            NoiseReason::EmptyDescription => self.empty_description += 1,
+            NoiseReason::NoiseTitle => self.noise_title += 1,
+        }
+    }
+}
+
 /// Outcome of a streaming export pass: counts, per-portal stats, and the
 /// quality counters used to build the snapshot report.
 struct StreamOutcome {
     exported: u64,
     filtered: u64,
+    filtered_by_reason: FilteredByReason,
     duplicates: u64,
     portals: Vec<PortalExportStats>,
     quality: QualityAccumulator,
@@ -836,6 +900,8 @@ impl<S: DatasetStore> ParquetExportService<S> {
                 raw: outcome.exported + outcome.filtered,
                 exported: outcome.exported,
                 filtered: outcome.filtered,
+                filtered_by_reason: outcome.filtered_by_reason,
+                noise_filter_version: NOISE_FILTER_VERSION.to_string(),
                 duplicate_flagged: outcome.duplicates,
                 duplicate_detection_method: DUPLICATE_DETECTION_METHOD.to_string(),
                 duplicate_detection_version: DUPLICATE_DETECTION_VERSION.to_string(),
@@ -935,6 +1001,7 @@ impl<S: DatasetStore> ParquetExportService<S> {
 
         let mut total_exported = 0u64;
         let mut total_filtered = 0u64;
+        let mut filtered_by_reason = FilteredByReason::default();
         let mut total_duplicates = 0u64;
         let mut quality = QualityAccumulator::default();
 
@@ -944,8 +1011,11 @@ impl<S: DatasetStore> ParquetExportService<S> {
             let dataset = result?;
 
             // Apply noise filter
-            if self.is_noise(&dataset) {
+            if let Some(reason) =
+                noise_reason(&self.config, &dataset.title, dataset.description.as_deref())
+            {
                 total_filtered += 1;
+                filtered_by_reason.record(reason);
                 continue;
             }
 
@@ -1127,37 +1197,11 @@ impl<S: DatasetStore> ParquetExportService<S> {
         Ok(StreamOutcome {
             exported: total_exported,
             filtered: total_filtered,
+            filtered_by_reason,
             duplicates: total_duplicates,
             portals: portal_stats,
             quality,
         })
-    }
-
-    /// Returns true if the dataset should be filtered out as noise.
-    fn is_noise(&self, dataset: &Dataset) -> bool {
-        // Filter tiny titles
-        if dataset.title.len() < self.config.min_title_length {
-            return true;
-        }
-
-        // Filter empty descriptions
-        if dataset
-            .description
-            .as_ref()
-            .is_none_or(|d| d.trim().is_empty())
-        {
-            return true;
-        }
-
-        // Filter noise patterns in title
-        let title_lower = dataset.title.to_lowercase();
-        for pattern in &self.config.noise_patterns {
-            if title_lower.contains(pattern.as_str()) {
-                return true;
-            }
-        }
-
-        false
     }
 
     /// Flattens a Dataset into an export record with extracted metadata.
@@ -1533,6 +1577,10 @@ fn render_report_markdown(report: &SnapshotReport) -> String {
     let _ = writeln!(out, "| Raw rows | {} |", c.raw);
     let _ = writeln!(out, "| Exported | {} |", c.exported);
     let _ = writeln!(out, "| Filtered (noise) | {} |", c.filtered);
+    let r = &c.filtered_by_reason;
+    let _ = writeln!(out, "| ↳ Short title | {} |", r.short_title);
+    let _ = writeln!(out, "| ↳ Empty description | {} |", r.empty_description);
+    let _ = writeln!(out, "| ↳ Noise title word | {} |", r.noise_title);
     let _ = writeln!(out, "| Duplicate-flagged | {} |", c.duplicate_flagged);
     let _ = writeln!(out, "| Excluded portals | {} |", c.excluded_portals.len());
     let _ = writeln!(out);
@@ -1557,6 +1605,11 @@ fn render_report_markdown(report: &SnapshotReport) -> String {
 
     let f = &report.field_completeness;
     let _ = writeln!(out, "## Field completeness ({} datasets)", f.total);
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "_Rates are over exported rows. Rows without a description were filtered during curation, so `description` is complete by construction._"
+    );
     let _ = writeln!(out);
     let _ = writeln!(out, "| Field | Present | Rate |");
     let _ = writeln!(out, "| --- | ---: | ---: |");
@@ -1994,6 +2047,66 @@ fn portal_file_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reason(title: &str, description: Option<&str>) -> Option<NoiseReason> {
+        noise_reason(&ParquetExportConfig::default(), title, description)
+    }
+
+    #[test]
+    fn noise_patterns_match_whole_title_words() {
+        for title in [
+            "Test upload",
+            "Dataset di prova",
+            "Esempio: bilancio",
+            "test-dataset-2024",
+            "Upload_TEST",
+        ] {
+            assert_eq!(
+                reason(title, Some("desc")),
+                Some(NoiseReason::NoiseTitle),
+                "{title}"
+            );
+        }
+    }
+
+    #[test]
+    fn noise_patterns_keep_titles_that_only_contain_them() {
+        for title in [
+            "Latest population estimates",
+            "Contest results 2024",
+            "Protest permits",
+            "Attestazioni SOA",
+            "Delibere di approvazione bilancio",
+            "Prove di laboratorio",
+        ] {
+            assert_eq!(reason(title, Some("desc")), None, "{title}");
+        }
+    }
+
+    #[test]
+    fn configured_noise_patterns_match_case_insensitively() {
+        let config = ParquetExportConfig {
+            noise_patterns: vec!["TEST".into()],
+            ..ParquetExportConfig::default()
+        };
+        assert_eq!(
+            noise_reason(&config, "Test upload", Some("desc")),
+            Some(NoiseReason::NoiseTitle)
+        );
+    }
+
+    #[test]
+    fn noise_reason_reports_first_failing_rule() {
+        assert_eq!(reason("Test", None), Some(NoiseReason::ShortTitle));
+        assert_eq!(
+            reason("Test upload", Some("   ")),
+            Some(NoiseReason::EmptyDescription)
+        );
+        assert_eq!(
+            reason("Air quality", None),
+            Some(NoiseReason::EmptyDescription)
+        );
+    }
 
     #[test]
     fn test_extract_tags() {
