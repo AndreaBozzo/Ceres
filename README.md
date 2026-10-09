@@ -1,440 +1,86 @@
 <div align="center">
-  <img src="website/src/assets/images/logo.png" alt="Ceres Logo" width="800" height="auto"/>
+  <img src="website/src/assets/images/logo.png" alt="Ceres logo" width="800" height="auto"/>
   <h1>Ceres</h1>
-  <p><strong>Harvest-first toolkit for open data portals — one synchronized catalog from 300+ portals and 2M+ datasets</strong></p>
-  <p>
-    <a href="https://crates.io/crates/ceres-search"><img src="https://img.shields.io/crates/v/ceres-search.svg" alt="crates.io"></a>
-    <a href="https://github.com/AndreaBozzo/Ceres/actions"><img src="https://github.com/AndreaBozzo/Ceres/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://github.com/AndreaBozzo/Ceres/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
-    <a href="https://discord.gg/fztdKSPXSz"><img src="https://img.shields.io/discord/1469399961987711161?color=5865F2&logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
-    <a href="https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-Open%20Data%20Index-yellow" alt="HuggingFace Dataset"></a>
-  </p>
-  <p>
-    <a href="https://learnceres.pages.dev">Website</a> •
-    <a href="#quick-start">Quick Start</a> •
-    <a href="#supported-portals">Supported Portals</a> •
-    <a href="#the-open-data-index">The Index</a> •
-    <a href="#rest-api">REST API</a>
-  </p>
+  <p><strong>Harvest open data portal metadata into one PostgreSQL catalog.</strong></p>
+
+  [![crates.io](https://img.shields.io/crates/v/ceres-search.svg)](https://crates.io/crates/ceres-search)
+  [![CI](https://github.com/AndreaBozzo/Ceres/actions/workflows/ci.yml/badge.svg)](https://github.com/AndreaBozzo/Ceres/actions)
+  [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/AndreaBozzo/Ceres/blob/master/LICENSE)
+  [![Hugging Face dataset](https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-Open%20Data%20Index-yellow)](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index)
+
+  [Website](https://learnceres.pages.dev) · [Supported portals](https://learnceres.pages.dev/portals/) · [Harvesting](https://learnceres.pages.dev/harvesting/) · [REST API](https://learnceres.pages.dev/api/) · [Open Data Index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index)
+
 </div>
 
----
+Ceres reads dataset metadata from open data portals and keeps it in sync in PostgreSQL: incremental fetches, stale marking instead of deletion, and bounded memory on catalogs with millions of records. It speaks ten portal APIs: CKAN, DCAT (udata REST and SPARQL), Project Open Data `data.json`, Socrata, OpenDataSoft, ArcGIS Hub, OGC CSW, STAC and SDMX.
 
-Open data is fragmented across thousands of portals speaking different APIs — CKAN, DCAT, SPARQL, `data.json`, Socrata, OGC CSW, STAC, and SDMX. Ceres harvests them into **one synchronized PostgreSQL catalog**: incremental sync, delta detection, stale tracking, bounded memory on multi-million-dataset sources.
+Embeddings, semantic search, a REST API and Parquet snapshots are optional layers on top. Building a catalog needs no API key and no GPU.
 
-Everything else is layered on top, and optional: local embeddings, semantic search, a REST API, and reproducible Parquet snapshots published as the public **[Ceres Open Data Index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index)**.
+## Harvest a portal
 
-> Named after the Roman goddess of harvest and agriculture.
-
-## At a Glance
-
-- **300+ portals** harvested and kept in sync — national portals (data.gov, data.europa.eu, data.slovensko.sk, govdata.de), cities (Milano, NYC, Zurich), and agencies
-- **2M+ datasets** in the live catalog and published snapshots
-- **10 harvest paths** shipped, including OGC CSW 2.0.2, collection-level STAC, and dataflow-level SDMX alongside the major open-data portal families
-- **Metadata-only by default** — no embedding provider, API key, or GPU required to build and maintain a catalog
-- **Local-first embeddings** via Ollama when you want semantic search; Gemini and OpenAI supported
-- **Reproducible exports** — Parquet snapshots with versioned manifests, SHA-256 checksums, coverage/quality reports, and changelogs
-
-## Why Harvest-First
-
-Most open data tooling starts at search. In practice the hard part comes earlier:
-
-- Portals expose different APIs, capabilities, and reliability profiles
-- Large catalogs need incremental syncs and bounded memory usage
-- Removed datasets must be detected without deleting history
-- Embedding is optional, slower, and operationally distinct — it should never block harvesting
-
-Ceres splits the system accordingly:
-
-1. **Harvest and normalize metadata** — `HarvestService`, always available
-2. **Optionally embed and search** — `EmbeddingService`, added later if useful
-
-## Supported Portals
-
-| Type | Flag | Serves | Examples |
-|---|---|---|---|
-| CKAN | `--type ckan` | CKAN action API portals | dati.comune.milano.it, data.ontario.ca, data.gov.kg |
-| DCAT udata REST | `--type dcat` (default profile) | udata-flavored DCAT-AP portals | data.gouv.fr, data.public.lu |
-| DCAT SPARQL | `--type dcat --profile sparql` | SPARQL-backed DCAT-AP catalogs | data.europa.eu, data.slovensko.sk |
-| Project Open Data | `--type dcat --profile static_json` | Static DCAT-US `data.json` catalogs | data.va.gov, census.gov, justice.gov |
-| Socrata | `--type socrata` | Socrata Discovery API catalogs | data.cityofnewyork.us, data.wa.gov |
-| OpenDataSoft | `--type opendatasoft` | OpenDataSoft Explore API v2.1 catalogs | opendata.paris.fr, data.economie.gouv.fr |
-| ArcGIS Hub | `--type arcgis` | ArcGIS Hub Search API catalogs | opendata.dc.gov, opendata.gis.utah.gov |
-| OGC Records | `--type ogc_records` | CSW 2.0.2 / GeoNetwork catalogs | EMODnet, Copernicus Marine |
-| STAC | `--type stac` | Collection-level STAC APIs | Copernicus Data Space, Canada DataCube |
-| SDMX | `--type sdmx` | Dataflow-level SDMX REST services | Eurostat, OECD, ILOSTAT, ISTAT, ECB |
-
-All clients stream page-by-page, preserve the complete source metadata for downstream use, and share the same sync machinery (incremental sync, content-hash delta detection, stale marking).
-
-## The Open Data Index
-
-Ceres is both a toolkit and a working pipeline. The catalog it maintains is published as the **[Ceres Open Data Index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index)** on Hugging Face: a curated, deduplicated Parquet snapshot of open dataset metadata across national, regional, and city portals worldwide.
-
-Each snapshot ships a verifiable contract:
-
-- `all.parquet` — the canonical complete index (per-portal subsets under `data/`)
-- `metadata.json` — versioned manifest: snapshot ID, provenance, per-portal counts, SHA-256 checksums
-- `reports.json` / `report.md` — coverage by portal/type/language and field-completeness rates
-- `changelog.json` / `changelog.md` — dataset-level diff against the previous snapshot
-
-## Quick Start
-
-### Prerequisites
-
-- Rust 1.95+
-- Docker and Docker Compose
-- Optional for embeddings: [Ollama](https://ollama.com) locally, or Gemini/OpenAI credentials
-
-### 1. Clone and start the database
+Rust 1.95+ and Docker:
 
 ```bash
-git clone https://github.com/AndreaBozzo/Ceres.git
-cd Ceres
-docker compose up db -d
-cp .env.example .env
-make migrate
-```
+git clone https://github.com/AndreaBozzo/Ceres.git && cd Ceres
+docker compose up db -d && cp .env.example .env && make migrate
 
-### 2. Harvest metadata first
-
-```bash
-# Single CKAN portal
 cargo run --bin ceres -- harvest https://dati.comune.milano.it --metadata-only
-
-# DCAT portal
-cargo run --bin ceres -- harvest https://data.public.lu --type dcat --metadata-only
-
-# Socrata portal (no app token required for public reads)
-cargo run --bin ceres -- harvest https://data.cityofnewyork.us --type socrata --metadata-only
-
-# OpenDataSoft portal (no API key required for public reads)
 cargo run --bin ceres -- harvest https://opendata.paris.fr --type opendatasoft --metadata-only
-
-# ArcGIS Hub portal (no credentials required)
-cargo run --bin ceres -- harvest https://opendata.dc.gov --type arcgis --metadata-only
-
-# STAC API (one row per Collection; Items are never harvested)
-cargo run --bin ceres -- harvest https://stac.dataspace.copernicus.eu/v1/ --type stac --metadata-only
-
-# SDMX REST service (one row per dataflow; observations are never harvested)
-cargo run --bin ceres -- harvest https://sdmx.oecd.org/public/rest --type sdmx --metadata-only
-
-# All enabled portals from config
-cargo run --bin ceres -- harvest --config examples/portals.toml --metadata-only
-```
-
-### 3. Add embeddings only if you want semantic search
-
-With Ollama locally:
-
-```bash
-ollama serve
-ollama pull nomic-embed-text
-
-export EMBEDDING_PROVIDER=ollama
-cargo run --bin ceres -- embed
-```
-
-### 4. Search or export
-
-```bash
-cargo run --bin ceres -- search "public transport" --limit 5
-cargo run --bin ceres -- export --format jsonl > datasets.jsonl
 cargo run --bin ceres -- stats
 ```
 
-## Configuration
-
-### Embeddings are optional
-
-If you only want harvesting, run with `--metadata-only` and skip embedding configuration entirely.
-
-If you want embeddings later, set:
-
-```bash
-EMBEDDING_PROVIDER=ollama
-OLLAMA_ENDPOINT=http://localhost:11434
-EMBEDDING_MODEL=nomic-embed-text
-```
-
-Hosted providers are still supported:
-
-```bash
-EMBEDDING_PROVIDER=gemini
-GEMINI_API_KEY=...
-
-# or
-
-EMBEDDING_PROVIDER=openai
-OPENAI_API_KEY=...
-EMBEDDING_MODEL=text-embedding-3-small
-```
-
-### Portal configuration
-
-Batch harvesting uses `portals.toml`:
+For many portals, list them in `portals.toml` and run `ceres harvest` with no URL. Each portal fails on its own, and the run ends with a per-portal summary:
 
 ```toml
 [[portals]]
 name = "milano"
 url = "https://dati.comune.milano.it"
 type = "ckan"
-language = "it"
-
-[[portals]]
-name = "nyc"
-url = "https://data.cityofnewyork.us"
-type = "socrata"
-language = "en"
-
-[[portals]]
-name = "europa"
-url = "https://data.europa.eu"
-type = "dcat"
-profile = "sparql"
-language = "en"
 ```
 
-See `examples/portals.toml` for a larger configuration set.
+[`examples/portals.toml`](examples/portals.toml) has 300+ entries, and [Supported portals](https://learnceres.pages.dev/portals/) covers each type's flags and keys.
 
-Socrata public catalogs can be harvested without credentials. For higher
-Discovery API rate limits, set `SOCRATA_APP_TOKEN`; Ceres sends it through the
-`X-App-Token` header and never stores it in portal configuration.
-
-OpenDataSoft public catalogs also work anonymously. For higher Explore API
-quotas, set `ODS_API_KEY`; Ceres sends it as an `Authorization: Apikey ...`
-header and never stores it in portal configuration.
-
-### Harvest resilience / HTTP tuning
-
-Harvesting is hardened for slow or rate-limiting portals: the CKAN client grows
-its per-request timeout (and shrinks the page size) when a page times out, and
-the DCAT client waits out `429` rate limits with an escalating per-page cooldown
-instead of stopping with partial results. You can tune the HTTP behavior with
-environment variables (defaults shown):
+## Search it, if you want
 
 ```bash
-CERES_HTTP_TIMEOUT_SECS=60     # base per-request timeout (raise for very slow portals)
-CERES_HTTP_MAX_RETRIES=3       # transient-error retry attempts
-CERES_HTTP_RETRY_BASE_MS=500   # base backoff delay
+ollama pull nomic-embed-text
+EMBEDDING_PROVIDER=ollama cargo run --bin ceres -- embed
+cargo run --bin ceres -- search "public transport" --limit 5
 ```
 
-### US data.gov
+Gemini and OpenAI also work as embedding providers. `ceres-server` serves the same catalog over a REST API with OpenAPI docs.
 
-`catalog.data.gov` no longer serves the `/api/3/action` CKAN API; it relocated to
-`api.gsa.gov` and requires an API key. To harvest it, set `DATA_GOV_API_KEY`
-(get a free key at <https://api.data.gov/signup/>):
+## The Open Data Index
 
-```bash
-DATA_GOV_API_KEY=your-api-data-gov-key
-ceres harvest https://catalog.data.gov --type ckan --metadata-only
-```
+The catalog is published on Hugging Face as the [Ceres Open Data Index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index): 2M+ dataset records from 300+ portals, in Parquet, with a checksummed manifest, a coverage and quality report, and a changelog against the previous snapshot.
 
-Datasets are still attributed to `catalog.data.gov`. Without the key, data.gov
-requests return `403`.
+Each snapshot is dated by its export. A scheduled harvest refreshes a few portals between snapshots; the rest were last harvested by hand, so a snapshot's date is not the date of every record.
 
-## Usage
+## What you can count on
 
-### Harvest
+- **Harvesting never waits on embeddings.** The metadata path runs with no provider configured.
+- **Partial runs say so.** A catalog read only in part is recorded as `partial`, and a batch with failed portals exits with code 2.
+- **Removals are kept.** Datasets that disappear from a portal are marked stale, not deleted.
+- **Source metadata is kept whole.** Normalized resources sit next to the raw portal record.
+- **Snapshots are verifiable.** Every file has a SHA-256 checksum in the manifest.
 
-```bash
-# All enabled portals from config
-ceres harvest
+## Status
 
-# Bound portal-level concurrency (default: 4; env: CERES_BATCH_CONCURRENCY)
-ceres harvest --metadata-only --concurrency 6
+Maintenance mode after v0.7.0: fixes and security updates land, new portal families are not planned. Known limits:
 
-# Ad-hoc harvests by portal type
-ceres harvest https://dati.comune.milano.it
-ceres harvest https://data.public.lu --type dcat
-ceres harvest https://data.europa.eu --type dcat --profile sparql
-ceres harvest https://www.data.va.gov/data.json --type dcat --profile static_json --metadata-only
-ceres harvest https://data.cityofnewyork.us --type socrata --metadata-only
-ceres harvest https://opendata.paris.fr --type opendatasoft --metadata-only
-ceres harvest https://opendata.dc.gov --type arcgis --metadata-only
+- Change detection compares title and description only. A license or resource change with the same text is not written on re-harvest. [Harvesting](https://learnceres.pages.dev/harvesting/#tier-2-delta-detection) explains the workaround.
+- Some portals cap pagination or block cloud runners, so their harvests can be partial. The run reports which ones.
 
-# Named portal from config
-ceres harvest --portal milano --config examples/portals.toml
+## Learn more
 
-# Force full sync
-ceres harvest --portal milano --full-sync
-
-# Dry run
-ceres harvest --portal milano --dry-run --metadata-only
-```
-
-Batch mode isolates portal failures, preserves configuration order in its final
-summary, and reports each portal's status, dataset count, duration, and stable
-error class. One failed portal does not stop the remaining portals.
-
-For schedulers, set `CERES_LOG_FORMAT=json` (or pass `--log-format json`) to
-emit newline-delimited JSON events. Batch exit codes are stable: `0` means every
-portal succeeded, `2` means one or more portals failed, and `1` means a fatal
-startup/configuration/database error.
-
-### Embed
-
-```bash
-# Embed everything pending
-ceres embed
-
-# Only one portal
-ceres embed --portal https://dati.comune.milano.it
-```
-
-### Search
-
-```bash
-ceres search "air quality monitoring" --limit 10
-```
-
-### Export
-
-```bash
-ceres export --format jsonl > datasets.jsonl
-ceres export --format csv > datasets.csv
-ceres export --format parquet --output ./ceres-export
-```
-
-### Published snapshot contract
-
-A Parquet export produces one portable snapshot directory:
-
-- `all.parquet` is the **canonical complete index**.
-- `data/<portal>.parquet` files are convenience subsets and intentionally repeat
-  rows from `all.parquet`; do not add their row counts to the canonical total.
-- Both dataset file variants use snapshot schema v2, including a non-null
-  `resources` list of `{name, format, media_type, url, field_count}` structs
-  normalized from the source metadata. An empty list means the portal exposed no
-  usable resource detail; the optional strings remain null when a facet is absent.
-- `metadata.json` is a versioned manifest with the snapshot ID, UTC generation
-  time, Ceres version and commit, portal-config checksum, dataset schema
-  documentation, curation counts, per-portal inclusion status, and SHA-256
-  checksums for every Parquet file.
-- `reports.json` schema v2 is a versioned coverage and quality report: dataset coverage by
-  portal, portal type/profile, and language; field-completeness rates; global and
-  per-portal resource/schema completeness; resource format and media-type
-  distributions (counting resources, not datasets); and curation outcomes (raw, exported, filtered,
-  duplicate-flagged, and excluded portals). It is derived from the same export
-  pass, so its figures match `metadata.json`.
-- `report.md` is a human-readable summary of `reports.json` for the dataset card
-  and release notes.
-
-Verify the checksums in `metadata.json` before consuming a copied or mirrored
-snapshot. A library caller that does not supply build metadata records the Git
-commit as `unknown`; the `ceres` CLI populates it automatically.
-
-### Stats
-
-```bash
-ceres stats
-```
-
-## Harvesting Model
-
-The harvesting pipeline is built around a few operational principles:
-
-- Incremental sync when the source supports it
-- Full-sync fallback when incremental fetch is not available or fails
-- Content-hash delta detection so unchanged datasets are not re-embedded
-- Streaming page-by-page processing to keep memory bounded
-- Stale dataset marking instead of hard deletion
-
-Embedding is fully decoupled from harvesting:
-
-- `HarvestService` stores and updates metadata
-- `EmbeddingService` processes datasets with missing embeddings
-- `HarvestPipeline` composes both when you want the combined flow
-
-That separation is what makes local-first embedding practical and keeps harvest jobs usable even when no embedder is configured.
-
-## Container deployment
-
-The production image contains both `ceres` and `ceres-server`, plus bundled
-database migrations for fresh managed PostgreSQL environments. See the
-[unattended container deployment guide](https://learnceres.pages.dev/deployment/)
-for Supabase/Neon connection guidance, finite scheduled jobs, secrets, exit
-codes, and server probes. Container schedulers can invoke `ceres-job` directly;
-it runs the metadata-only batch and preserves the CLI's exact exit code. The
-included weekly/manual GitHub Actions workflow is the maintainer deployment.
-On Supabase Free, a separate lightweight Monday-Saturday database heartbeat
-reduces the risk of inactivity pausing; the Sunday harvest supplies that day's
-database activity and remains the only job that contacts portals.
-
-## REST API
-
-Start the server:
-
-```bash
-cargo run --bin ceres-server
-```
-
-Available endpoints:
-
-- `GET /api/v1/health`
-- `GET /api/v1/health/live`
-- `GET /api/v1/health/ready`
-- `GET /api/v1/stats`
-- `GET /api/v1/search`
-- `GET /api/v1/portals`
-- `GET /api/v1/portals/{name}/stats`
-- `GET /api/v1/harvest/status`
-- `GET /api/v1/datasets/{id}`
-- `GET /api/v1/datasets/{id}/schema`
-- `POST /api/v1/portals/{name}/harvest`
-- `POST /api/v1/harvest`
-- `GET /api/v1/export`
-- `GET /swagger-ui`
-
-Set `CERES_ADMIN_TOKEN` to enable protected write endpoints.
-
-`GET /api/v1/datasets/{id}/schema` is the supported public contract for
-normalized resources, distributions, and column fields. The `metadata` object
-returned by `GET /api/v1/datasets/{id}` preserves source-specific detail for
-inspection and debugging; its shape is best-effort and may vary between portal
-families. Before serving that public response, Ceres recursively strips
-configured sensitive keys (`maintainer_email`, `author_email`, and `contact_*`
-by default). Set `CERES_METADATA_REDACT_KEYS` to replace the comma-separated,
-case-insensitive rules; a trailing `*` matches a key prefix. Stored metadata,
-authenticated exports, and Parquet snapshots remain unchanged. See the
-[REST API contract](website/src/content/docs/API.md) for the response shape,
-nullability rules, and a populated example.
-
-Server-triggered harvest jobs use the matching `portals.toml` entry for both
-`POST /api/v1/portals/{name}/harvest` and `POST /api/v1/harvest`: portal
-`type`, DCAT `profile`, language, URL template, and optional
-`sparql_endpoint` are copied onto each durable job before the worker runs it.
-
-## Agentic Usage (Claude Code and friends)
-
-Ceres ships with agent support in-repo:
-
-- [`AGENTS.md`](AGENTS.md) — contributor guide for coding agents (project map, conventions, validation commands); `CLAUDE.md` points Claude Code at it
-- [`.claude/skills/ceres`](.claude/skills/ceres/SKILL.md) — a Claude Code skill covering architecture, traits, CLI/REST usage, and extension points; picked up automatically when you open the repo with Claude Code
-- [`.claude/skills/ceres-publish-dataset`](.claude/skills/ceres-publish-dataset/SKILL.md) — the maintainer workflow for publishing Open Data Index snapshots to Hugging Face
-
-## Roadmap
-
-- **Now (v0.6.0)** — coverage foundations: OpenDataSoft Explore, ArcGIS Hub, Project Open Data `data.json`, OGC CSW 2.0.2, and collection-level STAC harvest paths shipped; opt-in per-profile live smoke checks and a reproducible metadata-only [coverage validation set](https://learnceres.pages.dev/portals/#coverage-validation-set-v060)
-- **Next (v0.7.0)** — resource-level metadata depth: first-class distribution/resource metadata in snapshots and APIs ([#68](https://github.com/AndreaBozzo/Ceres/issues/68))
-- **Shipped (v0.5.0)** — trustable published index: versioned snapshot manifests, integrity checksums, coverage/quality reports, alias-aware duplicate semantics, and snapshot changelogs
-
-## Related Projects
-
-The Ceres Open Data Index is a source of truth for downstream apps. These consume the same published Hugging Face snapshot, so they stay in sync with the catalog without re-harvesting:
-
-- [**databricks-ceres-pipeline**](https://github.com/AndreaBozzo/databricks-ceres-pipeline) — a Medallion Architecture (Bronze → Silver → Gold) analytics pipeline on Databricks. Ingests the snapshot into Delta Lake and produces analytics tables (ingestion trends, topic frequency, per-portal stats) plus a lightweight Spark-SQL TF-IDF semantic search, packaged as a Databricks Asset Bundle.
-- [**ceres-discovery-agent**](https://github.com/AndreaBozzo/ceres-discovery-agent) — a natural-language discovery agent on Databricks Free Edition. Composes Agent Bricks (Genie text-to-SQL + Knowledge Assistant + Multi-Agent Supervisor) over the index so you can ask *"find open-licensed transport datasets in Italy updated this year"* and get an answer without writing SQL.
-
-Data and docs:
-
-- [AndreaBozzo/ceres-open-data-index](https://huggingface.co/datasets/AndreaBozzo/ceres-open-data-index) — published dataset snapshots on Hugging Face
-- [learnceres.pages.dev](https://learnceres.pages.dev) — documentation website
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md), [`AGENTS.md`](AGENTS.md), and the crate-level docs for development setup, tests, and release workflow. This project follows a [Code of Conduct](CODE_OF_CONDUCT.md); security issues are handled per the [security policy](SECURITY.md). Come talk to us on [Discord](https://discord.gg/fztdKSPXSz).
+- [Harvesting](https://learnceres.pages.dev/harvesting/): sync tiers, batch runs, exit codes, HTTP tuning
+- [Deployment](https://learnceres.pages.dev/deployment/): the container image and unattended scheduled jobs
+- [REST API](https://learnceres.pages.dev/api/): endpoints, the schema contract and metadata redaction
+- [Embeddings and costs](https://learnceres.pages.dev/cost/): provider setup
+- [`AGENTS.md`](AGENTS.md) and the in-repo [Claude Code skill](.claude/skills/ceres/SKILL.md) for working on the code with an agent
+- Downstream uses of the index: [databricks-ceres-pipeline](https://github.com/AndreaBozzo/databricks-ceres-pipeline) and [ceres-discovery-agent](https://github.com/AndreaBozzo/ceres-discovery-agent)
+- [Changelog](CHANGELOG.md), [contributing](CONTRIBUTING.md), [security policy](SECURITY.md) and [Discord](https://discord.gg/fztdKSPXSz)
 
 ## License
 
-Apache-2.0. See `LICENSE`.
+[Apache-2.0](LICENSE).

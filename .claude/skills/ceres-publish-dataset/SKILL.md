@@ -30,7 +30,7 @@ The export streams all non-stale datasets from PostgreSQL, applies curation, and
 - `data/<portal-name>.parquet` — Per-portal subsets (repeat rows from `all.parquet`; never sum into the canonical total)
 - `identity.parquet` — Slim per-record fingerprint (`source_portal`, `original_id`, `content_hash`) used to diff snapshots; one row per `all.parquet` row
 - `metadata.json` — Versioned snapshot manifest: stable `snapshot_id`, UTC `generated_at`, Ceres version/commit, portal-config checksum, `duplicate_detection` provenance (method/version/alias_groups), curation row counts, per-portal inclusion status, and SHA-256 checksums for every file
-- `reports.json` — Machine-readable coverage and quality report: coverage by portal/type/profile/language, field-completeness rates (description, license, organization, tags, modification date), and curation outcomes (raw, exported, filtered, duplicate-flagged, duplicate-detection method/version, excluded portals)
+- `reports.json` — Machine-readable coverage and quality report: coverage by portal/type/profile/language, field-completeness rates (description, license, organization, tags, modification date), and curation outcomes (raw, exported, filtered with a per-rule split, noise-filter version, duplicate-flagged, duplicate-detection method/version, excluded portals)
 - `report.md` — Human-readable summary of `reports.json` for the dataset card / release notes
 - `changelog.json` / `changelog.md` — Snapshot-to-snapshot diff (added/changed/removed/unchanged, with per-portal summaries), written only when `--previous <DIR>` points at a prior snapshot; otherwise a zeroed baseline changelog with `compared: false`
 
@@ -44,7 +44,7 @@ To publish a changelog, point `--previous` at the prior published snapshot direc
 ceres export --format parquet --output ~/ceres-open-data-index --previous ~/ceres-open-data-index
 ```
 
-The diff is keyed by the stable identity (`source_portal` + `original_id`) read from each snapshot's `identity.parquet`. "Changed" means the `content_hash` (SHA-256 of title+description) differs; source modification timestamps are not used because portal coverage of them is incomplete.
+The diff is keyed by the stable identity (`source_portal` + `original_id`) read from each snapshot's `identity.parquet`. "Changed" means the `content_hash` (SHA-256 of title+description) differs; source modification timestamps are not used because portal coverage of them is incomplete. A license, resource, or other metadata change with identical title and description is neither counted as changed nor written by the harvester, so do not describe the changelog as tracking metadata changes in general.
 
 Portal names are resolved from `~/.config/ceres/portals.toml`. Portals not in the config fall back to hostname-based naming (e.g. `https://data.gov.ro` becomes `data-gov-ro`).
 
@@ -71,7 +71,7 @@ The export takes ~30-40 minutes for 900k+ datasets due to JSONB flattening.
 
 ## Curation Rules (applied automatically during export)
 
-- **Noise filter**: Removes datasets where title < 5 chars, description is empty, or title contains "test"/"prova"/"esempio" (case-insensitive substring match)
+- **Noise filter** (version recorded as `curation.noise_filter_version` in `reports.json`): Removes datasets where title < 5 bytes, description is empty, or a whole title word is "test"/"prova"/"esempio" (case-insensitive). Version 1 (snapshots up to v6) matched these as substrings and also dropped titles such as "Latest estimates" or "approvazione"; expect the filtered count to drop when comparing against v6 or earlier. `curation.filtered_by_reason` splits the filtered count per rule. Field-completeness rates are over exported rows, so description completeness is 100% by construction
 - **Duplicate flag** (heuristic, not canonical dedup): Same title (case-insensitive) across different portals sets `is_duplicate=true`. Duplicates are kept, not removed. Portals may declare `aliases = [...]` in `portals.toml`; aliased/mirror URLs are folded onto their canonical portal first, so a mirror is not counted as an independent source. The matching rule and version are recorded in `metadata.json` under `duplicate_detection`. Core SQL: `SELECT LOWER(title) FROM datasets GROUP BY LOWER(title) HAVING COUNT(DISTINCT <canonicalized source_portal>) > 1`
 - **Metadata flattening**: Tags from `metadata.tags[].name`, organization from `metadata.organization.title`, license from `metadata.license_title`
 
@@ -101,8 +101,8 @@ The README at `~/ceres-open-data-index/README.md` uses HuggingFace dataset card 
 2. **Opening line**: Total datasets count, portal count, country count
 3. **Files section**: Row count, file count
 4. **Portal table** (`### Splits by portal`): Add new portals, update all counts, sort by count descending
-5. **Curation section**: Noise filtering count, duplicate flagging count
-6. **Update frequency**: Snapshot date
+5. **Curation section**: Noise filtering count with its per-rule split, duplicate flagging count
+6. **Update frequency**: Snapshot date, plus which portals the scheduled harvest currently refreshes versus those last harvested by hand. Coverage, maintained coverage, and publication date are different claims; do not let the card imply the whole index is refreshed on a schedule
 7. **Known biases**: Geographic skew percentages, language distribution, portal selection notes
 8. **Citation block**: Snapshot date, portal count
 
