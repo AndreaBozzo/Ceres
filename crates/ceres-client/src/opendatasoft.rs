@@ -33,7 +33,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::time::sleep;
 
-use crate::transport::require_secure_key_transport;
+use crate::transport::{credential_redirect_policy, require_secure_key_transport};
 
 /// Maximum page size accepted by the Explore API (`-1 <= limit <= 100`).
 const PAGE_SIZE: usize = 100;
@@ -114,15 +114,15 @@ impl OpenDataSoftClient {
         let api_key = std::env::var("ODS_API_KEY")
             .ok()
             .filter(|key| !key.trim().is_empty());
-        Self::new_with_api_key(base_url, api_key)
+        Self::new_with_credentials(base_url, api_key)
     }
 
     /// Creates a client with an explicitly supplied optional API key.
-    pub fn new_with_api_key(base_url: &str, api_key: Option<String>) -> Result<Self, AppError> {
-        Self::new_with_api_key_and_http_config(base_url, api_key, HttpConfig::from_env())
+    pub fn new_with_credentials(base_url: &str, api_key: Option<String>) -> Result<Self, AppError> {
+        Self::new_with_credentials_and_http_config(base_url, api_key, HttpConfig::from_env())
     }
 
-    fn new_with_api_key_and_http_config(
+    fn new_with_credentials_and_http_config(
         base_url: &str,
         api_key: Option<String>,
         http_config: HttpConfig,
@@ -154,8 +154,11 @@ impl OpenDataSoftClient {
             None => None,
         };
 
-        let client = Client::builder()
-            .user_agent("Ceres/0.6 (open-data-harvester)")
+        let mut builder = Client::builder().user_agent("Ceres/0.6 (open-data-harvester)");
+        if api_key_header.is_some() {
+            builder = builder.redirect(credential_redirect_policy());
+        }
+        let client = builder
             .build()
             .map_err(|error| AppError::ClientError(error.to_string()))?;
 
@@ -711,7 +714,7 @@ mod tests {
     }
 
     fn test_client(uri: &str) -> OpenDataSoftClient {
-        OpenDataSoftClient::new_with_api_key_and_http_config(uri, None, test_http_config(1))
+        OpenDataSoftClient::new_with_credentials_and_http_config(uri, None, test_http_config(1))
             .unwrap()
     }
 
@@ -798,19 +801,43 @@ mod tests {
             .await;
 
         let client =
-            OpenDataSoftClient::new_with_api_key(&server.uri(), Some("secret-key".into())).unwrap();
+            OpenDataSoftClient::new_with_credentials(&server.uri(), Some("secret-key".into()))
+                .unwrap();
         assert_eq!(client.dataset_count().await.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn refuses_redirect_to_cleartext_host_with_api_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/explore/v2.1/catalog/datasets"))
+            .respond_with(ResponseTemplate::new(302).insert_header(
+                "location",
+                "http://cleartext.invalid/api/explore/v2.1/catalog/datasets",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OpenDataSoftClient::new_with_credentials_and_http_config(
+            &server.uri(),
+            Some("secret-key".into()),
+            test_http_config(1),
+        )
+        .unwrap();
+        let err = client.dataset_count().await.unwrap_err().to_string();
+        assert!(err.contains("error following redirect"), "{err}");
     }
 
     #[test]
     fn refuses_api_key_for_cleartext_portal() {
-        let Err(err) =
-            OpenDataSoftClient::new_with_api_key("http://data.example.org", Some("secret".into()))
-        else {
+        let Err(err) = OpenDataSoftClient::new_with_credentials(
+            "http://data.example.org",
+            Some("secret".into()),
+        ) else {
             panic!("an http portal must not receive the API key");
         };
         assert!(err.to_string().contains("not https"), "{err}");
-        assert!(OpenDataSoftClient::new_with_api_key("http://data.example.org", None).is_ok());
+        assert!(OpenDataSoftClient::new_with_credentials("http://data.example.org", None).is_ok());
     }
 
     #[tokio::test]
@@ -1072,7 +1099,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = OpenDataSoftClient::new_with_api_key_and_http_config(
+        let client = OpenDataSoftClient::new_with_credentials_and_http_config(
             &server.uri(),
             None,
             test_http_config(2),
@@ -1181,7 +1208,7 @@ mod tests {
         // Override the portal with CERES_ODS_SMOKE_URL.
         let url = std::env::var("CERES_ODS_SMOKE_URL")
             .unwrap_or_else(|_| "https://opendata.paris.fr".to_string());
-        let client = OpenDataSoftClient::new_with_api_key(&url, None).unwrap();
+        let client = OpenDataSoftClient::new_with_credentials(&url, None).unwrap();
         let count = client.dataset_count().await.unwrap();
         assert!(count > 0, "{url} returned no datasets");
         let mut stream = client.search_all_datasets_stream();

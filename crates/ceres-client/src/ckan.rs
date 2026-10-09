@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::time::sleep;
 
-use crate::transport::require_secure_key_transport;
+use crate::transport::{credential_redirect_policy, require_secure_key_transport};
 
 /// Generic wrapper for CKAN API responses.
 ///
@@ -252,10 +252,7 @@ impl CkanClient {
 
     /// Shared constructor: builds the HTTP client and assembles the struct.
     fn build(base_url: Url, action_base: Url, api_key: Option<String>) -> Result<Self, AppError> {
-        if api_key.is_some() {
-            require_secure_key_transport(&action_base, "api_key")?;
-        }
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .user_agent(concat!(
                 "Ceres/",
                 env!("CARGO_PKG_VERSION"),
@@ -263,7 +260,12 @@ impl CkanClient {
             ))
             // Client-level timeout is the hard ceiling; each request sets its own
             // (adaptive) timeout via `.timeout()`, which overrides this per-request.
-            .timeout(Self::MAX_PAGE_TIMEOUT)
+            .timeout(Self::MAX_PAGE_TIMEOUT);
+        if api_key.is_some() {
+            require_secure_key_transport(&action_base, "api_key")?;
+            builder = builder.redirect(credential_redirect_policy());
+        }
+        let client = builder
             .build()
             .map_err(|e| AppError::ClientError(e.to_string()))?;
 
@@ -988,6 +990,30 @@ mod tests {
         };
         assert!(err.to_string().contains("not https"), "{err}");
         assert!(!err.to_string().contains("SECRET"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_api_key_redirect_to_cleartext_host_is_refused() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/3/action/package_list"))
+            .respond_with(ResponseTemplate::new(302).insert_header(
+                "location",
+                "http://cleartext.invalid/api/3/action/package_list?api_key=SECRET",
+            ))
+            .mount(&server)
+            .await;
+
+        let action_base = format!("{}/api/3/action/", server.uri());
+        let client =
+            CkanClient::new_with_api_base(&server.uri(), &action_base, Some("SECRET".to_string()))
+                .unwrap();
+        let err = client.list_package_ids().await.unwrap_err().to_string();
+        assert!(err.contains("error following redirect"), "{err}");
+        assert!(!err.contains("SECRET"), "{err}");
     }
 
     #[test]
