@@ -20,6 +20,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::time::sleep;
 
+use crate::transport::require_secure_key_transport;
+
 /// Generic wrapper for CKAN API responses.
 ///
 /// CKAN API reference: <https://docs.ckan.org/en/2.9/api/>
@@ -250,6 +252,9 @@ impl CkanClient {
 
     /// Shared constructor: builds the HTTP client and assembles the struct.
     fn build(base_url: Url, action_base: Url, api_key: Option<String>) -> Result<Self, AppError> {
+        if api_key.is_some() {
+            require_secure_key_transport(&action_base, "api_key")?;
+        }
         let client = Client::builder()
             .user_agent(concat!(
                 "Ceres/",
@@ -970,6 +975,19 @@ mod tests {
         );
         assert!(!msg.contains("TOPSECRET"), "scrub failed: {msg}");
         assert!(msg.contains("REDACTED"));
+    }
+
+    #[test]
+    fn test_new_with_api_base_refuses_key_over_cleartext() {
+        let Err(err) = CkanClient::new_with_api_base(
+            "https://catalog.data.gov",
+            "http://api.example.org/action/",
+            Some("SECRET".to_string()),
+        ) else {
+            panic!("an http action base must not receive the API key");
+        };
+        assert!(err.to_string().contains("not https"), "{err}");
+        assert!(!err.to_string().contains("SECRET"), "{err}");
     }
 
     #[test]

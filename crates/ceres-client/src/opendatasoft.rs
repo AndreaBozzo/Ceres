@@ -27,11 +27,13 @@ use ceres_core::traits::PortalClient;
 use chrono::{DateTime, SecondsFormat, Utc};
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, HeaderValue};
 use reqwest::{Client, StatusCode, Url};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::time::sleep;
+
+use crate::transport::require_secure_key_transport;
 
 /// Maximum page size accepted by the Explore API (`-1 <= limit <= 100`).
 const PAGE_SIZE: usize = 100;
@@ -95,6 +97,8 @@ struct WalkState {
 #[derive(Clone)]
 pub struct OpenDataSoftClient {
     client: Client,
+    /// `Authorization` value sent with every request when `ODS_API_KEY` is set.
+    api_key_header: Option<HeaderValue>,
     base_url: Url,
     catalog_url: Url,
     request_timeout: Duration,
@@ -134,25 +138,30 @@ impl OpenDataSoftClient {
             .join("/api/explore/v2.1/catalog/datasets")
             .map_err(|error| AppError::InvalidPortalUrl(error.to_string()))?;
 
-        let mut headers = HeaderMap::new();
-        if let Some(key) = api_key.filter(|key| !key.trim().is_empty()) {
-            let value = HeaderValue::from_str(&format!("Apikey {}", key.trim())).map_err(|_| {
-                AppError::ConfigError(
-                    "ODS_API_KEY contains characters that are invalid in an HTTP header"
-                        .to_string(),
-                )
-            })?;
-            headers.insert(AUTHORIZATION, value);
-        }
+        let api_key_header = match api_key.filter(|key| !key.trim().is_empty()) {
+            Some(key) => {
+                require_secure_key_transport(&catalog_url, "ODS_API_KEY")?;
+                let mut value =
+                    HeaderValue::from_str(&format!("Apikey {}", key.trim())).map_err(|_| {
+                        AppError::ConfigError(
+                            "ODS_API_KEY contains characters that are invalid in an HTTP header"
+                                .to_string(),
+                        )
+                    })?;
+                value.set_sensitive(true);
+                Some(value)
+            }
+            None => None,
+        };
 
         let client = Client::builder()
             .user_agent("Ceres/0.6 (open-data-harvester)")
-            .default_headers(headers)
             .build()
             .map_err(|error| AppError::ClientError(error.to_string()))?;
 
         Ok(Self {
             client,
+            api_key_header,
             base_url,
             catalog_url,
             request_timeout: http_config.timeout,
@@ -453,13 +462,11 @@ impl OpenDataSoftClient {
         let mut last_error = AppError::Generic("No OpenDataSoft request attempted".to_string());
 
         for attempt in 1..=self.max_retries {
-            match self
-                .client
-                .get(url.clone())
-                .timeout(self.request_timeout)
-                .send()
-                .await
-            {
+            let mut request = self.client.get(url.clone()).timeout(self.request_timeout);
+            if let Some(value) = &self.api_key_header {
+                request = request.header(AUTHORIZATION, value.clone());
+            }
+            match request.send().await {
                 Ok(response) if response.status().is_success() => return Ok(response),
                 Ok(response) => {
                     let status = response.status();
@@ -793,6 +800,17 @@ mod tests {
         let client =
             OpenDataSoftClient::new_with_api_key(&server.uri(), Some("secret-key".into())).unwrap();
         assert_eq!(client.dataset_count().await.unwrap(), 42);
+    }
+
+    #[test]
+    fn refuses_api_key_for_cleartext_portal() {
+        let Err(err) =
+            OpenDataSoftClient::new_with_api_key("http://data.example.org", Some("secret".into()))
+        else {
+            panic!("an http portal must not receive the API key");
+        };
+        assert!(err.to_string().contains("not https"), "{err}");
+        assert!(OpenDataSoftClient::new_with_api_key("http://data.example.org", None).is_ok());
     }
 
     #[tokio::test]

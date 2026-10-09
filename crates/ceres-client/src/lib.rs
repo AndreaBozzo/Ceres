@@ -57,6 +57,7 @@ pub mod sdmx;
 pub mod socrata;
 pub mod sparql;
 pub mod stac;
+mod transport;
 
 // Re-export main client types
 pub use arcgis::{ArcGisClient, ArcGisDataset};
