@@ -466,7 +466,7 @@ fn noise_reason(
     let mut words = title_lower
         .split(|c: char| !c.is_alphabetic())
         .filter(|w| !w.is_empty());
-    if words.any(|w| config.noise_patterns.iter().any(|p| p == w)) {
+    if words.any(|w| config.noise_patterns.iter().any(|p| p.to_lowercase() == w)) {
         return Some(NoiseReason::NoiseTitle);
     }
     None
@@ -2081,6 +2081,18 @@ mod tests {
         ] {
             assert_eq!(reason(title, Some("desc")), None, "{title}");
         }
+    }
+
+    #[test]
+    fn configured_noise_patterns_match_case_insensitively() {
+        let config = ParquetExportConfig {
+            noise_patterns: vec!["TEST".into()],
+            ..ParquetExportConfig::default()
+        };
+        assert_eq!(
+            noise_reason(&config, "Test upload", Some("desc")),
+            Some(NoiseReason::NoiseTitle)
+        );
     }
 
     #[test]
