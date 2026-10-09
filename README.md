@@ -62,7 +62,7 @@ Each snapshot is dated by its export. A scheduled harvest refreshes a few portal
 - **Partial runs say so.** A catalog read only in part is recorded as `partial`, and a batch with failed portals exits with code 2.
 - **Removals are kept.** Datasets that disappear from a portal are marked stale, not deleted.
 - **Source metadata is kept whole.** Normalized resources sit next to the raw portal record.
-- **Snapshots are verifiable.** Every file has a SHA-256 checksum in the manifest.
+- **Snapshots are verifiable.** Every Parquet file has a SHA-256 checksum in the manifest.
 
 ## Status
 

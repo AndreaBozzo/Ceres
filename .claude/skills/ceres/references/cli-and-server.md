@@ -215,7 +215,7 @@ curl http://localhost:3000/api/v1/export \
 | `CB_SUCCESS_THRESHOLD` | `2` | Circuit breaker success threshold |
 | `CB_RATE_LIMIT_BACKOFF_MULTIPLIER` | `2.0` | Backoff multiplier on 429 |
 | `CB_MAX_RECOVERY_TIMEOUT_SECS` | `300` | Max circuit breaker timeout |
-| `CERES_HTTP_TIMEOUT_SECS` | `60` | Base per-request portal HTTP timeout |
+| `CERES_HTTP_TIMEOUT_SECS` | `60` | Base per-request portal HTTP timeout (CKAN, Socrata, OpenDataSoft, ArcGIS Hub only) |
 | `CERES_HTTP_MAX_RETRIES` | `3` | Transient-error retry attempts |
 | `CERES_HTTP_RETRY_BASE_MS` | `500` | Base retry backoff delay in milliseconds |
 

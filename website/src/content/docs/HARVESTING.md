@@ -270,7 +270,7 @@ Even when a dataset is fetched, its embeddable content may not have changed. A p
 
 Delta detection computes a SHA-256 hash of `title + description` (the `content_hash`) and compares it against the stored hash. If the hash matches, the record is skipped.
 
-The hash gates the database write as well as the embedding. A fetched record whose title and description are unchanged is counted as `Unchanged` and is not written, so a change limited to tags, license, resources, or other metadata does not reach the stored row. `--full-sync` does not change this. To refresh that metadata, clear `content_hash` for the affected rows before harvesting.
+The hash gates the metadata upsert. A fetched record whose title and description are unchanged is counted as `Unchanged` and its row is not rewritten, so a change limited to tags, license, resources, or other metadata does not reach the stored row. `--full-sync` does not change this. To refresh that metadata, clear `content_hash` for the affected rows before harvesting.
 
 This matters most when you run the optional embedding stage, whether locally through Ollama or through a hosted provider.
 
@@ -280,7 +280,7 @@ This matters most when you run the optional embedding stage, whether locally thr
 |----------|------------------------------|------------------------|--------|
 | Tag added to dataset | Yes | No | Fetched, not written (stored tags stay stale) |
 | Resource URL updated | Yes | No | Fetched, not written (stored resources stay stale) |
-| Title rewritten | Yes | Yes | Fetch metadata, mark for embedding |
+| Title rewritten | Yes | Yes | Metadata rewritten; an existing embedding is kept |
 | New dataset published | N/A (new) | N/A (new) | Fetch metadata, mark for embedding |
 | Nothing changed | No | N/A (not fetched) | Not fetched at all |
 
@@ -293,7 +293,7 @@ Each dataset processed during a sync receives one of these outcomes:
 | Outcome | Meaning | Embedding generated? |
 |---------|---------|---------------------|
 | `Created` | New dataset, not seen before | Marked pending |
-| `Updated` | Content hash changed (title or description modified) | Marked pending |
+| `Updated` | Content hash changed (title or description modified) | Only if the row has no embedding yet; an existing one is kept |
 | `Unchanged` | Content hash matches stored value; row not rewritten | No |
 | `Failed` | Error during processing | No |
 | `Skipped` | Embedding step was skipped or the circuit breaker is open | No |
@@ -309,7 +309,7 @@ These are tracked via `SyncStats` and reported at the end of each sync operation
 | `--dry-run` | Dry run (no writes) | Still active | Preview what would happen |
 | `--metadata-only` | Same as default | Still active (no embedding) | Harvest without API key |
 
-Delta detection is always active regardless of flags. There is no flag to bypass it. To force re-embedding or a metadata refresh, delete the stored content hashes from the database.
+Delta detection is always active regardless of flags. There is no flag to bypass it. To refresh metadata, delete the affected content hashes from the database. To re-embed, also clear the stored embeddings and run `ceres embed`.
 
 ## Metadata-only mode is the normal harvest path
 
@@ -400,6 +400,8 @@ CERES_HTTP_TIMEOUT_SECS=60     # base per-request timeout; raise it for very slo
 CERES_HTTP_MAX_RETRIES=3       # attempts for transient errors
 CERES_HTTP_RETRY_BASE_MS=500   # base backoff delay
 ```
+
+Not every client reads them. CKAN, Socrata, OpenDataSoft and ArcGIS Hub use all three. DCAT udata REST and SPARQL use the retry settings with fixed request timeouts of 90 and 300 seconds. `data.json`, OGC CSW, STAC and SDMX use fixed timeouts; `data.json` and CSW retry on their own schedule, STAC and SDMX do not retry.
 
 ## Related Source Files
 
