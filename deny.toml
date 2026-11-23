@@ -69,7 +69,10 @@ feature-depth = 1
 #db-urls = ["https://github.com/rustsec/advisory-db"]
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
-ignore = []
+ignore = [
+    { id = "RUSTSEC-2026-0440", reason = "astral-tokio-tar is unmaintained, not a vulnerability. Reached only as a dev-dependency through testcontainers (0.28 is the latest release and still uses it); no shipped binary contains it." },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, not a vulnerability. Used directly by every Ceres crate and by arrow, parquet and sqlx; there is no maintained drop-in replacement." },
+]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
 # Setting this to true can be helpful if you have special authentication requirements that cargo-deny does not support.
@@ -87,6 +90,7 @@ allow = [
     "MIT",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",

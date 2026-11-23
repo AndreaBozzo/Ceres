@@ -29,15 +29,15 @@ pub fn create_router(state: AppState, config: &ServerConfig) -> Router {
         .route("/stats", get(stats::get_stats))
         .route("/search", get(search::search))
         .route("/portals", get(portals::list_portals))
-        .route("/portals/:name/stats", get(portals::get_portal_stats))
+        .route("/portals/{name}/stats", get(portals::get_portal_stats))
         .route("/harvest/status", get(harvest::get_harvest_status))
-        .route("/datasets/:id", get(datasets::get_dataset_by_id))
-        .route("/datasets/:id/schema", get(datasets::get_dataset_schema));
+        .route("/datasets/{id}", get(datasets::get_dataset_by_id))
+        .route("/datasets/{id}/schema", get(datasets::get_dataset_schema));
 
     // Protected routes (require Bearer token)
     let protected_routes = Router::new()
         .route(
-            "/portals/:name/harvest",
+            "/portals/{name}/harvest",
             post(portals::trigger_portal_harvest),
         )
         .route("/harvest", post(harvest::trigger_harvest_all))
@@ -68,9 +68,7 @@ pub fn create_router(state: AppState, config: &ServerConfig) -> Router {
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer)
-        .layer(GovernorLayer {
-            config: governor_config,
-        })
+        .layer(GovernorLayer::new(governor_config))
         .with_state(state)
 }
 

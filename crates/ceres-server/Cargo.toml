@@ -19,10 +19,10 @@ ceres-db.workspace = true
 ceres-client.workspace = true
 
 # Web framework
-axum = { version = "0.7", features = ["macros"] }
-tower = { version = "0.4", features = ["util", "timeout"] }
-tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
-tower_governor = { version = "0.4", features = ["axum"] }
+axum = { version = "0.8", features = ["macros"] }
+tower = { version = "0.5", features = ["util", "timeout"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "compression-gzip"] }
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
@@ -34,8 +34,8 @@ serde.workspace = true
 serde_json.workspace = true
 
 # OpenAPI documentation
-utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "8", features = ["axum"] }
+utoipa = { version = "6", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "10", features = ["axum"] }
 
 # Database
 sqlx.workspace = true
@@ -60,9 +60,9 @@ uuid.workspace = true
 chrono.workspace = true
 
 [dev-dependencies]
-testcontainers = "0.27"
+testcontainers = "0.28"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.4", features = ["util"] }
+tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 serde_json = { workspace = true }
 ceres-client = { workspace = true, features = ["test-support"] }
