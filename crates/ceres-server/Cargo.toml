@@ -22,7 +22,7 @@ ceres-client.workspace = true
 axum = { version = "0.8", features = ["macros"] }
 tower = { version = "0.5", features = ["util", "timeout"] }
 tower-http = { version = "0.7", features = ["cors", "trace", "compression-gzip"] }
-tower_governor = { version = "0.8", features = ["axum"] }
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
